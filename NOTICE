@@ -1,22 +1,36 @@
-Xfuzz — Third-Party Notices
+# Xfuzz — Third-Party Notices
 
 Xfuzz is proprietary software (see LICENSE). It incorporates third-party
 components that remain subject to their own license terms.
 
-This file is the authoritative inventory of those components. It is generated
-and verified in CI (see docs/TESTS.md, "License compliance"). Every direct and
-transitive dependency MUST appear here with its license before it may be
-vendored or imported.
+This file is the authoritative inventory of those components. It is verified in
+CI by `tools/licensecheck`: every module required by `go.mod` must appear in the
+Components table below with an allowed license, and every listed license must be
+in the allowed set. A dependency added without a NOTICE entry fails the build.
 
-Dependency policy (see docs/adr/ADR-0018-proprietary-commercial-license.md):
+See docs/adr/ADR-0018-proprietary-commercial-license.md for why this is enforced
+mechanically rather than audited before release.
 
-  ALLOWED   : Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0 (as an
-              unmodified library), Unlicense, Zlib
-  FORBIDDEN : GPL-2.0, GPL-3.0, AGPL-3.0, LGPL (static linking), SSPL, BUSL,
-              and any license imposing source-disclosure obligations on
-              proprietary distribution
+## Policy
 
-Components
-----------
+| Class | Licenses | Rule |
+| --- | --- | --- |
+| Allowed | Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, Zlib, BSD-3-Clause-Clear | Permitted with attribution below |
+| Conditional | MPL-2.0 | Permitted only as an unmodified library |
+| Forbidden | GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0, SSPL-1.0, BUSL-1.1, CC-BY-NC-4.0 | Never |
 
-(none yet — the repository currently contains documentation only)
+Much of the existing fuzzing ecosystem is GPL-licensed. ADR-0001's decision to
+build a novel engine with no runtime dependency on those projects is also what
+keeps this policy tenable: Xfuzz interoperates with them only at the level of
+data formats and wire protocols, which carry no license obligation.
+
+Reimplementing an algorithm from a GPL-licensed source is prohibited.
+Reimplementation from published papers and specifications is the required path.
+
+## Components
+
+| Module | Version | License | Used for |
+| --- | --- | --- | --- |
+
+<!-- No third-party modules yet. Add a row here in the same commit that adds the
+     dependency to go.mod; tools/licensecheck fails the build otherwise. -->

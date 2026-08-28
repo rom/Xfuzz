@@ -1,0 +1,181 @@
+# Xfuzz CI — implements the matrix in docs/TESTS.md section 10.
+#
+# Every job maps to a numbered test layer from that document. Jobs run direct
+# `go` commands rather than `make` where portability matters (Windows runners do
+# not ship make), and use the Makefile where it is the thing under test.
+
+name: CI
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  # Layer 10 — static checks, documentation traceability, licence policy, and
+  # the architecture boundaries of docs/ARCHITECTURE.md section 2.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: make fmt-check
+      - name: go vet
+        run: make vet
+      - name: architecture boundaries
+        run: make lint-arch
+      - name: documentation traceability
+        run: make lint-docs
+      - name: dependency licence policy
+        run: make lint-license
+
+  # Layers 1-2 — unit, property, and round-trip tests on every supported OS.
+  #
+  # The race detector runs on Linux and macOS. It is omitted on Windows, where
+  # it requires a working cgo toolchain that the hosted image does not
+  # guarantee; that job compensates by also building every command.
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: go build ./...
+      - name: test (race)
+        if: runner.os != 'Windows'
+        run: go test -race ./...
+      - name: test
+        if: runner.os == 'Windows'
+        run: go test ./...
+      - name: build commands
+        run: |
+          go build -o /dev/null ./cmd/xfuzz
+          go build -o /dev/null ./cmd/xfuzzd
+          go build -o /dev/null ./cmd/xfuzz-worker
+          go build -o /dev/null ./cmd/xfuzz-cc
+        if: runner.os != 'Windows'
+      - name: build commands (windows)
+        if: runner.os == 'Windows'
+        run: |
+          go build -o NUL ./cmd/xfuzz
+          go build -o NUL ./cmd/xfuzzd
+          go build -o NUL ./cmd/xfuzz-worker
+          go build -o NUL ./cmd/xfuzz-cc
+
+  # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
+  # slower or less featureful, never broken.
+  nocgo:
+    name: test (linux, CGO_ENABLED=0)
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test ./...
+      - name: version reports nocgo
+        run: go run ./cmd/xfuzz --version | grep -q nocgo
+
+  # ASR-0006 — every supported platform must compile from a single host.
+  cross:
+    name: cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: make cross
+
+  # Supply-chain scan (docs/TESTS.md section 11).
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: govulncheck ./...
+
+  # Layer 6 — performance gates.
+  #
+  # Timing is host-dependent, so what is gated depends on what can be compared
+  # fairly:
+  #   * On a pull request, the base branch is measured on THIS runner and
+  #     compared against the head, so every metric is gated.
+  #   * On a push, the only reference is the committed baseline, recorded on
+  #     another machine. Only host-independent metrics (allocation counts and
+  #     bytes) are gated; timings are measured and reported.
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: measure head
+        run: make bench
+
+      - name: compare against committed baseline (allocations only)
+        if: github.event_name != 'pull_request'
+        run: |
+          go run ./tools/benchcmp \
+            -baseline bench/baseline.txt \
+            -current bench/current.txt \
+            -gate-units allocs/op,B/op
+
+      - name: measure base branch on this runner
+        if: github.event_name == 'pull_request'
+        run: |
+          cp bench/current.txt "$RUNNER_TEMP/head.txt"
+          git checkout --detach "origin/${{ github.base_ref }}"
+          make bench
+          cp bench/current.txt "$RUNNER_TEMP/base.txt"
+          git checkout --detach "${{ github.sha }}"
+
+      - name: compare head against base (all metrics)
+        if: github.event_name == 'pull_request'
+        run: |
+          go run ./tools/benchcmp \
+            -baseline "$RUNNER_TEMP/base.txt" \
+            -current "$RUNNER_TEMP/head.txt" \
+            -threshold 0.10

@@ -177,12 +177,31 @@ Also gated:
 - **Effectiveness**: time-to-first-bug and coverage-over-time on planted targets
   tracked as regressions in their own right.
 
-A ≥ 10 % regression on any gated metric **fails the build**.
+A ≥ 10 % regression on any gated metric **fails the build**. Allocation counts
+are compared *exactly* rather than against the threshold: they are deterministic,
+and the fuzz loop is required to be allocation-free in steady state.
 
-Benchmarks are noisy on shared CI runners. Mitigation: dedicated runners where
-possible, multiple repetitions with statistical comparison rather than a single
-sample, and a warm-up discard — a flaky gate that people learn to ignore is worse
-than no gate.
+Benchmarks are noisy on shared CI runners, and a flaky gate is worse than no gate
+because people learn to ignore it. Two mitigations are implemented in
+`tools/benchcmp`:
+
+- **Median of repetitions.** Runs use `-count 5` and the tool takes the *median*
+  of each metric, not the mean or the last sample. A median absorbs the
+  occasional large outlier a shared runner produces; a mean does not.
+- **Gate only what compares fairly.** Timing is host-dependent, so a baseline
+  recorded on one machine says nothing about absolute ns/op on another. CI
+  therefore gates by provenance:
+
+  | Event | Reference | Gated |
+  | --- | --- | --- |
+  | Pull request | Base branch, measured on the *same* runner | every metric |
+  | Push | `bench/baseline.txt`, recorded elsewhere | `allocs/op`, `B/op` only |
+
+  Ungated metrics are still measured and printed, marked `(not gated)`, so a
+  slowdown is visible even where it cannot fairly fail the build.
+
+`bench/baseline.txt` is committed, and is re-recorded with `make bench-baseline`
+only as part of a change that justifies the new numbers.
 
 ## 8. Layer 7 — Self-fuzzing
 
@@ -224,28 +243,55 @@ Asserts that recovery and resumability (ASR-0012) actually hold:
 
 | Job | Platform | Scope |
 | --- | --- | --- |
-| `linux-cgo` | Linux amd64 | Full suite, all tiers, benchmarks |
-| `linux-nocgo` | Linux amd64 | Full suite, `CGO_ENABLED=0` |
-| `linux-arm64` | Linux arm64 | Full suite |
-| `darwin` | macOS arm64 | Full suite minus Linux-only tiers |
-| `windows` | Windows amd64 | Full suite minus POSIX-only tiers |
-| `cross-build` | Linux | `GOOS`/`GOARCH` matrix compiles |
+| `test (ubuntu-latest)` | Linux amd64 | Full suite with `-race` |
+| `test (macos-latest)` | macOS arm64 | Full suite with `-race`, minus Linux-only tiers |
+| `test (windows-latest)` | Windows amd64 | Full suite, minus POSIX-only tiers |
+| `nocgo` | Linux amd64 | Full suite with `CGO_ENABLED=0` (ADR-0017) |
+| `cross` | Linux | Compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64` |
+| `vuln` | Linux | `govulncheck` |
+
+Two deliberate gaps, stated rather than papered over:
+
+- **The race detector does not run on Windows.** It requires a working cgo
+  toolchain that the hosted image does not guarantee, and a job that fails for
+  environmental reasons teaches people to ignore CI. The Windows job compensates
+  by building every command in addition to running the suite. Revisit when a
+  self-hosted Windows runner exists.
+- **No native `linux/arm64` job.** arm64 is covered by compilation only until an
+  arm64 runner is available. Compilation is not execution, and this is a real
+  hole in the ASR-0006 claim, not a formality.
 
 Platform-unavailable capabilities are asserted to **skip explicitly with a
 reason**, never to fail silently or pass vacuously — the same information
 `xfuzz doctor` reports to users.
 
-## 11. Layer 10 — Documentation and licence checks
+## 11. Layer 10 — Architecture, documentation, and licence checks
 
-- **ASR/ADR traceability lint**: every ASR names ≥ 1 satisfying ADR, every ADR
-  names ≥ 1 served ASR, all cross-references resolve, and the matrix in
-  `ARCHITECTURE.md` § 11 matches the files.
-- **Link check** across `docs/`.
-- **Config schema check**: every example campaign file in the docs validates
-  against the published JSON Schema.
-- **Licence compliance**: dependency scan fails the build on any licence outside
-  ADR-0018's allowed set, or on any dependency missing from `NOTICE`.
-- **Vulnerability scan**: `govulncheck` on every build.
+Three rules that are cheap to state and expensive to leave unenforced. Each is a
+Go test, so `go test ./...` runs all of them and no separate tool is required.
+
+- **Architecture boundaries** (`tools/archlint`): the seven layering rules in
+  `ARCHITECTURE.md` § 2 — `pkg/` never imports `internal/`, the core never
+  imports the executor, only `internal/platform` carries GOOS constraints, only
+  `internal/safety` spawns processes or dials out, nothing imports `cmd/`, and
+  nothing imports Go's `plugin` package. Exceptions live in an explicit
+  allowlist. The linter's own tests assert that **each rule fires** against a
+  deliberately violating fixture: a lint that only ever passes is
+  indistinguishable from one that checks nothing.
+- **Documentation traceability** (`tools/docslint`): every ASR names ≥ 1
+  satisfying ADR, every ADR names ≥ 1 served ASR, the two indexes and the matrix
+  in `ARCHITECTURE.md` § 11 agree with the record headers, and every relative
+  link in `docs/` resolves. Traceability drift is silent by nature, so this
+  linter also tests that it detects an injected inconsistency.
+- **Licence compliance** (`tools/licensecheck`): every module in `go.mod` must
+  carry a `NOTICE` entry whose licence is in ADR-0018's allowed set. Missing
+  entries, stale entries, version drift, and forbidden or unknown licences all
+  fail the build — at the moment a dependency is added, not in a pre-release
+  audit when removing it is expensive.
+
+Also gated: **vulnerability scanning** (`govulncheck`) on every build, and once
+the campaign schema exists, a **config schema check** that every example
+campaign file in the docs validates against it.
 
 ## 12. Security tests
 
@@ -271,11 +317,21 @@ claims:
 make test              # layers 1, 2 — fast, pre-commit
 make test-integration  # layers 3, 4, 5, 8
 make test-security     # layer 12
-make bench             # layer 6, with regression comparison
-make fuzz              # layer 7, time-bounded locally
-make lint-docs         # layer 10
-make test-all          # everything
+make bench             # layer 6 — measure, writing bench/current.txt
+make bench-check       # layer 6 — measure and gate against the baseline
+make bench-baseline    # layer 6 — re-record the gated baseline
+make fuzz              # layer 7 — every fuzz target against its seed corpus
+make fuzz-target       # layer 7 — one target continuously (PKG=, FUZZ=)
+make lint              # layer 10 + gofmt + vet
+make lint-arch         # layer 10 — architecture boundaries
+make lint-docs         # layer 10 — traceability and links
+make lint-license      # layer 10 — dependency licence policy
+make cross             # layer 9 — every supported platform compiles
+make ci                # what CI runs on every push
+make test-all          # everything except extended fuzzing
 ```
+
+`make help` lists them all.
 
 Pre-commit runs layers 1–2 plus lint. Pull requests run everything except
 extended fuzzing. Nightly runs extended fuzzing and the full benchmark suite with

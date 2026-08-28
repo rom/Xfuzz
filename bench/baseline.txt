@@ -1,0 +1,49 @@
+goos: linux
+goarch: amd64
+pkg: github.com/rom/Xfuzz/bench
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkHarnessOverhead-4   	  136555	      8808 ns/op	 465.03 MB/s	    113532 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  135780	      8987 ns/op	 455.79 MB/s	    111276 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  136524	      8766 ns/op	 467.27 MB/s	    114080 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  136603	      8746 ns/op	 468.34 MB/s	    114341 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  137557	      8721 ns/op	 469.67 MB/s	    114665 execs/s	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11453416	       103.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11476000	       103.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	10726267	       105.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11113633	       104.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	10995727	       104.1 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/rom/Xfuzz/bench	12.835s
+?   	github.com/rom/Xfuzz/cmd/xfuzz	[no test files]
+?   	github.com/rom/Xfuzz/cmd/xfuzz-cc	[no test files]
+?   	github.com/rom/Xfuzz/cmd/xfuzz-worker	[no test files]
+?   	github.com/rom/Xfuzz/cmd/xfuzzd	[no test files]
+?   	github.com/rom/Xfuzz/internal/api	[no test files]
+?   	github.com/rom/Xfuzz/internal/corpussync	[no test files]
+?   	github.com/rom/Xfuzz/internal/daemon	[no test files]
+?   	github.com/rom/Xfuzz/internal/engine	[no test files]
+?   	github.com/rom/Xfuzz/internal/metrics	[no test files]
+?   	github.com/rom/Xfuzz/internal/platform	[no test files]
+?   	github.com/rom/Xfuzz/internal/safety	[no test files]
+?   	github.com/rom/Xfuzz/internal/store	[no test files]
+?   	github.com/rom/Xfuzz/internal/triage	[no test files]
+?   	github.com/rom/Xfuzz/internal/version	[no test files]
+?   	github.com/rom/Xfuzz/pkg/campaign	[no test files]
+?   	github.com/rom/Xfuzz/pkg/codec	[no test files]
+?   	github.com/rom/Xfuzz/pkg/corpus	[no test files]
+?   	github.com/rom/Xfuzz/pkg/executor	[no test files]
+?   	github.com/rom/Xfuzz/pkg/feedback	[no test files]
+?   	github.com/rom/Xfuzz/pkg/generate	[no test files]
+?   	github.com/rom/Xfuzz/pkg/ir	[no test files]
+?   	github.com/rom/Xfuzz/pkg/mutate	[no test files]
+?   	github.com/rom/Xfuzz/pkg/plugin	[no test files]
+?   	github.com/rom/Xfuzz/pkg/schema	[no test files]
+?   	github.com/rom/Xfuzz/pkg/state	[no test files]
+PASS
+ok  	github.com/rom/Xfuzz/tools/archlint	0.003s
+PASS
+ok  	github.com/rom/Xfuzz/tools/benchcmp	0.003s
+PASS
+ok  	github.com/rom/Xfuzz/tools/docslint	0.003s
+PASS
+ok  	github.com/rom/Xfuzz/tools/licensecheck	0.004s

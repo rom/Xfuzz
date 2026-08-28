@@ -52,20 +52,29 @@ along a proven dimension.
 Estimates are engineering-effort ranges for a small focused team, not calendar
 commitments.
 
-### M0 — Foundation *(1–2 weeks)*
+### M0 — Foundation ✅ *delivered*
 
 Repository, toolchain, and the discipline that makes everything after it
 measurable.
 
-- Module layout per ARCHITECTURE.md § 2; `pkg/` ↛ `internal/` enforced by lint.
-- CI: build, vet, `-race` test, cross-compile matrix, `govulncheck`, licence scan
-  against ADR-0018's policy, docs traceability lint.
-- Benchmark harness skeleton with baseline recording — **before** any hot-path
-  code exists, so regressions are visible from the first commit.
-- `Makefile` targets from TESTS.md § 13.
+- Module layout per ARCHITECTURE.md § 2, with all seven layering rules enforced
+  by `tools/archlint` as an ordinary Go test — including tests that each rule
+  *fires* against a violating fixture.
+- CI: build, vet, gofmt, `-race` test on Linux/macOS/Windows, `CGO_ENABLED=0`
+  build, cross-compile matrix, `govulncheck`, licence policy, docs traceability.
+- Benchmark harness with a committed baseline and a working regression gate,
+  recorded **before** any hot-path code exists, so the first engine commit is
+  already measured. Median-of-5 sampling and provenance-aware gating keep it
+  from being flaky.
+- `Makefile` targets matching TESTS.md § 13.
 
-**Exit:** CI green on Linux, macOS, Windows; an empty benchmark records a
-baseline; licence and docs lints pass.
+**Exit criteria met:** the suite passes on Linux with `-race`; every supported
+platform cross-compiles; `bench/baseline.txt` is recorded and `make bench-check`
+gates against it; licence, documentation, and architecture lints pass.
+
+**Not yet verified:** CI green on macOS and Windows — the workflow is written and
+the code cross-compiles, but no run has happened on those runners yet. Native
+`linux/arm64` execution is covered by compilation only (TESTS.md § 10).
 
 ---
 

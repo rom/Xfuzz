@@ -5,9 +5,10 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: design baseline.** The architecture is settled and recorded; the
-> implementation has not started. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for
-> the path to v0.1.
+> **Status: M0 complete — foundation, no engine yet.** The architecture is
+> settled and recorded, and the repository skeleton, layering enforcement,
+> quality gates, and CI are in place. M1 (input IR and codecs) is next. See
+> [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
 
 ## The idea
 
@@ -56,6 +57,24 @@ Everything lives in [`docs/`](docs/README.md):
 | [CHANGELOG.md](docs/CHANGELOG.md) | Release history |
 | [adr/](docs/adr/README.md) | 21 architecture decisions, with rejected alternatives |
 | [asr/](docs/asr/README.md) | 15 architecturally significant requirements |
+
+## Building
+
+Requires Go 1.24 or later. No other toolchain is needed for the default build.
+
+```
+make build      # all four commands into bin/
+make test       # unit and property tests, race detector on
+make lint       # gofmt, vet, architecture, docs, and licence checks
+make ci         # everything CI runs
+make help       # every target
+```
+
+The architecture is enforced, not merely documented: `tools/archlint` fails the
+build when a layering rule in
+[ARCHITECTURE.md § 2](docs/ARCHITECTURE.md#2-package-layout) is broken, and its
+own tests prove each rule can fire. `tools/docslint` does the same for decision
+record traceability, and `tools/licensecheck` for the dependency licence policy.
 
 ## Platforms
 

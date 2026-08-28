@@ -75,24 +75,44 @@ github.com/rom/Xfuzz
 │   ├── api/                gRPC services + REST gateway
 │   ├── daemon/             campaign manager, supervision, event bus
 │   ├── metrics/            counters, series, health diagnostics
-│   ├── sync/               cross-worker corpus synchronisation
+│   ├── corpussync/         cross-worker corpus synchronisation
+│   ├── version/            build identity, injected at link time
 │   └── platform/           OS-specific: linux/ darwin/ windows/
 ├── web/                    TypeScript SPA → embedded static assets
 ├── runtime/                xfuzz-rt: C coverage runtime (target-side)
 ├── testdata/
 │   ├── targets/            planted-bug integration targets
 │   └── corpora/            reference corpora
-├── bench/                  benchmark harness (ASR-0007 gates)
+├── bench/                  benchmark harness + gated baseline (ASR-0007)
+├── tools/                  repo tooling, each enforcing a documented rule
+│   ├── archlint/           the layering rules below
+│   ├── docslint/           ASR/ADR traceability and link resolution
+│   ├── licensecheck/       ADR-0018 dependency licence policy
+│   └── benchcmp/           benchmark regression gate
+├── .github/workflows/      CI matrix (docs/TESTS.md section 10)
 └── docs/
 ```
 
+`internal/corpussync` is named for its job rather than as `internal/sync`, which
+would shadow the standard library at every use site.
+
 Rules that keep the layering honest:
 
-- `pkg/` never imports `internal/`.
-- `pkg/ir`, `pkg/feedback`, `pkg/corpus` never import `pkg/executor` — the core
-  must not know how inputs are delivered.
-- Nothing outside `internal/platform` uses build tags for OS differences.
-- Nothing outside `internal/safety` spawns a process or opens a socket.
+| Rule | Meaning |
+| --- | --- |
+| `pkg-no-internal` | `pkg/` never imports `internal/` |
+| `core-no-executor` | `pkg/ir`, `pkg/feedback`, `pkg/corpus` never import `pkg/executor` — the core must not know how inputs are delivered |
+| `platform-build-tags` | Nothing outside `internal/platform` carries GOOS or GOARCH build constraints (a bare `cgo` constraint is fine — ADR-0017) |
+| `spawn-confinement` | Nothing outside `internal/safety` spawns a process; it reaches OS specifics through `internal/platform` |
+| `dial-confinement` | Nothing outside `internal/safety` opens an outbound connection — every one must pass the scope guard (ADR-0012) |
+| `no-cmd-import` | Nothing imports `cmd/` |
+| `no-stdlib-plugin` | Nothing imports Go's `plugin` package (rejected by ADR-0010) |
+
+These are enforced by `tools/archlint`, which runs as part of `go test ./...`,
+not by convention. Exceptions live in an explicit allowlist in that package,
+where they are visible in review; `tools/archlint` additionally tests that each
+rule *fires* against a deliberately violating fixture, since a lint that only
+ever passes is indistinguishable from one that checks nothing.
 
 ## 3. Core interfaces
 
