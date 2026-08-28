@@ -31,6 +31,28 @@ Reimplementation from published papers and specifications is the required path.
 
 | Module | Version | License | Used for |
 | --- | --- | --- | --- |
+| github.com/dustin/go-humanize | v1.0.1 | MIT | Transitive: size formatting in modernc.org/sqlite's shell |
+| github.com/google/uuid | v1.6.0 | BSD-3-Clause | Transitive: temporary-name generation in modernc.org/libc |
+| github.com/mattn/go-isatty | v0.0.24 | MIT | Transitive: terminal detection in modernc.org/sqlite |
+| github.com/ncruces/go-strftime | v1.0.0 | MIT | Transitive: `strftime` for SQLite's date functions |
+| github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Transitive: big-integer multiplication in modernc.org/mathutil |
+| golang.org/x/sys | v0.47.0 | BSD-3-Clause | Transitive: syscall bindings for modernc.org/libc |
+| modernc.org/libc | v1.74.4 | BSD-3-Clause | Transitive: the C runtime modernc.org/sqlite is transpiled against |
+| modernc.org/mathutil | v1.7.1 | BSD-3-Clause | Transitive: arithmetic helpers for modernc.org/libc |
+| modernc.org/memory | v1.11.0 | BSD-3-Clause | Transitive: allocator for modernc.org/libc |
+| modernc.org/sqlite | v1.57.0 | BSD-3-Clause | Embedded SQL metadata store (ADR-0008), pure Go so it needs no cgo (ADR-0017) |
 
-<!-- No third-party modules yet. Add a row here in the same commit that adds the
-     dependency to go.mod; tools/licensecheck fails the build otherwise. -->
+### Notes on the SQLite dependency chain
+
+`modernc.org/sqlite` is SQLite transpiled to Go rather than bound to it, which is
+why the store needs no cgo. Its own code is BSD-3-Clause; the upstream SQLite
+sources it is derived from are public domain, which imposes no obligation. The
+chain pulls in `modernc.org/libc`, a Go translation of musl (MIT) — both licenses
+are in the allowed set and both are reproduced in the modules' own `LICENSE` and
+`LICENSE-3RD-PARTY.md` files.
+
+One GPL-licensed file exists in that chain: `crlibm` test vectors under
+`modernc.org/libc`'s `testdata/`. It is test data for that module's own test
+suite, is not part of any package Xfuzz imports, and reaches no build of Xfuzz.
+It is recorded here rather than omitted, because a policy that only lists what is
+convenient is not a policy.
