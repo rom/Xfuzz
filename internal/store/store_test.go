@@ -516,7 +516,7 @@ func TestAuditChainVerifies(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 
-	for i, action := range []string{AuditCampaignStart, AuditTargetSpawn, AuditScopeDeny} {
+	for i, action := range []string{AuditCampaignStart, AuditFindingExport, AuditCampaignStop} {
 		if _, err := s.Audit(ctx, "operator", action, "detail"); err != nil {
 			t.Fatalf("append %d: %v", i, err)
 		}
@@ -544,7 +544,7 @@ func TestAuditDetectsModification(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		if _, err := s.Audit(ctx, "operator", AuditScopeAllow, "host=example.test"); err != nil {
+		if _, err := s.Audit(ctx, "operator", AuditFindingExport, "host=example.test"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -569,7 +569,7 @@ func TestAuditDetectsTruncation(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	for i := 0; i < 4; i++ {
-		if _, err := s.Audit(ctx, "operator", AuditTargetSpawn, "t"); err != nil {
+		if _, err := s.Audit(ctx, "operator", AuditCampaignStart, "t"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -585,7 +585,7 @@ func TestAuditDetectsDeletionFromTheMiddle(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 	for i := 0; i < 4; i++ {
-		if _, err := s.Audit(ctx, "operator", AuditTargetSpawn, "t"); err != nil {
+		if _, err := s.Audit(ctx, "operator", AuditCampaignStart, "t"); err != nil {
 			t.Fatal(err)
 		}
 	}

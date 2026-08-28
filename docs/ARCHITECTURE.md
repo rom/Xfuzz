@@ -105,7 +105,7 @@ Rules that keep the layering honest:
 | `pkg-no-internal` | `pkg/` never imports `internal/` |
 | `core-no-executor` | `pkg/ir`, `pkg/feedback`, `pkg/corpus` never import `pkg/executor` — the core must not know how inputs are delivered |
 | `platform-build-tags` | Nothing outside `internal/platform` carries GOOS or GOARCH build constraints (a bare `cgo` constraint is fine — ADR-0017) |
-| `spawn-confinement` | Nothing outside `internal/safety` spawns a process; it reaches OS specifics through `internal/platform` |
+| `spawn-confinement` | Nothing outside `internal/safety` spawns a process; it reaches OS specifics through `internal/platform`. `cmd/xfuzz-cc` and `cmd/xfuzz-sandbox` are allowlisted: each *is* an exec wrapper, and the allowlist is in the lint source where a reviewer sees it |
 | `dial-confinement` | Nothing outside `internal/safety` opens an outbound connection — every one must pass the scope guard (ADR-0012) |
 | `no-cmd-import` | Nothing imports `cmd/` |
 | `no-stdlib-plugin` | Nothing imports Go's `plugin` package (rejected by ADR-0010) |
@@ -380,16 +380,24 @@ Every process spawn and every outbound connection routes through here. There is
 no other path.
 
 ```go
-type Sandbox interface {
-    Level() Level                            // strong | moderate | minimal
-    Spawn(ctx context.Context, spec ProcSpec) (Process, error)
-}
+type Sandbox struct { ... }                  // the confinement policy
+func (s *Sandbox) Probe() (Level, platform.SandboxCapabilities)
+func (s *Sandbox) Check(ctx context.Context) error   // refuse a campaign the host cannot confine
+func (s *Sandbox) Explain() string                   // the level, and why it is not higher
 
-type ScopeGuard interface {
-    Allow(network, address string) error     // default-deny; ADR-0012
-    Record(decision Decision)                // append-only, hash-chained audit
-}
+type Scope struct { ... }                    // the network allowlist
+func (s *Scope) Validate(remote bool) error  // refuse at start, not at the first packet
+func (s *Scope) Check(ctx context.Context, addr netip.AddrPort) error
+func (s *Scope) Dial(ctx context.Context, network, address string) (net.Conn, error)
 ```
+
+Two mechanisms of the Linux sandbox — resource limits and the seccomp filter —
+can only be installed by the process that will *become* the target, between fork
+and exec. Go offers no hook there, so `cmd/xfuzz-sandbox` is that process: it
+sets its own limits, installs its own filter, and execs the target, which
+inherits both. This is the same shape as every other sandbox launcher, for the
+same reason. Where the helper is absent, the isolation level reported drops
+accordingly rather than the campaign silently running unlimited.
 
 ## 4. The fuzz loop
 

@@ -25,12 +25,16 @@ import (
 // guarantee a rule like that is to leave no other path — a warning in a comment
 // is a rule that holds until someone is in a hurry.
 //
-// The confinement itself is staged. This is the M3 spawner: process groups,
-// enforced timeouts, bounded output capture, and a clean kill of the whole
-// group. Namespaces, seccomp, and cgroups arrive in M4; until then
-// IsolationLevel reports "minimal" rather than implying protection that is not
-// there.
+// Confinement itself is the Sandbox's, and every process this spawner creates
+// passes through it. What the spawner adds around that is the part that is the
+// same at every isolation level: an enforced timeout, bounded output capture,
+// and a kill that takes the whole process group rather than leaving orphans.
 type Spawner struct {
+	// Sandbox is the confinement policy. A nil Sandbox means the zero policy,
+	// which still confines: ADR-0012 makes that the default rather than an
+	// option, because the default is what people run.
+	Sandbox *Sandbox
+
 	// MaxOutputBytes caps how much of a target's output is retained. A target
 	// that writes on every execution would otherwise make capture the dominant
 	// cost, and a runaway one would exhaust memory.
@@ -56,10 +60,22 @@ func NewSpawner() *Spawner {
 
 // IsolationLevel implements executor.Spawner.
 //
-// It reports what the platform actually enforces, not what is planned. A
-// campaign may require a minimum level and refuse to start below it, which only
-// works if the level is honest.
-func (s *Spawner) IsolationLevel() string { return platform.IsolationLevel() }
+// It reports what is actually in force, not what was configured. A campaign may
+// require a minimum level and refuse to start below it, which only works if the
+// level is honest — so this is computed from the mechanisms the host provides
+// and the helper that was found, never from the policy that was asked for.
+func (s *Spawner) IsolationLevel() string { return s.sandbox().Level().String() }
+
+// Explain describes the isolation in force and why it is not stronger.
+func (s *Spawner) Explain() string { return s.sandbox().Explain() }
+
+// sandbox returns the policy, defaulting to the confining zero value.
+func (s *Spawner) sandbox() *Sandbox {
+	if s.Sandbox == nil {
+		s.Sandbox = &Sandbox{}
+	}
+	return s.Sandbox
+}
 
 // Run implements executor.Spawner: execute once and wait.
 func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.ProcResult, error) {
@@ -68,7 +84,7 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 		timeout = s.DefaultTimeout
 	}
 
-	cmd, err := command(spec)
+	cmd, err := s.command(spec)
 	if err != nil {
 		return executor.ProcResult{}, err
 	}
@@ -94,6 +110,7 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 	if err := cmd.Start(); err != nil {
 		return executor.ProcResult{}, fmt.Errorf("safety: starting %s: %w", spec.Path, err)
 	}
+	s.placeInCgroup(cmd)
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -130,7 +147,10 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 }
 
 // command builds the process, treating ProcSpec.Args as the complete argv.
-func command(spec executor.ProcSpec) (*exec.Cmd, error) {
+//
+// This is the one place a process is constructed, so it is the one place
+// confinement is applied. Nothing reaches exec without passing through here.
+func (s *Spawner) command(spec executor.ProcSpec) (*exec.Cmd, error) {
 	path := spec.Path
 	if !filepath.IsAbs(path) && !strings.ContainsRune(path, filepath.Separator) {
 		resolved, err := exec.LookPath(path)
@@ -143,9 +163,48 @@ func command(spec executor.ProcSpec) (*exec.Cmd, error) {
 	if len(argv) == 0 {
 		argv = []string{path}
 	}
-	cmd := &exec.Cmd{Path: path, Args: argv, Dir: spec.Dir, Env: spec.Env}
+
+	sb := s.sandbox()
+	sb.Probe()
+
+	dir := spec.Dir
+	if dir == "" {
+		dir = sb.Workdir
+	}
+
+	// The helper chdirs for us when it is in use, so the command's own Dir is
+	// left alone: setting both would mean the target's working directory
+	// depended on which of the two happened to be relative.
+	helperPath, helperArgv := sb.wrap(path, argv, dir)
+	cmdDir := dir
+	if helperPath != path {
+		cmdDir = ""
+	}
+
+	cmd := &exec.Cmd{Path: helperPath, Args: helperArgv, Dir: cmdDir, Env: spec.Env}
 	platform.ConfigureProcess(cmd, spec.Quarantine)
+	if sb.Require != LevelNone || sb.Level() > LevelMinimal {
+		platform.ConfigureSandbox(cmd, sb.namespaces())
+	}
+	if cg := sb.ensureCgroup(); cg != nil {
+		cg.Attach(cmd)
+	}
 	return cmd, nil
+}
+
+// placeInCgroup adds a started process to the campaign's cgroup where the
+// kernel could not do it at clone time.
+//
+// Under cgroups v1 this is the only interface there is, and it races: a target
+// that forks before the write lands leaves children outside the limit. The
+// window is microseconds and the alternative is no limit at all, but it is a
+// real gap and it is why v1 does not count towards the strong level.
+func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
+	cg := s.sandbox().cgroup
+	if cg == nil || cg.Mode() != platform.CgroupV1 || cmd.Process == nil {
+		return
+	}
+	_ = cg.Add(cmd.Process.Pid)
 }
 
 // handle is a running process an executor talks to over its lifetime.
@@ -210,7 +269,7 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 		return nil, fmt.Errorf("safety: creating the status pipe: %w", perr)
 	}
 
-	cmd, err := command(spec)
+	cmd, err := s.command(spec)
 	if err != nil {
 		ctlRead.Close()
 		ctlWrite.Close()
@@ -241,6 +300,8 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 		stWrite.Close()
 		return nil, fmt.Errorf("safety: starting %s: %w", spec.Path, err)
 	}
+	s.placeInCgroup(cmd)
+
 	// The child owns its ends now; holding them open in the parent would stop
 	// the pipes ever reporting end-of-file when the child dies, and the fuzzer
 	// would block forever on a dead fork server.

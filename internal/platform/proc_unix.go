@@ -39,12 +39,3 @@ func SignalOf(st *os.ProcessState) int {
 
 // ProcessGroupsSupported reports whether killing a process tree is possible.
 func ProcessGroupsSupported() bool { return true }
-
-// IsolationLevel reports the strongest confinement this platform build can
-// actually apply.
-//
-// It is "minimal" until M4 lands namespaces, seccomp, and cgroups. Reporting
-// the plan rather than the state would let a campaign that requires strong
-// isolation start without it, which is the exact failure ADR-0012 exists to
-// prevent.
-func IsolationLevel() string { return "minimal" }

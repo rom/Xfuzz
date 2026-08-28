@@ -206,10 +206,23 @@ func TestSpawnerEnforcesTimeouts(t *testing.T) {
 }
 
 func TestSpawnerReportsIsolationHonestly(t *testing.T) {
-	// The level reported has to be what is enforced, not what is planned:
-	// a campaign may require a minimum and refuse to run below it.
-	if got := safety.NewSpawner().IsolationLevel(); got != platform.IsolationLevel() {
-		t.Errorf("spawner reports %q, platform reports %q", got, platform.IsolationLevel())
+	// The level reported has to be what is enforced, not what is planned: a
+	// campaign may require a minimum and refuse to run below it, and that is
+	// only protection if the level is computed from the mechanisms the host
+	// actually provides.
+	sp := safety.NewSpawner()
+	got := sp.IsolationLevel()
+	if _, err := safety.ParseLevel(got); err != nil {
+		t.Fatalf("the spawner reported %q, which is not an isolation level: %v", got, err)
+	}
+
+	caps := platform.DetectSandbox()
+	if !caps.UserNS && !caps.Seccomp && got == "strong" {
+		t.Errorf("the host provides neither user namespaces nor seccomp (%s) "+
+			"but the spawner reports %q", caps, got)
+	}
+	if !strings.Contains(sp.Explain(), got) {
+		t.Errorf("Explain() does not mention the level in force:\n%s", sp.Explain())
 	}
 }
 

@@ -32,7 +32,3 @@ func SignalOf(*os.ProcessState) int { return 0 }
 
 // ProcessGroupsSupported reports whether killing a process tree is possible.
 func ProcessGroupsSupported() bool { return false }
-
-// IsolationLevel reports the strongest confinement this platform build can
-// apply.
-func IsolationLevel() string { return "minimal" }

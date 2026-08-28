@@ -34,6 +34,16 @@ const (
 	timeoutSignal = 14
 )
 
+// DefaultHandshakeTimeout is how long a fork server has to announce itself.
+//
+// Generous on purpose. The cost of waiting too long is a slow failure on a
+// target that was never going to work; the cost of waiting too little is a
+// working target rejected on a loaded machine, which looks like a bug in the
+// target and is the more expensive mistake.
+const DefaultHandshakeTimeout = 10 * time.Second
+
+const ()
+
 // ForkServer is the T2 executor: a long-lived server process forks a
 // pre-initialised copy of the target for every input.
 //
@@ -53,6 +63,15 @@ type ForkServer struct {
 	// copying happens per execution.
 	Coverage *feedback.CoverageMap
 	Shm      SharedMemory
+
+	// HandshakeTimeout bounds how long Start waits for the fork server to
+	// announce itself. Zero means DefaultHandshakeTimeout.
+	//
+	// It is separate from Timeout because it is measuring something else: a
+	// target's first execution can be slow — dynamic linking, a large static
+	// initialiser — while an execution once running is fast, and one budget for
+	// both would have to be the larger of the two.
+	HandshakeTimeout time.Duration
 
 	// Timeout bounds one execution. On expiry the child is killed and the
 	// server serves the next input; the server itself survives.
@@ -151,7 +170,11 @@ func (e *ForkServer) Start(ctx context.Context) error {
 	// instrumented against a different runtime, is caught. Reporting it here
 	// costs one confusing error; not reporting it costs a campaign that runs for
 	// a week and finds nothing.
-	if err := h.Status().SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	handshake := e.HandshakeTimeout
+	if handshake <= 0 {
+		handshake = DefaultHandshakeTimeout
+	}
+	if err := h.Status().SetReadDeadline(time.Now().Add(handshake)); err != nil {
 		h.Kill()
 		return fmt.Errorf("executor %s: %w", e.name, err)
 	}

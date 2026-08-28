@@ -80,7 +80,8 @@ var importRules = []rule{
 			"internal/platform/",
 			"tools/",        // repo tooling shells out to the Go toolchain
 			"bench/",        // the benchmark harness drives external processes
-			"cmd/xfuzz-cc/", // the compiler wrapper execs a compiler by definition
+			"cmd/xfuzz-cc/",      // the compiler wrapper execs a compiler by definition
+			"cmd/xfuzz-sandbox/", // the sandbox helper's whole purpose is to become the target
 		},
 		// Test files are exempt. The rule protects runtime behaviour — every
 		// target a campaign runs must pass through the safety layer — and a

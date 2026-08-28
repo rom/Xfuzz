@@ -11,18 +11,18 @@ import (
 	"time"
 )
 
-// Audit actions. The set is small on purpose: an audit log nobody reads is
-// worthless, and a log that records everything is a log nobody reads.
+// The audit actions this package emits.
+//
+// Each subsystem names its own actions rather than drawing from a shared
+// enumeration. A central list would have to be edited by everyone and would
+// couple the safety layer to the persistence layer for the sake of a handful of
+// strings; the log stores whatever string it is given, and the vocabulary lives
+// where the events happen. The safety layer's actions are in internal/safety.
 const (
-	AuditCampaignStart  = "campaign.start"
-	AuditCampaignStop   = "campaign.stop"
-	AuditTargetSpawn    = "target.spawn"
-	AuditScopeAllow     = "scope.allow"
-	AuditScopeDeny      = "scope.deny"
-	AuditAuthzGrant     = "authz.grant"
-	AuditSandboxDegrade = "sandbox.degrade"
-	AuditFindingExport  = "finding.export"
-	AuditCorpusImport   = "corpus.import"
+	AuditCampaignStart = "campaign.start"
+	AuditCampaignStop  = "campaign.stop"
+	AuditFindingExport = "finding.export"
+	AuditCorpusImport  = "corpus.import"
 )
 
 // metaAuditHead is where the chain head is mirrored.

@@ -36,7 +36,7 @@ Reimplementation from published papers and specifications is the required path.
 | github.com/mattn/go-isatty | v0.0.24 | MIT | Transitive: terminal detection in modernc.org/sqlite |
 | github.com/ncruces/go-strftime | v1.0.0 | MIT | Transitive: `strftime` for SQLite's date functions |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Transitive: big-integer multiplication in modernc.org/mathutil |
-| golang.org/x/sys | v0.47.0 | BSD-3-Clause | Transitive: syscall bindings for modernc.org/libc |
+| golang.org/x/sys | v0.47.0 | BSD-3-Clause | Namespace, seccomp, rlimit, and cgroup syscalls in `internal/platform` (ADR-0012); also transitive for modernc.org/libc |
 | modernc.org/libc | v1.74.4 | BSD-3-Clause | Transitive: the C runtime modernc.org/sqlite is transpiled against |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause | Transitive: arithmetic helpers for modernc.org/libc |
 | modernc.org/memory | v1.11.0 | BSD-3-Clause | Transitive: allocator for modernc.org/libc |
