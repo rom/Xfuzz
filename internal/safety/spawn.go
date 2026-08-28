@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rom/Xfuzz/internal/platform"
@@ -47,6 +48,9 @@ type Spawner struct {
 	// DefaultTimeout applies when a spec sets none. A campaign with no timeout
 	// at all stalls on the first input that loops.
 	DefaultTimeout time.Duration
+
+	// defaultOnce materialises the default Sandbox exactly once.
+	defaultOnce sync.Once
 }
 
 // NewSpawner returns a spawner with defaults.
@@ -70,10 +74,17 @@ func (s *Spawner) IsolationLevel() string { return s.sandbox().Level().String() 
 func (s *Spawner) Explain() string { return s.sandbox().Explain() }
 
 // sandbox returns the policy, defaulting to the confining zero value.
+//
+// The default is materialised once rather than on each call: a spawner is shared
+// by every worker in a campaign, and two of them installing a default
+// simultaneously would give half the workers a different sandbox — including a
+// different cgroup — from the other half.
 func (s *Spawner) sandbox() *Sandbox {
-	if s.Sandbox == nil {
-		s.Sandbox = &Sandbox{}
-	}
+	s.defaultOnce.Do(func() {
+		if s.Sandbox == nil {
+			s.Sandbox = &Sandbox{}
+		}
+	})
 	return s.Sandbox
 }
 

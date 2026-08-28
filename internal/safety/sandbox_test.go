@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/rom/Xfuzz/internal/platform"
@@ -198,4 +199,41 @@ func helperForTest(t testing.TB) string {
 		t.Fatalf("building %s: %v", HelperName, helperErr)
 	}
 	return helperPath
+}
+
+func TestSandboxProbesOnceUnderConcurrentUse(t *testing.T) {
+	// A spawner is shared by every worker in a campaign, so the lazy detection
+	// is read concurrently. Two workers installing a default simultaneously
+	// would give half of them a different sandbox — and a different cgroup —
+	// from the other half.
+	sp := NewSpawner()
+
+	var wg sync.WaitGroup
+	levels := make([]string, 16)
+	for i := range levels {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			levels[i] = sp.IsolationLevel()
+			_ = sp.Explain()
+		}(i)
+	}
+	wg.Wait()
+
+	for i, l := range levels {
+		if l != levels[0] {
+			t.Fatalf("worker %d saw isolation %q, worker 0 saw %q", i, l, levels[0])
+		}
+	}
+}
+
+func TestSandboxCloseIsSafeToRepeat(t *testing.T) {
+	sb := &Sandbox{Name: "close-twice"}
+	sb.Probe()
+	if err := sb.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := sb.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }

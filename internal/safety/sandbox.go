@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/rom/Xfuzz/internal/platform"
 )
@@ -126,9 +127,15 @@ type Sandbox struct {
 	// Name distinguishes this campaign's cgroup from another's.
 	Name string
 
+	// probeOnce guards the detection below. A spawner is shared by every worker
+	// in a campaign (ADR-0015), so this is read concurrently; detecting once
+	// under a sync.Once also means the read-only-root probe runs once rather
+	// than once per worker.
+	probeOnce sync.Once
+	mu        sync.Mutex
+
 	caps   platform.SandboxCapabilities
 	helper string
-	probed bool
 	roRoot bool
 	cgroup *platform.Cgroup
 }
@@ -139,7 +146,7 @@ type Sandbox struct {
 // before anything is started, and so that the level can be reported in a status
 // view without spawning anything.
 func (s *Sandbox) Probe() (Level, platform.SandboxCapabilities) {
-	if !s.probed {
+	s.probeOnce.Do(func() {
 		s.caps = platform.DetectSandbox()
 		s.helper, _ = s.findHelper()
 		s.roRoot = s.probeReadOnlyRoot()
@@ -149,8 +156,7 @@ func (s *Sandbox) Probe() (Level, platform.SandboxCapabilities) {
 					"inherits are locked when it is created alongside a user namespace on this "+
 					"kernel, so confinement rests on the target's host identity instead")
 		}
-		s.probed = true
-	}
+	})
 	return s.level(), s.caps
 }
 
@@ -517,6 +523,8 @@ func (s *Sandbox) wrap(path string, argv []string, dir string) (string, []string
 
 // ensureCgroup creates the campaign's cgroup on first use.
 func (s *Sandbox) ensureCgroup() *platform.Cgroup {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cgroup != nil {
 		return s.cgroup
 	}
@@ -539,6 +547,8 @@ func (s *Sandbox) ensureCgroup() *platform.Cgroup {
 
 // Close releases the sandbox's resources.
 func (s *Sandbox) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cgroup != nil {
 		err := s.cgroup.Close()
 		s.cgroup = nil
