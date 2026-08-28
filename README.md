@@ -5,9 +5,10 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M0 complete — foundation, no engine yet.** The architecture is
-> settled and recorded, and the repository skeleton, layering enforcement,
-> quality gates, and CI are in place. M1 (input IR and codecs) is next. See
+> **Status: M1 complete — the input representation works.** The structured IR,
+> its fixup pass, and the first codecs are in, along with the foundation from
+> M0. A full mutate-and-repair cycle on a real PNG runs in 1.8 µs with zero
+> allocations. M2 (mutation and grammar) is next. See
 > [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
 
 ## The idea

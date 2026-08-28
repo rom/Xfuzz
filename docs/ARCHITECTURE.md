@@ -125,28 +125,78 @@ implementation, the boundaries will not.
 type Kind uint8
 
 const (
-    KindBytes Kind = iota; KindInt; KindStr; KindStruct
+    KindBytes Kind = iota + 1; KindInt; KindStr; KindStruct
     KindRepeat; KindChoice; KindOpt; KindRef; KindDerived
 )
 
 type Node struct {
-    Kind     Kind
+    Kind   Kind
+    Width  uint8   // KindInt, KindDerived: encoded byte width
+    Endian Endian
+    flags  uint8   // shared (copy-on-write), present, signed
+
+    Sel int32      // KindChoice: selected alternative
+    Val int64      // KindInt, KindDerived: the value
+
     Name     string
+    Raw      []byte  // KindBytes, KindStr: the payload
     Children []*Node
-    Raw      []byte      // leaf payload
-    Meta     *NodeMeta   // type constraints, derivation rule, schema link
-}
 
-// Fixup recomputes derived nodes in dependency order after mutation.
-// Suppressed derivations are left inconsistent on purpose (ASR-0014).
-func Fixup(root *Node, suppress SuppressSet) error
-
-type Arena interface {          // pooled allocation: ASR-0007 steady state
-    New(Kind) *Node
-    Clone(*Node) *Node          // copy-on-write subtree
-    Release(*Node)
+    Derive *Derivation // KindDerived
+    Target *Ref        // KindRef
 }
 ```
+
+Scalar detail is stored inline rather than behind a `Meta` pointer: the hot loop
+pools these densely, and a second indirection per node costs both a cache miss
+and an allocation to pool. `Derivation` and `Ref` are immutable, so their
+pointers are shared by every clone rather than copied.
+
+Encoding is generic — the wire form of a tree is the concatenation of its leaves
+in document order — which is what confines format knowledge to *decoding*:
+
+```go
+func EncodedLen(n *Node) int
+func AppendEncode(dst []byte, n *Node) []byte   // reuses dst; no allocation
+```
+
+Fixup recomputes derived values after mutation. A `Fixer` carries reusable
+scratch state so that repeated fixups allocate nothing:
+
+```go
+type Fixer struct{ /* pooled buffers, maps, task lists */ }
+func (f *Fixer) Fix(root *Node, sup Suppress) ([]byte, error) // returns the encoding
+func Fixup(root *Node, sup Suppress) error                    // convenience; allocates
+```
+
+The pass is acyclic by construction. Every derived node has a fixed width, so no
+derived *value* can change any node's *size*; sizes and offsets are therefore
+computed once, up front. Length, Count, and Offset read only those and can never
+form a cycle. Only Checksum reads other nodes' values, so only checksums are
+ordered — by span containment, which is a partial order, resolved with Kahn's
+algorithm in document order so the result is deterministic. A checksum covering
+its own field is reported as a cycle unless `SelfZero` says how to resolve it.
+
+```go
+type Arena struct{ /* bump-allocated slabs */ }   // ASR-0007 steady state
+
+func (a *Arena) New(k Kind) *Node
+func (a *Arena) Clone(n *Node) *Node              // deep copy; shares nothing
+func (a *Arena) Reset()                           // rewinds; frees nothing
+
+func (a *Arena) Share(n *Node) *Node                            // mark copy-on-write
+func (a *Arena) MutablePath(root **Node, steps ...Step) (*Node, error) // path-copy
+```
+
+The Arena is a bump allocator over fixed slabs rather than a free-list: `Reset`
+rewinds the pointers, so after the first few iterations the slabs are large
+enough and steady-state fuzzing allocates nothing. Slabs are fixed-size and
+never reallocated, because growing one backing array would invalidate every
+outstanding `*Node`. There is no `Release`; individual nodes are never returned.
+
+Payloads are copied into the arena on clone rather than shared, so a mutator can
+flip a bit in place — the fastest mutation there is — without corrupting the
+corpus entry the clone came from.
 
 ### 3.2 Execution and observation — `pkg/executor`, `pkg/feedback`
 

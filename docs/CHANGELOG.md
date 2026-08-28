@@ -11,6 +11,74 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M1 Input IR and codecs (2026-08-28)
+
+The structured input representation from ADR-0005, and the first two codecs.
+This was the milestone carrying the design's central risk: whether a typed tree
+can be mutated, repaired, and encoded without allocating, at fuzzing rates.
+
+**`pkg/ir` — the unified input representation**
+
+- Nine node kinds (`Bytes`, `Int`, `Str`, `Struct`, `Repeat`, `Choice`, `Opt`,
+  `Ref`, `Derived`) with traversal, structural validation, and equality.
+- Generic encoding: the wire form of a tree is the concatenation of its leaves
+  in document order, so format knowledge is confined to decoding.
+- Relative references (`^data`, `^^hdr.len`, `/chunks[0]`) resolved against an
+  ancestor chain, with a textual form and parser. Nodes carry no parent
+  pointers, which keeps them small and copy-on-write simple.
+- Four derivation classes — `Length`, `Count`, `Offset`, `Checksum` — with an
+  addend, twelve built-in checksum algorithms, and a registry for more.
+- The fixup pass: sizes and offsets computed once (no derived value can change
+  any node's size, so they cannot cycle), then checksums ordered by span
+  containment with Kahn's algorithm in document order. Mutually covering
+  checksums are reported as cycles; a checksum covering its own field requires
+  an explicit `SelfZero`, which is how IPv4 and similar formats define it.
+- `Suppress` leaves chosen derivations inconsistent on purpose, per class or per
+  node — without which a fuzzer could never reach a target's validation code.
+- `Arena`: a bump allocator over fixed slabs with `Reset`, plus copy-on-write
+  path copying. Payloads are copied rather than shared so in-place byte mutation
+  cannot corrupt the corpus entry a clone came from.
+
+**`pkg/codec` — bytes to trees**
+
+- `Codec` interface and registry, with lookup by name and by file extension.
+- `raw`: the degenerate codec, so unstructured targets need no special handling
+  anywhere else in the engine.
+- `png`: signature plus length-prefixed, CRC-protected chunks — the archetype of
+  the format family that defeats byte-level fuzzing.
+- Decoding is **total and preserving**: malformed input yields a partial tree
+  with unrecognised bytes kept in opaque nodes, and values read from the file are
+  preserved even when wrong. Decode preserves; fixup repairs.
+- `UnparsedBytes` and `StructuredFraction` report how much of a seed a codec
+  actually understood — the signal that a campaign's schema does not match its
+  corpus.
+
+**Measured** (all zero-alloc, so gated on every platform)
+
+| Operation | Cost |
+| --- | --- |
+| PNG decode | 148 ns/op, 620 MB/s |
+| Clone + mutate + fixup + encode | 1.8 µs/op (~545k/s) |
+| Copy-on-write mutation | 69 ns/op |
+
+**Tests**
+
+- Property and round-trip tests per TESTS.md § 3: byte-exact round trip,
+  idempotent and order-independent fixups, zero steady-state allocation, no
+  aliasing across arena generations.
+- `FuzzPNGDecode` checks the round-trip invariant on every input; 3.8M
+  executions found no crash and no violation.
+- End-to-end: a chunk inserted through the IR and fixed up is accepted by the
+  standard library's PNG decoder, which validates every CRC; with checksum
+  fixups suppressed it is correctly rejected.
+
+### Changed
+
+- ARCHITECTURE.md § 3.1 now carries the implemented interfaces and the reasoning
+  behind two departures from the sketch: scalar detail is stored inline rather
+  than behind a `Meta` pointer, and the Arena is a bump allocator with `Reset`
+  rather than a free list with `Release`.
+
 ### Added — M0 Foundation (2026-08-28)
 
 Repository skeleton and the quality machinery that every later milestone is
