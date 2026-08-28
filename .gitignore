@@ -1,0 +1,23 @@
+# Build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Web console build artifacts
+/web/node_modules/
+/web/dist/
+
+# Local campaign state (never commit corpora, findings, or captures)
+/var/
+/.xfuzz/
+*.xfuzzdb
+corpus/
+findings/
+captures/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

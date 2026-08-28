@@ -1,0 +1,247 @@
+# Xfuzz — Security
+
+> Threat model, controls, and residual risks. Implements [ASR-0010](asr/ASR-0010-safety-isolation-and-authorization.md)
+> and [ADR-0012](adr/ADR-0012-sandbox-by-default-and-scope-guard.md).
+
+## 1. Why this document is load-bearing
+
+Xfuzz is, mechanically, an automated system for **running hostile code** and
+**emitting malicious traffic at high volume**. Its normal operation is
+indistinguishable from an attack, and its failure modes damage the host it runs
+on or systems it was never authorised to touch.
+
+Safety is therefore implemented as a **subsystem with interfaces, tests, and
+failure semantics** — not as advice in a manual. Opt-in safety is not safety: the
+default is what people run.
+
+## 2. Threat model
+
+### 2.1 Assets
+
+| Asset | Why it matters |
+| --- | --- |
+| Host running Xfuzz | Compromise via an escaping target |
+| Corpus and findings | Represent the campaign's entire value; corruption is silent and costly |
+| Captured traffic | Routinely contains credentials, tokens, session material, personal data |
+| Target systems | Must only be touched within authorised scope |
+| The daemon | Spawns processes and holds findings — a privileged service |
+| Audit log | Evidence of what was done, to whom, under what authorization |
+
+### 2.2 Actors
+
+| Actor | Trust | Notes |
+| --- | --- | --- |
+| Operator | Trusted | Authenticated to the daemon |
+| Fuzz target | **Untrusted** | Assumed hostile and actively malicious |
+| Campaign file | **Untrusted by default** | May be shared, downloaded, or attacker-supplied |
+| Grammars, corpora, dictionaries | **Untrusted** | Community-shared artifacts are attacker-influenced |
+| External plugins | **Untrusted** | Arbitrary third-party code |
+| Captured traffic | **Untrusted, sensitive** | Attacker-influenced *and* confidential |
+| Network peers | Untrusted | Including out-of-scope hosts reached by mistake |
+
+### 2.3 Threats
+
+| ID | Threat | Impact |
+| --- | --- | --- |
+| **T1** | Target escapes confinement — writes outside its workdir, forks without bound, exhausts memory/disk, or execs a shell | Host compromise, corpus corruption |
+| **T2** | Target attacks the fuzzer — corrupts the coverage map, forges the fork-server handshake, poisons the corpus | Silent campaign compromise; findings become untrustworthy |
+| **T3** | Traffic reaches an out-of-scope host | Unauthorised access; in a professional context, an incident |
+| **T4** | Malicious campaign file achieves code execution on the operator's host | Full compromise via a shared "config" |
+| **T5** | Malicious grammar, corpus, or capture exploits an Xfuzz parser | Compromise of the fuzzer itself |
+| **T6** | Plugin abuses its position to read findings or reach the network | Data exfiltration |
+| **T7** | Unauthenticated or over-exposed daemon | Remote code execution as the operator |
+| **T8** | Captured credentials leak via corpus, findings, exports, or logs | Credential disclosure |
+| **T9** | Audit log tampering | Loss of accountability |
+| **T10** | Uncontrolled resource growth fills disk or OOMs the host | Denial of service against the operator |
+
+## 3. Controls
+
+### 3.1 Target isolation — T1, T2
+
+Targets run confined **by default**, at the strongest level the platform offers.
+
+| Platform | Mechanism | Level |
+| --- | --- | --- |
+| Linux | User/mount/PID/network namespaces; seccomp-bpf allowlist; cgroups v2 (CPU, memory, PIDs); `no_new_privs`; read-only root with a writable workdir | `strong` |
+| macOS | Sandbox profile, `rlimit`s, restricted environment | `moderate` |
+| Windows | Job Objects, restricted tokens, AppContainer where available | `moderate` |
+| any | Resource limits and workdir confinement only | `minimal` |
+
+The level in force is **reported**, and a campaign may declare
+`safety.isolation: strong` and **refuse to start** below it. "Supported on macOS"
+must never silently mean "unprotected on macOS".
+
+Against T2 specifically: the coverage map is validated for structural sanity, the
+fork-server handshake is versioned and length-checked, and executors treat all
+target output as untrusted input to their own parsers.
+
+Escape hatches exist for legitimate needs (raw sockets, privileged ports, device
+access). Each is explicit, narrow, and recorded in the audit log.
+
+### 3.2 Scope guard — T3
+
+Any campaign emitting off-host traffic requires an explicit allowlist of hosts,
+CIDRs, and ports. Enforcement is layered so no single bug defeats it:
+
+1. **Network namespace with default-deny egress** (Linux) — enforcement *below*
+   the code, so a buggy or malicious adapter cannot bypass it.
+2. **In-process dialer check** on every platform — the portable layer.
+3. **Validation at campaign start** — misconfiguration fails immediately, not
+   after the first packet.
+
+Rules:
+
+- A campaign targeting a non-loopback address **without** an allowlist refuses to
+  start.
+- Loopback is exempt, so local experimentation stays frictionless.
+- Widening scope to public address space requires an explicit, separately
+  recorded acknowledgement.
+- Every scope decision and every violation attempt is audited.
+
+### 3.3 Authorization record — T3, T9
+
+Remote-target campaigns require, before the first packet:
+
+- operator identity
+- timestamp
+- an authorization reference (engagement ID, ticket, or written approval
+  reference)
+- an attestation that the operator is authorised to test the declared scope
+
+This is recorded in the audit log and attached to every finding exported from the
+campaign.
+
+### 3.4 Untrusted campaign files — T4
+
+A campaign file names a binary to execute, so an attacker-supplied file is an
+attacker-supplied command. Controls:
+
+- Campaign files are **data, not code** — YAML with a JSON Schema, no
+  general-purpose execution during parsing.
+- Dynamic logic is confined to the Starlark tier, which is **hermetic**: no
+  filesystem, network, or clock access, with step and allocation limits
+  (ADR-0010).
+- The daemon executes campaigns only from operator-designated directories.
+- `xfuzz explain` renders the fully resolved configuration — every binary,
+  argument, environment variable, and scope entry — so a file can be reviewed
+  before it is run.
+- Targets are sandboxed regardless of what the file requests; a campaign file
+  cannot lower isolation below the daemon's configured floor.
+
+### 3.5 Xfuzz's own attack surface — T5
+
+Xfuzz parses untrusted input in the ordinary course of its work: corpora,
+grammars, dictionaries, campaign files, HAR/pcap captures, sanitizer output,
+target responses, and the plugin protocol.
+
+Controls:
+
+- **Self-fuzzing.** Every parser listed above is continuously fuzzed with Go
+  native fuzzing in CI ([TESTS.md](TESTS.md) § Self-fuzzing). A fuzzing tool with
+  an unfuzzed parser has no credibility.
+- Memory-safe implementation language throughout the parsing surface.
+- Explicit size, depth, and recursion limits on every parser — decompression
+  bombs and deeply nested grammars are anticipated inputs.
+- No dynamic code loading in-process (Go's `plugin` package is rejected outright,
+  ADR-0010).
+
+### 3.6 Plugin containment — T6
+
+External plugins run **out of process** with:
+
+- no inherited credentials and no store access — they receive only the data their
+  interface defines
+- their own sandbox profile and resource limits
+- a versioned protocol with strict message validation
+- contained failure: a dying plugin fails its campaign with a clear error and
+  never affects the daemon or sibling campaigns
+
+Scripted extensions run in hermetic Starlark and cannot perform I/O at all — an
+assertion covered by test.
+
+### 3.7 Daemon security — T7
+
+- **Unix domain socket by default**, protected by filesystem permissions.
+- TCP/TLS is **opt-in**, never the default, and requires token authentication.
+- No unauthenticated endpoint, including metrics.
+- The console is served by the daemon with standard web protections: CSP, no
+  external asset loading, CSRF protection on state-changing requests, and
+  same-origin enforcement for the WebSocket.
+- API inputs are schema-validated before reaching any subsystem.
+
+### 3.8 Sensitive data — T8
+
+Captured traffic is treated as confidential by default:
+
+- Authentication material (bearer tokens, cookies, API keys, `Authorization`
+  headers) is **recognised, held fixed during mutation, and redacted at rest**.
+  Fixing it is also correct fuzzing practice — mutating a token yields only 401s.
+- Findings and corpora derived from captures are marked sensitive; export applies
+  redaction and warns explicitly.
+- Redaction rules are configurable and extensible for domain-specific secrets.
+- Logs never contain input payloads at default verbosity.
+
+### 3.9 Audit integrity — T9
+
+The audit log is **append-only and hash-chained**: each entry commits to its
+predecessor, so removal or modification is detectable. It **cannot be disabled
+from within a campaign configuration**. Verification is a supported operation
+(`xfuzz audit verify`).
+
+### 3.10 Resource control — T10
+
+- Per-campaign disk budgets for corpus and findings, with a defined culling
+  policy and reported (never silent) culling.
+- Per-target memory, CPU, PID, file-descriptor, and wall-clock limits enforced by
+  the sandbox.
+- Daemon-level caps on concurrent campaigns and workers.
+- Termination conditions are a first-class part of every campaign file, so an
+  unattended run ends deterministically.
+
+## 4. Residual risks
+
+Stated plainly, because unstated residual risk is the dangerous kind:
+
+| Risk | Status |
+| --- | --- |
+| Kernel vulnerability defeating namespace/seccomp isolation | Not mitigable by Xfuzz. Run high-risk targets in a disposable VM. |
+| macOS and Windows isolation is weaker than Linux | Reported honestly as `moderate`; require `strong` for hostile targets. |
+| An operator with an escape hatch enabled | Audited, not prevented. |
+| Scope guard cannot prevent an authorised-but-wrong target | Scope is only as correct as the allowlist the operator writes. |
+| A malicious plugin exfiltrating data it is legitimately given | Contained but not eliminated; only run trusted plugins. |
+| Physical or hypervisor-level attacks | Out of scope. |
+
+## 5. Responsible use
+
+Xfuzz is built for authorised security testing: your own software, systems you
+have written permission to test, and CTF or research environments where testing
+is sanctioned.
+
+Using it against systems you are not authorised to test is unlawful in most
+jurisdictions. The scope guard and authorization record exist to make the
+boundary explicit and auditable — they are not a substitute for having
+authorization, and they must not be treated as one.
+
+## 6. Reporting a vulnerability in Xfuzz
+
+Report security issues in Xfuzz itself privately to the maintainer. Please
+include a description, affected version, reproduction steps, and impact
+assessment.
+
+- Acknowledgement target: 3 business days
+- Assessment target: 10 business days
+- Fix and disclosure: coordinated with the reporter
+
+Do not open a public issue for a security vulnerability.
+
+## 7. Security testing
+
+Security properties are tested, not asserted. See [TESTS.md](TESTS.md):
+
+- Sandbox escape attempts (write outside workdir, fork bomb, memory exhaustion,
+  unlisted network connection) are integration tests that must fail to escape.
+- Scope-guard bypass attempts are tests.
+- Audit-log tamper detection is a test.
+- Starlark I/O attempts are tests.
+- Every untrusted parser is continuously self-fuzzed.
+- Dependency licence and vulnerability scanning gate the build.

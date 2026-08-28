@@ -1,0 +1,22 @@
+Xfuzz — Third-Party Notices
+
+Xfuzz is proprietary software (see LICENSE). It incorporates third-party
+components that remain subject to their own license terms.
+
+This file is the authoritative inventory of those components. It is generated
+and verified in CI (see docs/TESTS.md, "License compliance"). Every direct and
+transitive dependency MUST appear here with its license before it may be
+vendored or imported.
+
+Dependency policy (see docs/adr/ADR-0018-proprietary-commercial-license.md):
+
+  ALLOWED   : Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, MPL-2.0 (as an
+              unmodified library), Unlicense, Zlib
+  FORBIDDEN : GPL-2.0, GPL-3.0, AGPL-3.0, LGPL (static linking), SSPL, BUSL,
+              and any license imposing source-disclosure obligations on
+              proprietary distribution
+
+Components
+----------
+
+(none yet — the repository currently contains documentation only)

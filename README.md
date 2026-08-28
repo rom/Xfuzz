@@ -1,0 +1,75 @@
+# Xfuzz
+
+**A universal fuzzing platform.** One engine, one corpus model, and one triage
+pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
+applications, and TUI applications — stateless or stateful, black-box, grey-box,
+or white-box, driven from a CLI or a web console.
+
+> **Status: design baseline.** The architecture is settled and recorded; the
+> implementation has not started. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for
+> the path to v0.1.
+
+## The idea
+
+Fuzzing tooling is fragmented into incompatible islands — one tool for file
+parsers, another for protocols, another for APIs, effectively nothing for GUIs.
+An operator working across them learns four tools, maintains four corpora, and
+triages crashes four different ways.
+
+But those tools differ mainly in **how an input is delivered and how a response
+is observed**. Everything downstream — scheduling seeds, mutating inputs,
+deciding what is interesting, deduplicating crashes, minimising reproducers — is
+the same problem wearing different clothes.
+
+Xfuzz factors delivery and observation out, so one engine serves all of them.
+
+## What that buys
+
+- **Structured inputs by default.** A typed IR with derived fields — lengths,
+  offsets, checksums — recomputed after every mutation, so inputs survive
+  validation instead of dying in the first CRC check. Each fixup is suppressible,
+  so the validation code is fuzzable too.
+- **State as a signal.** For stateful targets, new protocol states and transitions
+  are as interesting as new code edges — and the state model can be inferred from
+  responses, so it works black-box.
+- **Composable guidance.** Coverage-guided, directed, feedback-driven, and hybrid
+  are not modes to pick between; they compose. "Cover broadly, weight toward this
+  patch, and treat any 500 as interesting" is one campaign.
+- **Findings, not crash files.** Asynchronous triage: classify, bucket, minimise,
+  verify reproducibility.
+- **Safe by default.** Targets are sandboxed and outbound traffic is
+  scope-guarded without opting in, with a hash-chained audit log.
+- **Reproducible by construction.** Deterministic RNG streams and full provenance;
+  every finding replays on another machine.
+
+## Documentation
+
+Everything lives in [`docs/`](docs/README.md):
+
+| | |
+| --- | --- |
+| [DESIGN.md](docs/DESIGN.md) | Problem, principles, core model, campaign format |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Components, interfaces, data flow, traceability |
+| [MVP_PLAN.md](docs/MVP_PLAN.md) | Milestones to v0.1 |
+| [SECURITY.md](docs/SECURITY.md) | Threat model and controls |
+| [TESTS.md](docs/TESTS.md) | Test strategy |
+| [CHANGELOG.md](docs/CHANGELOG.md) | Release history |
+| [adr/](docs/adr/README.md) | 21 architecture decisions, with rejected alternatives |
+| [asr/](docs/asr/README.md) | 15 architecturally significant requirements |
+
+## Platforms
+
+Linux (primary, full capability), macOS, and Windows. Capability differences are
+reported explicitly by `xfuzz doctor` rather than discovered through failure.
+
+## Responsible use
+
+Xfuzz is built for **authorised** security testing: your own software, systems
+you have written permission to test, and sanctioned research or CTF
+environments. The scope guard and authorization record make the boundary explicit
+and auditable — they are not a substitute for having authorization. See
+[docs/SECURITY.md](docs/SECURITY.md).
+
+## License
+
+Proprietary and confidential. All rights reserved. See [LICENSE](LICENSE).
