@@ -30,6 +30,7 @@ objective as well; the fuzzer's job of getting there is identical.
 | --- | --- | --- | --- |
 | `simple_parser.c` | 3 | shallow | Basic mutation, crash detection, coverage guidance |
 | `magic_parser.c` | 4 | magic values | Dictionaries, and later cmplog and value profile |
+| `chunked_format.c` | 5 | checksum-gated | Structured mutation with derived fields; crash bucketing and minimisation |
 | `hang.c` | 0 | — | Timeout enforcement; a hang is a finding, not a crash |
 | `nop.c` | 0 | — | The measurement floor: everything a benchmark reports is protocol, not target |
 
@@ -49,6 +50,19 @@ guess against a corpus entry mutation had grown to fifty-five bytes. That is a
 real limit and worth measuring — but it is what comparison logging (v0.3) and
 corpus trimming (M4) exist to solve, and it belongs in `magic_parser` with the
 other bugs that are deliberately out of reach until then.
+
+`chunked_format` is calibrated for triage rather than for discovery. Every bug
+sits behind a CRC-32 covering its own chunk, so byte-level mutation cannot reach
+any of them — changing the payload invalidates the checksum, and changing the
+checksum removes the payload that triggers the bug. It is reachable only through
+a structured input with a derived field, which is ADR-0005's argument expressed
+as a target instead of as a claim. `chunked_format.xfg` is that grammar.
+
+Its five bugs end in three distinct signals: three aborts, one SIGFPE, one
+SIGSEGV. That is deliberate. A bucketing strategy that groups on the fatal signal
+alone must produce three buckets here and one that groups on the crashing path
+must produce five, which makes the difference between them a measurement rather
+than an assertion (docs/TESTS.md § 4).
 
 ## Building
 

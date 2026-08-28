@@ -333,3 +333,69 @@ func stateOrNew(s string) string {
 	}
 	return s
 }
+
+// Rebucket moves a finding into a different bucket, creating it if necessary
+// and keeping both buckets' counts right.
+//
+// Findings are filed provisionally when the engine records them, from whatever
+// the fuzz loop knew at the time — which is a signal number and not much else.
+// Triage recomputes the bucket from the minimised reproducer, where the evidence
+// is far better. Moving the finding rather than filing a second one is what
+// keeps the bucket count a count of bugs.
+func (s *Store) Rebucket(ctx context.Context, findingID int64, strategy, signature string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var (
+		campaignID    int64
+		oldBucket     int64
+		kind, summary string
+	)
+	if err := tx.QueryRowContext(ctx,
+		`SELECT campaign_id, bucket_id, kind, summary FROM finding WHERE id = ?`, findingID).
+		Scan(&campaignID, &oldBucket, &kind, &summary); err != nil {
+		return fmt.Errorf("store: reading finding %d: %w", findingID, err)
+	}
+
+	now := s.now().UTC().UnixNano()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO bucket (campaign_id, strategy, signature, kind, summary, count, first_seen_at)
+		 VALUES (?, ?, ?, ?, ?, 0, ?)
+		 ON CONFLICT(campaign_id, strategy, signature) DO NOTHING`,
+		campaignID, strategy, signature, kind, summary, now); err != nil {
+		return err
+	}
+	var newBucket int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM bucket WHERE campaign_id = ? AND strategy = ? AND signature = ?`,
+		campaignID, strategy, signature).Scan(&newBucket); err != nil {
+		return err
+	}
+	if newBucket == oldBucket {
+		return tx.Commit()
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE finding SET bucket_id = ?, updated_at = ? WHERE id = ?`,
+		newBucket, now, findingID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE bucket SET count = count + 1 WHERE id = ?`, newBucket); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE bucket SET count = count - 1 WHERE id = ?`, oldBucket); err != nil {
+		return err
+	}
+	// A bucket nobody is in is not a bug. Leaving empty buckets behind would
+	// inflate every count computed from the table.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM bucket WHERE id = ? AND count <= 0`, oldBucket); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

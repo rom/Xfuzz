@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/rom/Xfuzz/pkg/corpus"
+
 	_ "modernc.org/sqlite" // pure-Go driver: no cgo (ADR-0017)
 )
 
@@ -259,3 +261,8 @@ var migrations = map[int][]string{
 
 // Version returns the store's schema version.
 func (s *Store) Version(ctx context.Context) (int, error) { return s.schemaVersion(ctx) }
+
+// PutBlob stores a payload and returns its content address.
+func (s *Store) PutBlob(_ context.Context, data []byte) (corpus.Digest, error) {
+	return s.blobs.Put(data)
+}

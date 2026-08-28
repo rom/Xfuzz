@@ -1,0 +1,19 @@
+# chunked_format, expressed in the Xfuzz grammar language.
+#
+# The point of this schema is the derived crc field. Every bug in the target
+# sits behind it, so a campaign driven by this grammar reaches them and one
+# driven by byte mutation does not — which is the argument for the structured
+# IR, made as a measurement.
+
+format chunked {
+  magic:   magic "XCHK"
+  version: u8 = 1
+  chunks:  repeat<1..8> chunk
+}
+
+struct chunk {
+  tag:     bytes[4]
+  length:  u32be   = len(^payload)
+  payload: bytes<0..128>
+  crc:     u32be   = crc32(^tag..^payload)
+}
