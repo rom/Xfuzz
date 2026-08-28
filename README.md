@@ -5,12 +5,13 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M2 complete — mutation works, and it is measurably better.** The
-> structured IR, 24 mutation operators, the `.xfg` grammar language, and
-> grammar-driven generation are in. Against a PNG corpus, structure-aware
-> mutation with derived-field repair reaches **99.6%** container validity where
-> byte-level mutation of the same seeds reaches **0.0%**. M3 (execution and
-> feedback) is next. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to
+> **Status: M3 complete — it is a fuzzer now.** Coverage-guided campaigns run
+> end to end against instrumented native targets and find every planted bug in
+> the test corpus (3/3 and 4/4), with 3.7% engine overhead and byte-identical
+> traces between runs of the same seed. The structured IR, 24 mutation
+> operators, the `.xfg` grammar language, a fork server, a C coverage runtime,
+> and a composable feedback pipeline are all in. M4 (storage, triage and the
+> sandbox) is next. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to
 > v0.1.
 
 ## The idea

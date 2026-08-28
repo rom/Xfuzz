@@ -80,7 +80,8 @@ github.com/rom/Xfuzz
 │   ├── version/            build identity, injected at link time
 │   └── platform/           OS-specific: linux/ darwin/ windows/
 ├── web/                    TypeScript SPA → embedded static assets
-├── runtime/                xfuzz-rt: C coverage runtime (target-side)
+├── runtime/                xfuzz-rt: the C coverage runtime, embedded for
+│   └── csrc/               xfuzz-cc to compile into targets (never into Xfuzz)
 ├── testdata/
 │   ├── targets/            planted-bug integration targets
 │   └── corpora/            reference corpora
@@ -207,27 +208,36 @@ corpus entry the clone came from.
 ### 3.2 Execution and observation — `pkg/executor`, `pkg/feedback`
 
 ```go
+type Input struct {
+    Bytes []byte   // the encoded form; what nearly every executor delivers
+    Node  *ir.Node // the structure, for session and driver executors
+}
+
 type Executor interface {
-    Run(ctx context.Context, in *ir.Node, obs []Observer) (ExitKind, error)
+    Name() string
+    Run(ctx context.Context, in Input, obs []feedback.Observer) (feedback.ExitKind, error)
     Reset(ResetPolicy) error
-    Capabilities() Caps          // tier, granularity, platform, measured overhead
+    Capabilities() Caps   // tier, backend, granularity, platform, honesty flags
+    Close() error
 }
 
 type Observer interface {
-    Pre() error                  // arm before execution
-    Post(ExitKind) error         // harvest after execution
+    Name() string
+    Pre() error          // arm before execution
+    Post(ExitKind) error // harvest after execution
     Reset()
 }
 
 type Feedback interface {
-    IsInteresting(obs []Observer) (bool, Score, error)
-    Append(tc *corpus.Testcase)  // commit novelty state on admission
-    Discard()                    // roll back on rejection
-    Name() string                // attribution: which feedback admitted this seed
+    Name() string
+    IsInteresting(obs []Observer, ek ExitKind) (bool, Score, error)
+    Append()  // commit the state observed by the most recent judgement
+    Discard() // roll it back
 }
 
 type Objective interface {
-    IsFinding(obs []Observer, ek ExitKind) (bool, FindingMeta, error)
+    Name() string
+    IsFinding(obs []Observer, ek ExitKind) (bool, Finding, error)
 }
 
 // Algebra — ADR-0007
@@ -237,10 +247,63 @@ func Not(Feedback) Feedback
 func Fast(cheap, expensive Feedback) Feedback   // short-circuit ordering
 ```
 
+`Run` takes encoded bytes rather than a tree because the engine has already
+encoded the input — the fixup pass returns the encoding — and encoding twice on
+the hot path is pure waste. `Node` travels alongside for the executors that need
+structure rather than a blob.
+
+`Append` takes no argument. The obvious signature hands it the testcase, which
+would make `pkg/feedback` depend on `pkg/corpus`; the engine already knows which
+input it just judged, so the dependency buys nothing.
+
+`ExitKind` lives in `pkg/feedback`, not `pkg/executor`: the core must not depend
+on how inputs are delivered, so executors import feedback and never the reverse.
+`ExitError` — the harness failed — is deliberately not a fault, because
+reporting infrastructure failures as findings is how a fuzzer loses its
+credibility.
+
 The hot path holds a **static ordered slice of concrete implementations**; no
 reflection, no `interface{}` boxing per execution, no channel round-trips.
 
-### 3.2a Mutation — `pkg/mutate`, `pkg/rng`
+#### The spawn boundary
+
+`pkg/executor` cannot import `internal/safety` — `pkg/` never imports
+`internal/` — and the architecture lint forbids it importing `os/exec` at all.
+So it declares the interface and `internal/safety` implements it:
+
+```go
+type Spawner interface {
+    Run(ctx context.Context, spec ProcSpec) (ProcResult, error)
+    Start(ctx context.Context, spec ProcSpec) (Handle, error)
+    IsolationLevel() string   // what is enforced, not what is planned
+}
+
+type SharedMemoryProvider interface {   // implemented in internal/platform
+    Create(size int) (SharedMemory, error)
+    Available() bool
+}
+```
+
+That inversion is the point rather than a workaround. ADR-0012 makes confinement
+mandatory, and the only way to guarantee a rule like that is to leave executors
+no other way to start a process. The lint enforces the same rule from the other
+side.
+
+#### Tiers, measured
+
+| Tier | Measured here | Notes |
+| --- | --- | --- |
+| T2 fork server, do-nothing target | 3,129 exec/s | the protocol floor |
+| T2 with coverage collection | 3,103 exec/s | shared memory costs about 1% |
+| T2 realistic target with coverage | 2,787 exec/s | 89% of the floor |
+| T4 subprocess | 742 exec/s | 3.8× slower; what the fork server buys |
+
+Measured on a 4-core Firecracker microVM where bare `fork`+`_exit` tops out at
+about 5,500/s. ASR-0007's 5,000 exec/s floor is stated for a commodity 8-core
+host; the gate asserts it only where the host can support it, and asserts the
+ratio against the do-nothing floor everywhere (docs/TESTS.md § 7).
+
+### 3.2a Mutation — `pkg/mutate`, `pkg/rng`### 3.2a Mutation — `pkg/mutate`, `pkg/rng`
 
 ```go
 type Mutator interface {

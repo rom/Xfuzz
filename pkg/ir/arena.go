@@ -341,3 +341,32 @@ func (a *Arena) GrowKids(s []*Node, need int) []*Node {
 	copy(dst, s)
 	return dst
 }
+
+// Copy deep-copies a tree onto the heap, independent of any arena.
+//
+// The fuzz loop builds candidates in an arena that is reset on every iteration.
+// An input worth keeping has to outlive that, so admission copies it out. This
+// happens once per corpus entry rather than once per execution, so the
+// allocation is not on the hot path.
+func Copy(n *Node) *Node {
+	if n == nil {
+		return nil
+	}
+	c := &Node{
+		Kind: n.Kind, Width: n.Width, Endian: n.Endian,
+		Sel: n.Sel, Val: n.Val, Name: n.Name,
+		MinLen: n.MinLen, MaxLen: n.MaxLen,
+		Derive: n.Derive, Target: n.Target,
+	}
+	c.flags = n.flags &^ flagShared
+	if len(n.Raw) > 0 {
+		c.Raw = append([]byte(nil), n.Raw...)
+	}
+	if len(n.Children) > 0 {
+		c.Children = make([]*Node, len(n.Children))
+		for i, k := range n.Children {
+			c.Children[i] = Copy(k)
+		}
+	}
+	return c
+}

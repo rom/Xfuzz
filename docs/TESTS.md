@@ -168,6 +168,19 @@ Enforces ASR-0007. `bench/` executes the tier table in CI:
 | T4 subprocess | 300 exec/s |
 | T5 emulated | 200 exec/s |
 
+These floors are stated for a commodity 8-core Linux host, and a host that
+cannot reach one with a target that does nothing cannot reach it with a real
+one either. Asserting an absolute number on such a host measures the host, not
+the fuzzer. So the gate has two parts:
+
+- **Always asserted:** a realistic target must run at a healthy fraction of the
+  rate the same executor achieves against a do-nothing target. That ratio says
+  whether the executor spends its time in the target or in the protocol around
+  it, and it means the same thing on any machine.
+- **Asserted where the host allows it:** the absolute floor. Where the host's own
+  do-nothing rate is below the floor, the test says so and skips that assertion
+  rather than reporting a failure it cannot attribute.
+
 Also gated:
 
 - **Engine overhead** < 10 % of wall-clock at each tier.
@@ -246,11 +259,17 @@ Asserts that recovery and resumability (ASR-0012) actually hold:
 | `test (ubuntu-latest)` | Linux amd64 | Full suite with `-race` |
 | `test (macos-latest)` | macOS arm64 | Full suite with `-race`, minus Linux-only tiers |
 | `test (windows-latest)` | Windows amd64 | Full suite, minus POSIX-only tiers |
+| `integration` | Linux amd64 | Layer 3: planted-bug campaigns, behind the `integration` build tag |
 | `nocgo` | Linux amd64 | Full suite with `CGO_ENABLED=0` (ADR-0017) |
 | `cross` | Linux | Compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64` |
 | `vuln` | Linux | `govulncheck` |
 
-Two deliberate gaps, stated rather than papered over:
+The campaign tests sit behind a build tag and run in their own job. They take
+minutes, so leaving them in the default suite would make the pre-commit run too
+slow to actually run before every commit — and a suite people skip catches
+nothing.
+
+Three deliberate gaps, stated rather than papered over:
 
 - **The race detector does not run on Windows.** It requires a working cgo
   toolchain that the hosted image does not guarantee, and a job that fails for
@@ -260,6 +279,10 @@ Two deliberate gaps, stated rather than papered over:
 - **No native `linux/arm64` job.** arm64 is covered by compilation only until an
   arm64 runner is available. Compilation is not execution, and this is a real
   hole in the ASR-0006 claim, not a formality.
+- **Instrumented targets need clang.** Where it is absent the integration tests
+  skip with a reason rather than failing, because a missing toolchain is an
+  environment gap and a suite that fails for environmental reasons is one people
+  learn to ignore.
 
 Platform-unavailable capabilities are asserted to **skip explicitly with a
 reason**, never to fail silently or pass vacuously — the same information

@@ -42,6 +42,11 @@ type rule struct {
 	applyTo []string // repo-relative dir prefixes the rule governs ("" = all)
 	forbid  []string // import path prefixes that are forbidden
 	allow   []string // dir prefixes exempted from the rule
+
+	// allowTests exempts _test.go files. Use it only where the rule protects
+	// runtime behaviour rather than structure, since test files never reach a
+	// shipped binary.
+	allowTests bool
 }
 
 // importRules are checked against every .go file in the repository.
@@ -77,6 +82,15 @@ var importRules = []rule{
 			"bench/",        // the benchmark harness drives external processes
 			"cmd/xfuzz-cc/", // the compiler wrapper execs a compiler by definition
 		},
+		// Test files are exempt. The rule protects runtime behaviour — every
+		// target a campaign runs must pass through the safety layer — and a
+		// _test.go file is not part of any shipped binary, so it cannot carry
+		// that behaviour into production. Integration tests legitimately
+		// compile fixtures and invoke the toolchain. The layering that keeps
+		// executors away from the safety layer is pkg-no-internal, which does
+		// apply to tests, and which is why those tests live under internal/ at
+		// all.
+		allowTests: true,
 	},
 	{
 		name:    "no-stdlib-plugin",
@@ -183,6 +197,9 @@ func checkImports(fset *token.FileSet, f *ast.File, rel string) []Violation {
 	var vs []Violation
 	for _, r := range importRules {
 		if !underAny(rel, r.applyTo) || underAny(rel, r.allow) {
+			continue
+		}
+		if r.allowTests && strings.HasSuffix(rel, "_test.go") {
 			continue
 		}
 		for _, spec := range f.Imports {

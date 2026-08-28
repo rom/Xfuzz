@@ -1,0 +1,11 @@
+# Dictionary for magic_parser. The tokens a format's own documentation would
+# list: the header, the section tags, and the constants the parser compares
+# against.
+header="XFZ!"
+section_1="\x01"
+section_2="\x02"
+section_3="\x03"
+section_4="\x04"
+magic_deadbeef="\xde\xad\xbe\xef"
+marker_41="\x41"
+marker_7f="\x7f"

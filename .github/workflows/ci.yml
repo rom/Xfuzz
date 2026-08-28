@@ -86,6 +86,25 @@ jobs:
           go build -o NUL ./cmd/xfuzz-worker
           go build -o NUL ./cmd/xfuzz-cc
 
+  # Layer 3 of docs/TESTS.md: planted-bug targets driven through a whole
+  # coverage-guided worker. This is the job that detects the defining failure of
+  # a fuzzer — running beautifully and finding nothing — and the only one that
+  # can. It needs clang for instrumentation and takes minutes, so it runs
+  # separately from the fast suite and without the race detector.
+  integration:
+    name: integration (planted bugs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: clang version
+        run: clang --version
+      - name: run integration tests
+        run: make test-integration
+
   # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
   # slower or less featureful, never broken.
   nocgo:

@@ -124,6 +124,35 @@ func TestAllowlistsAreHonoured(t *testing.T) {
 	}
 }
 
+// TestSpawnConfinementExemptsTests documents the one rule that does not apply
+// to test files, and checks it still applies to everything else.
+func TestSpawnConfinementExemptsTests(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"internal/engine/helper_test.go": "package engine\nimport _ \"os/exec\"\n",
+		"internal/engine/real.go":        "package engine\nimport _ \"os/exec\"\n",
+	}
+	for name, src := range files {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs, err := Check(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 1 {
+		t.Fatalf("expected exactly one violation, the non-test file, got %v", vs)
+	}
+	if vs[0].File != "internal/engine/real.go" {
+		t.Errorf("the violation is on %s; production code must still be caught", vs[0].File)
+	}
+}
+
 // TestSkipsGeneratedAndVendorTrees keeps the linter from reporting on trees the
 // project does not author.
 func TestSkipsGeneratedAndVendorTrees(t *testing.T) {

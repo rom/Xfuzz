@@ -11,6 +11,111 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M3 Execution and feedback (2026-08-28)
+
+The engine becomes a fuzzer. Coverage-guided campaigns run end to end against
+instrumented native targets and find every planted bug in the test corpus.
+
+**`pkg/feedback` — the guidance pipeline (ADR-0007)**
+
+- `Observer` / `Feedback` / `Objective` with a composable boolean algebra
+  (`All`, `Any`, `Not`, `Fast`) with defined short-circuit and commit semantics:
+  a child that never saw an execution is never told to commit it.
+- Coverage map with AFL-style logarithmic hitcount bucketing, so a loop running
+  a different number of times does not read as a new path, and a signature for
+  asking whether a shorter input still goes to the same places.
+- Output-novelty feedback with a normalisation hook, timing-outlier feedback,
+  and crash, hang, OOM, sanitizer and oracle objectives.
+- `ExitError` — the harness failed — is explicitly not a fault. Reporting
+  infrastructure failures as findings is how a fuzzer loses its credibility.
+
+**`pkg/executor` — tiers T0, T2, T4 (ADR-0009)**
+
+- T0 in-process for Go harnesses, T2 fork server, T4 subprocess with stdin, file
+  and argument delivery.
+- Capabilities report what is *enforced*, not what is planned: an executor that
+  cannot stop a hung target says its timeouts are advisory.
+- The spawn boundary. `pkg/executor` declares `Spawner` and
+  `SharedMemoryProvider`; `internal/safety` and `internal/platform` implement
+  them. ADR-0012 makes confinement mandatory, and the only way to guarantee that
+  is to leave executors no other way to start a process.
+
+**`pkg/corpus`** — content-addressed testcases, provenance, and three power
+schedules (uniform as a control, round-robin, and a weighted schedule).
+
+**`internal/safety`** — the only thing in Xfuzz that creates a process: process
+groups so a timeout kills what the target started, enforced timeouts, and
+bounded output capture. Isolation reports `minimal` until M4.
+
+**`internal/engine`** — the fuzz loop, corpus trimming, finding buckets, and
+per-worker deterministic RNG streams.
+
+**Instrumentation (ADR-0001)** — `xfuzz-cc` wraps clang and links `xfuzz-rt`, a
+small C runtime providing edge coverage over shared memory and a fork server.
+An instrumented binary still runs standalone. The runtime is embedded in the
+wrapper, and `xfuzz-cc --print-runtime` writes it out, because anyone asked to
+link code into their software should be able to read it first.
+
+**Planted-bug targets** — `simple_parser` (3 bugs, shallow), `magic_parser`
+(4 bugs behind magic values, with a dictionary), plus `hang` and `nop` for
+timeout enforcement and measuring the protocol floor.
+
+**Results**
+
+| Measurement | Result |
+| --- | --- |
+| Planted bugs found | 3/3 and 4/4 |
+| T2 fork server, realistic target with coverage | 2,787 exec/s (89% of the 3,129 exec/s host floor) |
+| T4 subprocess | 742 exec/s — the fork server is 3.8× faster |
+| Engine overhead | 3.7% |
+| Coverage map scan, 64 KB | 9.3 µs, zero allocations |
+| Determinism | byte-identical traces across runs |
+| Guided against blind | corpus 12 vs 1, coverage 37 vs 0 |
+
+### Fixed
+
+Four bugs found by the tests, each invisible from outside the fuzzer:
+
+- **Coverage instrumented at the wrong level.** Clang defaults
+  `-fsanitize-coverage` to `func`, one guard per function, which cannot
+  distinguish two inputs taking different branches of the same function.
+  Coverage-guided fuzzing silently degrades to random. Now `bb,no-prune`.
+- **Sequential block identifiers collided in the edge encoding.** The index is
+  `prev>>1 ^ loc`, so clustered identifiers cluster indices and distinct edges
+  collapse onto one. Two depths of a comparison ladder were indistinguishable.
+  Identifiers are now hashed across the map.
+- **The fork server polluted its own coverage map.** Its loop runs in the parent,
+  which holds the same shared map, so it incremented counters while the fuzzer
+  was clearing and reading them. The symptom was a campaign that was identical
+  for tens of thousands of executions and then quietly divergent.
+- **The power schedule weighed measured execution time**, which varies with
+  machine load — an ASR-0008 violation inside code written to serve ASR-0008.
+  Now opt-in via `PreferFast`, off by default.
+
+Also: a timing observer overwrote the spawner's more accurate measurement during
+harvest; `ProcSpec.Args` was ambiguous about `argv[0]` and every target was
+receiving it twice.
+
+### Changed
+
+- Corpus trimming moved from M4 into the engine. Mutation grows inputs, and a
+  mutator picks a position uniformly, so an entry that has drifted to fifty
+  bytes gets a fraction of the attention per byte a short one does. Measured: a
+  campaign reliably climbed a comparison ladder two steps and stalled; with
+  trimming it walks it to the end. That is core engine work, not triage.
+- `tools/archlint` exempts `_test.go` files from spawn confinement, since a test
+  file is not part of any shipped binary and the rule protects runtime
+  behaviour. Production code is still caught, which its own test asserts.
+- The planted-bug ladder in `simple_parser` uses boundary values rather than
+  arbitrary constants. It is the *shallow* target, and a bug needing comparison
+  logging to reach does not belong in it — that belongs to `magic_parser` and to
+  v0.3.
+- Campaign tests sit behind an `integration` build tag with their own CI job, so
+  the pre-commit suite stays under a second.
+- ARCHITECTURE § 3.2 carries the implemented interfaces, the spawn boundary, and
+  measured per-tier throughput; TESTS.md § 7 documents the two-part throughput
+  gate and § 10 the CI matrix that exists.
+
 ### Added — M2 Mutation and generation (2026-08-28)
 
 Everything that turns one input into another: the operators, the schedule that
