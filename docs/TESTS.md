@@ -321,18 +321,40 @@ campaign file in the docs validates against it.
 Security properties from [SECURITY.md](SECURITY.md) are executable tests, not
 claims:
 
-| Test | Asserts |
-| --- | --- |
-| Write outside workdir | Blocked by sandbox |
-| Fork bomb | Contained by PID limit |
-| Memory exhaustion | Contained by cgroup/Job Object |
-| Connection to unlisted host | Blocked by scope guard, audited |
-| Campaign without scope allowlist | Refuses to start |
-| Starlark attempts I/O | Fails; no I/O possible |
-| Audit log modified | Tamper detected by hash chain |
-| Malformed fork-server handshake | Rejected without memory corruption |
-| Oversized/deeply nested grammar | Rejected by limits, no OOM |
-| Unauthenticated API request | Rejected |
+| Test | Asserts | Implemented as |
+| --- | --- | --- |
+| Target keeps the fuzzer's identity | Deprivileged to a uid that is not the overflow id | `TestSecurityTargetIsDeprivileged` |
+| Write outside workdir | Blocked by sandbox; a write *inside* still works | `TestSecurityWriteOutsideWorkdir` |
+| Fork bomb | Contained near the configured limit | `TestSecurityForkBomb` |
+| Memory exhaustion | Contained by cgroup/Job Object | `TestSecurityMemoryExhaustion` |
+| Privileged syscall | Denied with `EPERM` by the seccomp filter | `TestSecurityPrivilegedSyscallIsDenied` |
+| Seccomp filter pins the ABI | The program loads the architecture first | `TestSecuritySeccompFilterShape` |
+| Connection to unlisted host | Blocked by scope guard, audited | `TestSecurityUnlistedHostIsRefused` |
+| Campaign without scope allowlist | Refuses to start | `TestSecurityCampaignWithoutScopeRefusesToStart` |
+| Campaign without an authorization record | Refuses to start | `TestAuthorizeRefusesRemoteWithoutARecord` |
+| Public scope without acknowledgement | Refuses to start | `TestScopeRefusesPublicSpaceWithoutAcknowledgement` |
+| Workdir unreachable by the target's identity | Refused at start, not on every execution | `TestSecurityWorkdirIsCheckedBeforeTheCampaignStarts` |
+| Sandbox is on with no configuration | The zero policy still confines | `TestSecuritySandboxIsOnByDefault` |
+| Audit log modified | Tamper detected by hash chain | `TestAuditDetectsModification`, `TestAuditDetectsDeletionFromTheMiddle` |
+| Audit log truncated | Tamper detected by the mirrored chain head | `TestAuditDetectsTruncation` |
+| Malformed fork-server handshake | Rejected without memory corruption | `TestForkServerRejects*` (silence, wrong magic, truncated word, 1 MiB of garbage) |
+| Starlark attempts I/O | Fails; no I/O possible | M8, with the plugin layer |
+| Oversized/deeply nested grammar | Rejected by limits, no OOM | M8 |
+| Unauthenticated API request | Rejected | M5, with the API |
+
+The escape attempts are pointed at `testdata/targets/escape.c`, a target written
+to get out: it writes outside its directory, forks without bound, allocates
+without bound, and calls a privileged syscall, and reports which of those it was
+stopped doing. Each test distinguishes "contained" from "the program did not
+run", because a sandbox test that passes because the target never started is
+worse than no test.
+
+Where a mechanism is unavailable on the host — no cgroup hierarchy, no user
+namespaces, no seccomp — the corresponding test skips with the reason rather than
+failing. A suite that fails for environmental reasons is a suite people learn to
+ignore (§ 10). What must never happen is a test that passes because the mechanism
+was silently not applied, which is why each one asserts the *effect* rather than
+the configuration.
 
 ## 13. Running the tests
 

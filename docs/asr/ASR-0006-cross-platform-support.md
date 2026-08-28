@@ -51,4 +51,4 @@ Linux be fast without letting POSIX assumptions leak into portable code.
 
 ## Satisfied by
 
-ADR-0002, ADR-0009, ADR-0012, ADR-0017
+ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022

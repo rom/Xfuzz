@@ -11,6 +11,148 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M4 Storage, triage, and safety (2026-08-28)
+
+Crashes become findings, and the tool becomes safe to run.
+
+**`internal/store` — the hybrid store (ADR-0008)**
+
+- Content-addressed blob store for payloads, embedded SQL for metadata. Blobs
+  are written to a temporary name and renamed, and fsynced before publication,
+  because the store writes the blob first and the row second: a crash can then
+  only leave an orphan, never a row promising a payload that was never written.
+  Reads re-hash and refuse a blob that does not match its name.
+- Schema versioning with forward-only migrations, each in its own transaction.
+  Opening a store written by a newer build fails rather than reading fields it
+  does not understand.
+- Campaign, testcase, bucket, and finding records; disk budgets with culling
+  that never touches favoured entries or finding reproducers and breaks ties on
+  the digest, so two runs of a campaign cull identically; blob collection with a
+  grace window, since a live payload is always briefly unreferenced.
+- Atomic checkpoints: coverage (deflated — a sparse map compresses to under a
+  quarter), execution count, and per-stream RNG positions.
+- Hash-chained audit log. Fields are length-prefixed before hashing, so moving a
+  character across a field boundary is not an undetectable edit, and the chain
+  head is mirrored outside the table so truncation is detectable too. This is
+  tamper *evidence*, not tamper *proofing*, and the code says so.
+
+**`pkg/corpusio` — AFL and libFuzzer interoperability**
+
+- Import resolves an AFL output directory to its queue, skips the bookkeeping
+  and the crashes directory, de-duplicates by content, and sorts before
+  importing so one directory always yields the same corpus in the same order.
+- Skips are counted with reasons: a directory of a thousand files where forty
+  were dropped looks exactly like one where none were, unless somebody counts.
+- Export writes each layout's own convention — AFL's `id:%06d` with its `+cov`
+  marker, libFuzzer's SHA-1-of-content — so the other tool's merge recognises
+  the corpus rather than duplicating it, and refuses a non-empty destination
+  without `Overwrite`.
+
+**`internal/triage` — verification, minimisation, bucketing**
+
+- Verification separates "always", "sometimes", and "never", recording the trial
+  count alongside the rate so "not yet examined" and "never reproduces" cannot
+  read the same. Divergent classes are kept: a crash that is sometimes a
+  segfault and sometimes a hang is one finding with a race in it.
+- Four bucketing strategies behind one interface, because each is wrong in a
+  different direction, and a chain that tries them in order of evidence quality
+  and records which one produced each signature.
+- Two minimisers. Byte-level delta debugging cannot reduce a checksum-protected
+  format at all — deleting bytes invalidates the length and checksum covering
+  them, the parser bails before reaching the bug, and every deletion looks
+  necessary. Structured minimisation removes elements from the IR and lets the
+  fixup pass recompute what the removal invalidated. Measured on a checksummed
+  format: 48% byte-wise, 97% structured.
+- Both preserve the failure *class* — kind, signal, and the marker the program
+  printed — not merely "it still crashes", which would let a minimiser wander to
+  a different bug and hand back its reproducer.
+- The worker's queue is bounded and `Submit` never blocks: triage re-runs the
+  target hundreds of times per finding, and blocking would turn a productive
+  campaign into a stalled one. Overflow is dropped and counted.
+
+**`internal/safety` — confinement, scope, authorization**
+
+- Namespaces, a seccomp denylist built as a BPF program, resource limits,
+  cgroups (v1 and v2), and a read-only root. The level reported is computed from
+  the mechanisms actually available, and a campaign may require a minimum and
+  refuse to start below it.
+- `cmd/xfuzz-sandbox` exists because resource limits and a seccomp filter can
+  only be installed by the process that will *become* the target, and Go offers
+  no hook between fork and exec. It exits 125 rather than continuing when
+  confinement fails: a sandbox that quietly did not happen is worse than none.
+- Scope guard: default-deny with loopback exempt, names pinned to addresses at
+  configuration time, every resolved address of a name required to be in scope,
+  public address space refused without a separate acknowledgement, and a prefix
+  whose base is private but whose span is not caught. Refusals are audited;
+  allows are not unless asked for, or a campaign making a million connections
+  would bury the entries that matter.
+- Authorization records operator, reference, attestation, and the scope as it
+  stood at the moment of attestation, so a later widening is visible.
+
+**`internal/engine`** — snapshot, restore, and corpus loading. A snapshot holds
+only what is volatile: accumulated coverage, counters, and RNG stream positions.
+Streams are recorded by name, because a snapshot outlives the build that wrote
+it. `LoadCorpus` admits stored entries without executing them.
+
+**`testdata/targets`** — `chunked_format` (5 bugs behind per-chunk CRC-32s, on
+five distinct paths, ending in three distinct signals) with `chunked_format.xfg`,
+and `escape`, which tries to write outside its directory, fork without bound,
+allocate without bound, and call a privileged syscall.
+
+### Measured — M4 exit criteria
+
+| Criterion | Result |
+| --- | --- |
+| `chunked_format` bucket count | Signal bucketing 3, coverage bucketing 5 for 5 bugs, no two sharing a bucket, stable across repeated runs |
+| Minimisation ≥ 80% preserving the bucket | 85–96% on the five reproducers, each still triggering its own bug; three differently bloated reproducers of one bug converge on the same bucket and the same 19-byte minimum |
+| No sandbox escape | Target runs as uid 65533; a write outside the workdir is refused and one inside still works; a fork bomb stops at 63 against a limit of 64; 2 GiB against a 128 MiB cgroup ends in SIGKILL; `mount(2)` returns EPERM |
+| No scope-guard bypass | Unlisted host refused and audited; a remote campaign with no allowlist refuses to start |
+| Resume loses at most the checkpoint window | Checkpoint at 30,000 execs / 26 edges, killed at 45,000 / 29, resumed at 30,000 / 26 with all 14 corpus entries: 15,000 lost against a 15,000-execution window, nothing before it |
+
+The full planted-bug campaign still finds every bug through the confined fork
+server, in 180 seconds.
+
+### Fixed
+
+Three traps in the sandbox, each of which looked correct in every log line:
+
+- **A uid mapping is not a privilege drop.** A child cloned by root with a user
+  namespace mapping that omits uid 0 is still host root; it merely *reports* the
+  kernel's overflow id, which looks exactly like an unprivileged uid to
+  `getuid()` and to every log. The identity drop is now a real `setuid`, done by
+  the helper after the steps that need privilege.
+- **That overflow id is 65534.** A target mapped to it sees every file owned by
+  anyone outside its namespace — the corpus included — as owned by *itself*, and
+  can write all of it. Targets now run as 65533, checked against the kernel's
+  own `overflowuid` rather than assumed.
+- **A mount namespace created alongside a user namespace inherits its mounts
+  locked**, so a read-only root cannot be built in that combination. The sandbox
+  probes once with `/bin/true` rather than guessing from kernel versions, and
+  where the fuzzer is root the user namespace is left out entirely — root does
+  not need it, and it costs the stronger mechanism.
+
+Also: `Sandbox.Check` refuses a workdir the target's new identity cannot reach,
+because otherwise giving the target a separate uid makes every execution fail
+for a reason that looks nothing like the cause.
+
+### Changed
+
+- Go 1.25 is now the minimum. `modernc.org/sqlite`'s dependency chain requires
+  it, and ADR-0008's choice of a pure-Go SQL engine is what keeps `CGO_ENABLED=0`
+  cross-builds working (ADR-0017).
+- Audit action names are declared by the subsystem that emits them rather than in
+  one shared enumeration, which would couple the safety layer to the persistence
+  layer for the sake of a handful of strings.
+- `tools/archlint` allowlists `cmd/xfuzz-sandbox` for spawn confinement. Like
+  `cmd/xfuzz-cc`, it *is* an exec wrapper; the allowlist is in the lint source
+  where a reviewer sees it.
+- `ForkServer.HandshakeTimeout` is configurable. A target's first execution can
+  be slow while its later ones are fast, and one budget for both would have to be
+  the larger.
+- The planted-bug README documents `chunked_format`'s calibration: its five bugs
+  end in three signals so that the difference between signal bucketing and
+  coverage bucketing is a measurement rather than an assertion.
+
 ### Added — M3 Execution and feedback (2026-08-28)
 
 The engine becomes a fuzzer. Coverage-guided campaigns run end to end against

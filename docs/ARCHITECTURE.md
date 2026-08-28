@@ -54,7 +54,8 @@ github.com/rom/Xfuzz
 │   ├── xfuzz/              CLI client
 │   ├── xfuzzd/             daemon
 │   ├── xfuzz-worker/       worker process
-│   └── xfuzz-cc/           compiler wrapper (instrumentation)
+│   ├── xfuzz-cc/           compiler wrapper (instrumentation)
+│   └── xfuzz-sandbox/      confines itself, then becomes the target (ADR-0022)
 ├── pkg/                    public, stable API surface
 │   ├── rng/                deterministic, splittable, seekable randomness
 │   ├── ir/                 input IR: nodes, fixups, traversal, arena
@@ -65,6 +66,7 @@ github.com/rom/Xfuzz
 │   ├── feedback/           Observer, Feedback, Objective + algebra
 │   ├── executor/           Executor interface + tiers T0–T7
 │   ├── corpus/             corpus, testcase, provenance, scheduler
+│   ├── corpusio/           AFL and libFuzzer corpus import/export
 │   ├── state/              state model, inference, state scheduling
 │   ├── campaign/           campaign config schema, resolution, validation
 │   └── plugin/             external plugin protocol + Starlark host
@@ -303,7 +305,7 @@ about 5,500/s. ASR-0007's 5,000 exec/s floor is stated for a commodity 8-core
 host; the gate asserts it only where the host can support it, and asserts the
 ratio against the do-nothing floor everywhere (docs/TESTS.md § 7).
 
-### 3.2a Mutation — `pkg/mutate`, `pkg/rng`### 3.2a Mutation — `pkg/mutate`, `pkg/rng`
+### 3.2a Mutation — `pkg/mutate`, `pkg/rng`
 
 ```go
 type Mutator interface {
@@ -464,30 +466,91 @@ seed file ──► codec.Decode ──► ir.Node ──► Corpus (store: SQL 
 
 ## 6. Storage model
 
-Hybrid, per ADR-0008.
+Hybrid, per ADR-0008. Schema version 1 is implemented in `internal/store`.
 
-**SQL metadata** (`modernc.org/sqlite`, WAL, writes funnelled through the daemon):
+**SQL metadata** (`modernc.org/sqlite`, WAL, `synchronous=NORMAL`, one writer):
 
 | Table | Contents |
 | --- | --- |
-| `campaign` | config digest, seed, status, checkpoint pointer, schema version |
-| `testcase` | blob digest, coverage summary, energy, discovery time, provenance |
-| `coverage` | per-campaign coverage state and history series |
-| `finding` | bucket, classification, reproducibility rate, triage state, notes |
-| `bucket` | bucketing strategy version, signature, representative finding |
-| `worker` | pid, strategy, health, RNG stream position |
+| `meta` | schema version, audit chain head |
+| `campaign` | name, config digest, seed, status, timestamps |
+| `testcase` | blob digest, size, coverage, energy counters, discovery time, provenance |
+| `bucket` | bucketing strategy, signature, kind, count, first seen |
+| `finding` | bucket, classification, reproducibility trials and rate, triage state, notes |
+| `checkpoint` | coverage map, execution count, corpus size, per-stream RNG positions |
 | `audit` | append-only, hash-chained safety and lifecycle events |
 
-**Content-addressed blobs** on disk: inputs, sessions, minimised reproducers,
-sanitizer output, captures. Digest-keyed, compressed, de-duplicated — the digest
-doubles as stable provenance identity.
+Per-campaign coverage history and per-worker health arrive with the daemon in
+M5; the checkpoint carries what a resume needs today.
 
-**Disk budgets** are enforced per campaign with a defined culling policy (corpus
-minimisation by coverage redundancy; per-bucket finding caps), and culling is
-reported rather than silent (ASR-0015).
+**Content-addressed blobs** on disk under a two-level fan-out: inputs, minimised
+reproducers, and later sessions and captures. The digest doubles as stable
+provenance identity, so de-duplication and integrity checking are the same
+mechanism.
 
-**Checkpointing** writes corpus frontier, scheduler state, coverage state, and
-per-worker RNG position in one atomic transaction.
+Two invariants make the pair safe together. The blob is written before the row
+that points at it, so a crash can only leave an orphan — which collection
+reclaims — never a row promising a payload that was never written. And a blob is
+written to a temporary name and renamed into place, so a reader never observes a
+partial one.
+
+**Disk budgets** are enforced per campaign. Culling never touches favoured
+entries or finding reproducers, ranks the rest by coverage per byte, and breaks
+ties on the digest so two runs of a campaign cull identically. A budget that
+cannot be met after culling is reported as such rather than silently exceeded
+(ASR-0015).
+
+**Blob collection** keeps anything younger than a grace window, because a live
+payload is always briefly unreferenced by construction.
+
+**Checkpointing** is a single-row upsert inside a transaction, so a checkpoint is
+either wholly the old one or wholly the new one. It holds the accumulated
+coverage map (deflated), the execution count, the corpus size, and each RNG
+stream's position by name. The corpus is *not* in it: every admitted entry is
+already durable when it is found, and putting it in the checkpoint would mean
+rewriting the whole corpus on every one.
+
+**The audit log** is hash-chained, with every field length-prefixed before
+hashing so that moving a character across a field boundary is not an undetectable
+edit, and with the chain head mirrored in `meta` so that truncation is detectable
+as well as modification. This is tamper evidence, not tamper proofing: anyone who
+can write the database can rewrite the chain and the head together. What it buys
+is that accidental corruption, a partial restore and a careless edit are all
+caught, and that a deliberate rewrite has to be deliberate.
+
+### 6.1 Triage — `internal/triage`
+
+Triage is what makes a finding count a count of bugs. It is asynchronous by
+construction: every operation re-runs the target, minimisation hundreds of times,
+and none of it may happen on the fuzz loop's thread (§ 4). The engine records a
+finding and moves on; a worker picks it up, and its queue is bounded so that a
+campaign producing findings faster than they can be triaged is slowed by nothing.
+
+```go
+type Runner interface {                      // triage owns no executor
+    Run(ctx context.Context, input []byte) (Outcome, error)
+}
+
+type Strategy interface {                    // bucketing is a judgement
+    Name() string
+    Signature(o Outcome, c Class) (string, bool)
+}
+```
+
+Four strategies, because each is wrong in a different direction — frames need
+symbols, markers need a program that names its own failures, coverage splits one
+bug when the path in varies, signals merge unrelated bugs — and a chain that
+tries them in order of evidence quality and records which one produced each
+signature.
+
+Two minimisers. Byte-level delta debugging cannot reduce a checksum-protected
+format at all: deleting bytes invalidates the length and checksum covering them,
+the parser bails before reaching the bug, and every deletion looks necessary.
+Structured minimisation removes elements from the IR and lets the fixup pass
+recompute what the removal invalidated — which is what the IR is for (ADR-0005),
+applied where its absence is most expensive. Both preserve the failure *class*,
+not merely "it still crashes", so a minimiser cannot wander to a different bug
+and hand back its reproducer.
 
 ## 7. Concurrency and process model
 
@@ -572,16 +635,16 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 | ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009 |
 | ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016 |
-| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017 |
+| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021 |
 | ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021 |
 | ASR-0009 Extensibility | ADR-0010 |
-| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016 |
+| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022 |
 | ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021 |
 | ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011 |
 | ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008 |
 | ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021 |
-| ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017 |
+| ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023 |
 
 Three ADRs appear in no row: **ADR-0018** (licensing) and **ADR-0019** (module
 identity) are project constraints rather than responses to a requirement, and

@@ -42,6 +42,8 @@ extended Nygard template.
 | [ADR-0019](ADR-0019-module-path-and-repository-identity.md) | Module path and repository identity | Accepted | — |
 | [ADR-0020](ADR-0020-mvp-as-end-to-end-thin-slice.md) | MVP as an end-to-end thin slice | Accepted | all |
 | [ADR-0021](ADR-0021-layered-differential-and-self-fuzzing-tests.md) | Layered, differential, and self-fuzzing test strategy | Accepted | ASR-0007, ASR-0008, ASR-0011, ASR-0014 |
+| [ADR-0022](ADR-0022-sandbox-helper-and-seccomp-denylist.md) | Sandbox helper process, seccomp denylist, and honest isolation levels | Accepted | ASR-0006, ASR-0010 |
+| [ADR-0023](ADR-0023-go-1-25-toolchain-floor.md) | Go 1.25 as the toolchain floor | Accepted | ASR-0015 |
 
 Three ADRs serve no single ASR: **ADR-0018** and **ADR-0019** are project
 constraints (licensing, identity) rather than responses to a requirement, and

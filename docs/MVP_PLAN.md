@@ -216,24 +216,85 @@ triage, and with it the ladder is walked to the end.
 
 ---
 
-### M4 — Storage, triage, and safety *(3–4 weeks)*
+### M4 — Storage, triage, and safety ✅ *delivered*
 
-Turns crashes into findings and makes the tool safe to run.
+Crashes become findings, and the tool becomes safe to run.
 
-- `internal/store`: SQL metadata (`modernc.org/sqlite`), content-addressed blob
-  store, schema versioning and migrations, disk budgets with culling, atomic
-  checkpointing, blob GC.
-- AFL/libFuzzer corpus import and export.
-- `internal/triage`: classification, multi-signal bucketing, input and session
-  minimisation, reproducibility verification — all asynchronous, off the hot path.
-- `internal/safety`: Linux sandbox (namespaces, seccomp, cgroups v2), scope guard
-  with layered enforcement, authorization records, hash-chained audit log.
+- `internal/store`: content-addressed blob store, embedded SQL metadata
+  (`modernc.org/sqlite`), schema versioning with forward-only migrations, disk
+  budgets with culling, atomic checkpointing, blob collection.
+- `pkg/corpusio`: AFL and libFuzzer corpus import and export, and an AFL output
+  directory resolved to its queue.
+- `internal/triage`: reproducibility verification, four bucketing strategies
+  behind one interface, byte-level and structured minimisation, sequence
+  minimisation for M6's sessions — all asynchronous, off the hot path.
+- `internal/safety` and `cmd/xfuzz-sandbox`: namespaces, seccomp denylist,
+  resource limits, cgroups, read-only root, scope guard with layered
+  enforcement, authorization records, hash-chained audit log.
+- `internal/engine`: snapshot, restore, and corpus loading for resume.
 - Security tests per TESTS.md § 12.
 
-**Exit:** `chunked_format` planted bugs produce approximately the correct bucket
-count; minimisation reduces reproducers ≥ 80 % preserving the bucket; every
-sandbox escape and scope-guard bypass test fails to escape; a campaign killed and
-resumed loses at most the checkpoint window.
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| `chunked_format` bucket count | Signal bucketing **3**, coverage bucketing **5** for 5 bugs, no two sharing a bucket, stable across repeated runs |
+| Minimisation ≥ 80% preserving the bucket | **85–96%**, each reproducer still triggering its own bug; three differently bloated reproducers of one bug converge on the same bucket and the same 19-byte minimum |
+| No sandbox escape | Target runs as uid 65533; a write outside the workdir is refused and one inside still works; a fork bomb stops at **63 against a limit of 64**; 2 GiB against a 128 MiB cgroup ends in SIGKILL; `mount(2)` returns EPERM |
+| No scope-guard bypass | Unlisted host refused and audited; a remote campaign with no allowlist refuses to start |
+| Resume loses at most the checkpoint window | Checkpoint at 30,000 execs / 26 edges, killed at 45,000 / 29, resumed at **30,000 / 26 with all 14 corpus entries** — 15,000 lost against a 15,000-execution window, nothing before it |
+
+The full planted-bug campaign still finds every bug through the confined fork
+server, in 180 seconds.
+
+**On "preserving the bucket".** The obvious reading of that criterion is wrong,
+and saying so is part of meeting it. Comparing a bloated reproducer's coverage
+bucket with its minimised one's and demanding they match would demand that
+minimisation change nothing: the bloated input walks padding the minimised one
+does not, so its tuple set necessarily differs. Removing that path is the job.
+What is asserted instead is that the bucket still identifies the bug — the
+minimised reproducer triggers the same planted bug — and that independent
+reproducers of one bug converge on one bucket while distinct bugs stay apart.
+
+**Byte-level minimisation is the wrong tool for a checksummed format, and that
+is the point.** Deleting bytes from a chunk invalidates the length and the
+checksum covering it; the parser rejects the file before reaching the bug; every
+deletion looks necessary. It is a hard limit, not a tuning problem — the
+intermediate states delta debugging must pass through do not exist in the
+format. Structured minimisation removes elements from the IR and lets the fixup
+pass recompute what the removal invalidated. Measured on a checksummed format:
+**48% byte-wise against 97% structured**. This is ADR-0005's argument as a
+measurement rather than a claim.
+
+**Three traps in the sandbox, each of which looked correct in every log line**
+
+1. **A uid mapping is not a privilege drop.** A child cloned by root with a user
+   namespace mapping that omits uid 0 is still host root — it merely *reports*
+   the kernel's overflow id, which looks exactly like an unprivileged uid to
+   `getuid()` and to every log line. The drop had to become a real `setuid`,
+   done by the sandbox helper after the steps that need privilege.
+2. **That overflow id is 65534**, the conventional "nobody". A target mapped to
+   it sees every file owned by anyone outside its namespace — the corpus
+   included — as owned by *itself*, and can write all of it. The confinement
+   reports an unprivileged uid throughout and confines nothing. Targets now run
+   as 65533, checked against the kernel's own `overflowuid` rather than assumed.
+3. **A mount namespace created alongside a user namespace inherits its mounts
+   locked**, so a read-only root cannot be built in that combination. The
+   sandbox probes once with `/bin/true` rather than guessing from kernel
+   versions, and where the fuzzer is root the user namespace is left out
+   entirely — root does not need it, and it costs the stronger mechanism.
+
+**Isolation on the development host is `moderate`, not `strong`.** The host
+mounts cgroups v1, not v2, and v1 has no interface for placing a process in its
+group at clone time: the pid is written after the process exists, so a target
+that forks immediately can escape the limit. That is a real gap and the level
+reported says so. Reporting `strong` because the code that would earn it exists
+is precisely the failure ADR-0012 was written to prevent.
+
+**Two capabilities the plan did not ask for.** Structured minimisation, for the
+reason above. And `MinimizeSequence`, which shrinks a session by removing
+messages rather than bytes — the same algorithm over a different unit, so M6's
+session minimisation needs no second delta debugger.
 
 ---
 

@@ -71,6 +71,61 @@ The level in force is **reported**, and a campaign may declare
 `safety.isolation: strong` and **refuse to start** below it. "Supported on macOS"
 must never silently mean "unprotected on macOS".
 
+The level is computed from the mechanisms the host actually provides, probed at
+startup, never from what was configured. In practice that means a well-equipped
+Linux host frequently reports `moderate` rather than `strong`, and it should:
+
+- **cgroups v1 instead of v2.** Only v2 can place a process in its group at
+  clone time. Under v1 the pid is written after the process exists, so a target
+  that forks immediately can escape the limit. The window is microseconds and
+  the alternative is no limit at all, but it is a real gap.
+- **No read-only root.** A mount namespace created alongside a user namespace
+  inherits its mounts *locked* on many configurations, so they cannot be
+  remounted read-only. The sandbox probes this once rather than guessing from
+  kernel versions, and where it fails, confinement rests on the target's host
+  identity instead.
+- **No sandbox helper.** Resource limits and the seccomp filter can only be
+  installed by the process that will become the target (§ 3.1a), so without
+  `xfuzz-sandbox` on the path neither is in force.
+
+Each of these appears in `xfuzz`'s isolation report with the sentence explaining
+it, because a campaign refused for insufficient isolation has to be told what is
+missing — the remedy is usually one line of host configuration.
+
+### 3.1a How the Linux sandbox is applied
+
+Three mechanisms are applied by the parent at clone time: the namespaces, the
+cgroup (under v2), and the process group. Three more can only be applied by the
+process that will *become* the target, between fork and exec — resource limits,
+`no_new_privs` with the seccomp filter, and the identity drop — and Go offers no
+hook there. `cmd/xfuzz-sandbox` is that process: it applies them to itself and
+then execs the target, which inherits all three. It exits 125 rather than
+continuing when any of them fails, because a sandbox that quietly did not happen
+is worse than no sandbox: the campaign would still report itself as confined.
+
+Two details of that ordering are load-bearing:
+
+- **A user-namespace uid mapping is not a privilege drop.** A child cloned by
+  root with a mapping that omits uid 0 is still host root; it merely *reports*
+  the kernel's overflow id, which is indistinguishable from an unprivileged uid
+  in `getuid()` and in every log line. The drop is a real `setuid`, performed
+  after the steps that need privilege and verified afterwards.
+- **The target must not run as the overflow id.** A process mapped to it sees
+  every file owned by anyone outside its namespace — the corpus included — as
+  owned by itself, and may write all of it. Targets run as 65533, checked
+  against the kernel's own `overflowuid` rather than assumed.
+
+The seccomp policy is a **denylist**, not an allowlist, and that is a deliberate
+weakening. The targets are arbitrary programs in arbitrary languages; an
+allowlist one syscall short kills every execution of a target that happens to use
+it, which the campaign would report as a finding. A denylist one syscall short
+still blocks everything it names. It is also not the primary control — the user
+namespace already denies most of it by removing the capabilities those calls need
+— it is the layer covering what a namespace does not, `io_uring` and
+`perf_event_open` foremost. Denied calls return `EPERM` rather than killing the
+process, so a target that handles the error keeps running and the campaign does
+not fill with crashes of the sandbox's own making.
+
 Against T2 specifically: the coverage map is validated for structural sanity, the
 fork-server handshake is versioned and length-checked, and executors treat all
 target output as untrusted input to their own parsers.
@@ -184,9 +239,21 @@ Captured traffic is treated as confidential by default:
 ### 3.9 Audit integrity — T9
 
 The audit log is **append-only and hash-chained**: each entry commits to its
-predecessor, so removal or modification is detectable. It **cannot be disabled
-from within a campaign configuration**. Verification is a supported operation
-(`xfuzz audit verify`).
+predecessor, so removal or modification is detectable. Every field is
+length-prefixed before hashing, so moving a character across a field boundary is
+not an undetectable edit, and the chain head is mirrored outside the table, so
+truncation at the end is detectable as well as modification in the middle — a
+prefix of a valid chain is otherwise a valid chain. It **cannot be disabled from
+within a campaign configuration**. Verification is a supported operation
+(`xfuzz audit verify`) and reports how many entries verified before the first
+divergence.
+
+This is tamper **evidence**, not tamper **proofing**, and the distinction is
+stated rather than glossed: anyone who can write the database can rewrite the
+chain and the head together. What it buys is that accidental corruption, a
+partial restore, and a careless edit are all caught, and that a deliberate
+rewrite has to be deliberate. Anything stronger needs a signature or an off-box
+copy, which is a v1.0 concern.
 
 ### 3.10 Resource control — T10
 
@@ -205,6 +272,9 @@ Stated plainly, because unstated residual risk is the dangerous kind:
 | Risk | Status |
 | --- | --- |
 | Kernel vulnerability defeating namespace/seccomp isolation | Not mitigable by Xfuzz. Run high-risk targets in a disposable VM. |
+| A seccomp denylist cannot be complete | Accepted, and explained in § 3.1a. An allowlist would be stronger and unusable against arbitrary targets. |
+| cgroups v1 admits a process to its group after it starts | Reported as part of the isolation level; a fork in that window escapes the limit. Mount cgroup v2 for `strong`. |
+| An unprivileged Xfuzz cannot give the target a separate identity | Reported. The target is then, on the host, the same user as the fuzzer, with the same access to the corpus. |
 | macOS and Windows isolation is weaker than Linux | Reported honestly as `moderate`; require `strong` for hostile targets. |
 | An operator with an escape hatch enabled | Audited, not prevented. |
 | Scope guard cannot prevent an authorised-but-wrong target | Scope is only as correct as the allowlist the operator writes. |

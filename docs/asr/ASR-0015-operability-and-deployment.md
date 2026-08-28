@@ -50,4 +50,4 @@ week-long campaign dies at day three.
 
 ## Satisfied by
 
-ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017
+ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023

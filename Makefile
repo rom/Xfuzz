@@ -6,7 +6,7 @@
 
 MODULE      := github.com/rom/Xfuzz
 BIN         := bin
-CMDS        := xfuzz xfuzzd xfuzz-worker xfuzz-cc
+CMDS        := xfuzz xfuzzd xfuzz-worker xfuzz-cc xfuzz-sandbox
 
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
 COMMIT      ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)

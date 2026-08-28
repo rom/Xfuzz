@@ -78,8 +78,8 @@ var importRules = []rule{
 		allow: []string{
 			"internal/safety/",
 			"internal/platform/",
-			"tools/",        // repo tooling shells out to the Go toolchain
-			"bench/",        // the benchmark harness drives external processes
+			"tools/",             // repo tooling shells out to the Go toolchain
+			"bench/",             // the benchmark harness drives external processes
 			"cmd/xfuzz-cc/",      // the compiler wrapper execs a compiler by definition
 			"cmd/xfuzz-sandbox/", // the sandbox helper's whole purpose is to become the target
 		},
