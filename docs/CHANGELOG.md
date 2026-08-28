@@ -11,6 +11,90 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M2 Mutation and generation (2026-08-28)
+
+Everything that turns one input into another: the operators, the schedule that
+composes them, the grammar language, and generation.
+
+**`pkg/rng` — deterministic randomness**
+
+- Counter-based generator: splittable into independent streams, with an
+  addressable position that can be recorded in provenance and seeked back to.
+- Eight numbered streams (seed selection, operator selection, operator
+  parameters, structure, splice, generation, schedule, state) so that adding a
+  stage cannot perturb another stage's sequence and old findings keep replaying.
+- Bounded draws use Lemire's multiply-shift, free of the low-bit bias a modulo
+  introduces. 0.4 ns per draw, no allocation.
+
+**`pkg/mutate` — 24 operators and a schedule**
+
+- Byte-level: bitflip, byteflip, arithmetic, interesting values, random byte,
+  block set, insert, delete, self-copy.
+- Structured: integer arithmetic/boundary/random/bitflip, choice switching,
+  optional toggling, and sequence insert, delete, duplicate, swap, and shuffle.
+- Dictionary: token overwrite and insert, with AFL `.dict` parsing.
+- Splice: subtree grafting matched on kind and name, and byte-run crossover.
+- Weighted, **operator-first** scheduling. Picking a node first and then an
+  applicable operator hands the mix to whichever operator has the broadest
+  applicability; it gave subtree splicing eight times the attempts of every byte
+  operator combined, with the weights saying otherwise.
+- Provenance: every applied operator records its name, the path to the node, and
+  the parameter stream's position — enough to reconstruct the input exactly,
+  which `TestProvenanceReplaysExactly` checks on every round.
+- Per-operator accounting with `Report()` ordered by yield.
+
+**`pkg/schema` — the `.xfg` grammar language**
+
+- Lexer, recursive-descent parser, validator, and a renderer that round-trips.
+- Scalar types with explicit width and byte order, bounded and fixed-length
+  `bytes`/`str`, `magic`, `repeat<min..max>`, `opt`, `choice`, and named structs.
+- Derivations: `len`, `count`, `offset`, and any registered checksum, over a
+  single reference or a range, with an optional addend and `selfzero`.
+- Unguarded recursion is rejected at parse time, with the fix named: put the
+  recursive field behind a `repeat` or an `opt` so generation can stop.
+
+**`pkg/generate` — grammar-driven generation**
+
+- Builds IR trees from a schema with depth, size, and repetition bounds, then
+  runs the fixup pass so derived fields are correct.
+- `pkg/generate/testdata/png.xfg` describes PNG in the language; generated files
+  round-trip through the hand-written Go codec, so the two agree on the format.
+
+**Results**
+
+| Measurement | Result |
+| --- | --- |
+| Structured vs byte-level mutation, container-valid | **99.6% vs 0.0%** |
+| Same mutations, repair pass disabled | 10.4% |
+| Generated PNGs passing container validation | 2,000 / 2,000 |
+| Mutate + repair + encode | 5.0 µs, 0 allocs |
+| Mutation round alone | 1.1 µs, 0 allocs |
+| Generate a ~33-chunk PNG | 92 µs, 0 allocs |
+
+### Changed
+
+- `pkg/ir`: nodes gained `MinLen`/`MaxLen` bounds and an `Immutable` flag, with
+  `FixedBlob`, `Magic`, and `Bounded` constructors. Byte and sequence operators
+  honour them. Without these, mutation resized the PNG chunk type field and
+  corrupted the signature — inputs no reader gets past. Container validity rose
+  from 47% to 99.6% once the format's real constraints were expressible.
+- `pkg/codec`: the PNG codec now declares the signature immutable and the chunk
+  type fixed at four bytes.
+- `pkg/ir/Arena` gained `Buf`, `GrowBytes`, and `GrowKids`, so mutations that
+  lengthen a payload or a sequence stay inside the arena.
+
+### Fixed
+
+- `RepeatShuffle` reported "no change" whenever the first element happened to
+  stay put, so a shuffle that permuted everything else went unrecorded — an
+  untracked mutation that broke replay. Found by the provenance replay test.
+- The mutation scheduler recorded provenance paths into the same buffer the tree
+  walk was using, so every recorded path was overwritten by the next one.
+- The node-selection walk was a recursive closure, which allocated on every
+  mutation round.
+- `ir.Fixer` used `sort.Slice` on the hot path, which allocates a reflect-based
+  swapper.
+
 ### Added — M1 Input IR and codecs (2026-08-28)
 
 The structured input representation from ADR-0005, and the first two codecs.

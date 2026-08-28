@@ -74,9 +74,10 @@ func (e Endian) String() string {
 
 // Node flags, packed to keep Node small enough to pool densely.
 const (
-	flagShared  uint8 = 1 << iota // copy before mutating (arena copy-on-write)
-	flagPresent                   // KindOpt: the subtree is present
-	flagSigned                    // KindInt: value is signed
+	flagShared    uint8 = 1 << iota // copy before mutating (arena copy-on-write)
+	flagPresent                     // KindOpt: the subtree is present
+	flagSigned                      // KindInt: value is signed
+	flagImmutable                   // mutators must leave this node alone
 )
 
 // Node is one element of an input tree.
@@ -101,6 +102,17 @@ type Node struct {
 	Raw      []byte  // KindBytes, KindStr: the payload
 	Children []*Node // containers
 
+	// MinLen and MaxLen bound the payload length of a Bytes or Str node, or the
+	// element count of a Repeat node. A MaxLen of zero means unbounded.
+	//
+	// These are what stop a mutator producing something no parser would ever
+	// see. A PNG chunk type is exactly four bytes; a five-byte one is not a
+	// deeper exploration of PNG, it is an input every reader rejects at offset
+	// four. Deliberate violation of a format's rules is expressed by relaxing
+	// the schema or suppressing derivations, not by operators ignoring the
+	// model.
+	MinLen, MaxLen int32
+
 	Derive *Derivation // KindDerived
 	Target *Ref        // KindRef
 }
@@ -120,6 +132,34 @@ func (n *Node) SetPresent(v bool) {
 	} else {
 		n.flags &^= flagPresent
 	}
+}
+
+// Immutable reports whether mutators must leave the node alone. Magic numbers
+// and format signatures are marked this way: mutating them produces an input
+// the target discards in its first comparison.
+func (n *Node) Immutable() bool { return n.flags&flagImmutable != 0 }
+
+// SetImmutable marks a node as off-limits to mutation.
+func (n *Node) SetImmutable(v bool) {
+	if v {
+		n.flags |= flagImmutable
+	} else {
+		n.flags &^= flagImmutable
+	}
+}
+
+// LenBounds returns the node's length or count bounds, with ok false when it is
+// unbounded above.
+func (n *Node) LenBounds() (minimum, maximum int, ok bool) {
+	return int(n.MinLen), int(n.MaxLen), n.MaxLen > 0
+}
+
+// FitsLen reports whether a length satisfies the node's bounds.
+func (n *Node) FitsLen(l int) bool {
+	if l < int(n.MinLen) {
+		return false
+	}
+	return n.MaxLen <= 0 || l <= int(n.MaxLen)
 }
 
 // Signed reports whether an integer node is signed.
@@ -222,7 +262,10 @@ func Equal(a, b *Node) bool {
 	case a.Kind != b.Kind, a.Name != b.Name, a.Width != b.Width,
 		a.Endian != b.Endian, a.Sel != b.Sel, a.Val != b.Val:
 		return false
-	case a.Present() != b.Present(), a.Signed() != b.Signed():
+	case a.MinLen != b.MinLen, a.MaxLen != b.MaxLen:
+		return false
+	case a.Present() != b.Present(), a.Signed() != b.Signed(),
+		a.Immutable() != b.Immutable():
 		return false
 	case !bytesEqual(a.Raw, b.Raw):
 		return false
@@ -296,6 +339,21 @@ func validate(n *Node, path string) error {
 	case KindRef:
 		if n.Target == nil {
 			return fmt.Errorf("%s: reference has no target", pathOr(here))
+		}
+	}
+	if n.MaxLen > 0 && n.MinLen > n.MaxLen {
+		return fmt.Errorf("%s: MinLen %d exceeds MaxLen %d", pathOr(here), n.MinLen, n.MaxLen)
+	}
+	switch n.Kind {
+	case KindBytes, KindStr:
+		if !n.FitsLen(len(n.Raw)) {
+			return fmt.Errorf("%s: payload is %d bytes, outside the declared bounds [%d, %d]",
+				pathOr(here), len(n.Raw), n.MinLen, n.MaxLen)
+		}
+	case KindRepeat:
+		if !n.FitsLen(len(n.Children)) {
+			return fmt.Errorf("%s: has %d elements, outside the declared bounds [%d, %d]",
+				pathOr(here), len(n.Children), n.MinLen, n.MaxLen)
 		}
 	}
 	if n.Kind.IsLeaf() && len(n.Children) > 0 {

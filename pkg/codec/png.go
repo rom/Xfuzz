@@ -69,6 +69,10 @@ func (PNG) Decode(a *ir.Arena, src []byte) (*ir.Node, error) {
 
 	sig := a.Alloc(ir.KindBytes, "signature")
 	sig.Raw = src[:len(pngSignature)]
+	// Fixed and off-limits: a mutated signature is discarded by every reader in
+	// its first comparison, so spending executions on one is pure waste.
+	sig.MinLen, sig.MaxLen = int32(len(pngSignature)), int32(len(pngSignature))
+	sig.SetImmutable(true)
 	root.Children = append(root.Children, sig)
 
 	// Count first so the child slice is sized exactly; growing it would defeat
@@ -106,6 +110,10 @@ func decodePNGChunk(a *ir.Arena, b []byte) *ir.Node {
 
 	typ := a.Alloc(ir.KindBytes, "type")
 	typ.Raw = b[4:8]
+	// A PNG chunk type is exactly four bytes. Without the bound, a byte operator
+	// that lengthens it shifts every following field and produces an input no
+	// reader gets past, which is not a deeper exploration of PNG.
+	typ.MinLen, typ.MaxLen = 4, 4
 
 	data := a.Alloc(ir.KindBytes, "data")
 	data.Raw = b[8 : 8+size]

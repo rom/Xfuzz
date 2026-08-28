@@ -1,0 +1,19 @@
+# PNG, written in the Xfuzz grammar language.
+#
+# This is the same format the Go codec in pkg/codec implements, expressed
+# declaratively. It is here to show that the DSL can describe a real
+# length-prefixed, checksum-protected container without dropping to Go — and to
+# check it, since generated files are verified against a container validator and
+# the standard library's decoder.
+
+format png {
+  signature: magic "\x89PNG\r\n\x1a\n"
+  chunks:    repeat<1..64> chunk
+}
+
+struct chunk {
+  length: u32be   = len(^data)
+  type:   bytes[4]
+  data:   bytes<0..4096>
+  crc:    u32be   = crc32(^type..^data)
+}

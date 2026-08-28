@@ -56,6 +56,7 @@ github.com/rom/Xfuzz
 │   ├── xfuzz-worker/       worker process
 │   └── xfuzz-cc/           compiler wrapper (instrumentation)
 ├── pkg/                    public, stable API surface
+│   ├── rng/                deterministic, splittable, seekable randomness
 │   ├── ir/                 input IR: nodes, fixups, traversal, arena
 │   ├── schema/             .xfg grammar DSL, importers
 │   ├── codec/              parse/serialise between bytes and IR
@@ -107,6 +108,11 @@ Rules that keep the layering honest:
 | `dial-confinement` | Nothing outside `internal/safety` opens an outbound connection — every one must pass the scope guard (ADR-0012) |
 | `no-cmd-import` | Nothing imports `cmd/` |
 | `no-stdlib-plugin` | Nothing imports Go's `plugin` package (rejected by ADR-0010) |
+
+`pkg/rng` sits below everything because ASR-0008 forbids implicitly seeded
+randomness anywhere in the engine: every stochastic decision draws from an
+explicit stream, and the streams are numbered so that adding one cannot perturb
+another.
 
 These are enforced by `tools/archlint`, which runs as part of `go test ./...`,
 not by convention. Exceptions live in an explicit allowlist in that package,
@@ -233,6 +239,49 @@ func Fast(cheap, expensive Feedback) Feedback   // short-circuit ordering
 
 The hot path holds a **static ordered slice of concrete implementations**; no
 reflection, no `interface{}` boxing per execution, no channel round-trips.
+
+### 3.2a Mutation — `pkg/mutate`, `pkg/rng`
+
+```go
+type Mutator interface {
+    Name() string
+    CanApply(c *Ctx, n *ir.Node) bool   // cheap; called per node during selection
+    Mutate(c *Ctx, n *ir.Node) bool     // false means "no change", not "error"
+}
+
+type Op struct {                        // one entry of a provenance chain
+    Mutator string
+    Path    []int                       // child indices from the root
+    RandPos uint64                      // parameter-stream position
+}
+
+func (s *Scheduler) Mutate(c *Ctx, root *ir.Node) []Op
+func (s *Scheduler) RecordOutcome(ops []Op, interesting, finding bool)
+func (s *Scheduler) Report() []NamedStats
+```
+
+`CanApply` takes the context, not just the node, so an operator can decline when
+its preconditions are absent — no dictionary, no donor, a length bound already
+reached. Declining there rather than inside `Mutate` is what stops the scheduler
+spending its budget on operators that cannot act.
+
+Selection is **operator-first**: draw an operator by weight, then draw a node it
+can act on. The reverse — pick a node, then choose among the operators that fit
+it — was tried first and gives the mix to whichever operator has the broadest
+applicability rather than to the configured weights.
+
+Three independent RNG streams back one mutation round (`rng.StreamMutatorSelect`,
+`StreamMutatorParam`, `StreamStructure`), so changing the operator mix does not
+shift parameter draws, and vice versa. A recorded `Op` — operator, path, stream
+position — is enough to reconstruct the mutation on a fresh tree.
+
+### 3.2b Schema and generation — `pkg/schema`, `pkg/generate`
+
+`pkg/schema` parses the `.xfg` grammar language into a `Schema`; `pkg/generate`
+walks one to build IR trees. Generation complements mutation rather than
+replacing it: mutation inherits its corpus's blind spots, while generation
+reaches shapes no seed contained, at the cost of a real file's accumulated
+realism. Both produce the same IR, so a campaign runs either or both.
 
 ### 3.3 Corpus and scheduling — `pkg/corpus`
 

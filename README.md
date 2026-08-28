@@ -5,11 +5,13 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M1 complete — the input representation works.** The structured IR,
-> its fixup pass, and the first codecs are in, along with the foundation from
-> M0. A full mutate-and-repair cycle on a real PNG runs in 1.8 µs with zero
-> allocations. M2 (mutation and grammar) is next. See
-> [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
+> **Status: M2 complete — mutation works, and it is measurably better.** The
+> structured IR, 24 mutation operators, the `.xfg` grammar language, and
+> grammar-driven generation are in. Against a PNG corpus, structure-aware
+> mutation with derived-field repair reaches **99.6%** container validity where
+> byte-level mutation of the same seeds reaches **0.0%**. M3 (execution and
+> feedback) is next. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to
+> v0.1.
 
 ## The idea
 

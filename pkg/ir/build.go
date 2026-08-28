@@ -9,6 +9,28 @@ func Blob(name string, b []byte) *Node {
 	return &Node{Kind: KindBytes, Name: name, Raw: b}
 }
 
+// FixedBlob returns a byte node whose length is pinned to its current size, for
+// fields a format defines as exactly N bytes.
+func FixedBlob(name string, b []byte) *Node {
+	n := Blob(name, b)
+	n.MinLen, n.MaxLen = int32(len(b)), int32(len(b))
+	return n
+}
+
+// Magic returns a fixed-length byte node that mutators must not touch, for
+// signatures and magic numbers.
+func Magic(name string, b []byte) *Node {
+	n := FixedBlob(name, b)
+	n.SetImmutable(true)
+	return n
+}
+
+// Bounded constrains a payload length or element count and returns the node.
+func Bounded(n *Node, minimum, maximum int) *Node {
+	n.MinLen, n.MaxLen = int32(minimum), int32(maximum)
+	return n
+}
+
 // Text returns a string node.
 func Text(name, s string) *Node {
 	return &Node{Kind: KindStr, Name: name, Raw: []byte(s)}

@@ -118,19 +118,37 @@ fuzzer reaches checksum-validation code at all.
 
 ---
 
-### M2 — Mutation and generation *(2–3 weeks)*
+### M2 — Mutation and generation ✅ *delivered*
 
-- `pkg/mutate`: byte-level operators (bitflip, arithmetic, interesting values,
-  block ops), structured operators (type-aware, `Choice` switching, `Repeat`
-  insert/delete/reorder/duplicate), splice/crossover across corpus entries.
-- Mutator scheduling with weights and per-operator yield accounting.
-- `pkg/schema`: the `.xfg` grammar DSL — parser, validator, and generation.
-- `pkg/generate`: grammar-driven generation, interleavable with mutation.
-- Dictionary support with AFL `.dict` import.
+- `pkg/rng`: deterministic, splittable, seekable randomness — eight numbered
+  streams so one concern's draws cannot shift another's (ASR-0008).
+- `pkg/mutate`: 24 operators across four classes — byte-level, structured,
+  dictionary, and splice — with weighted operator-first scheduling, provenance
+  recording, and per-operator accounting.
+- `pkg/schema`: the `.xfg` grammar language — lexer, parser, validator, and a
+  renderer that round-trips.
+- `pkg/generate`: grammar-driven generation, sharing the IR with mutation.
+- Dictionary support with AFL `.dict` import, including its escape syntax.
 
-**Exit:** Structured mutation of the PNG corpus produces a materially higher valid
-rate than byte-level mutation of the same corpus, measured and recorded;
-generation from `.xfg` produces valid inputs; per-mutator yield is reported.
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| Structured mutation beats byte-level on validity | **99.6% vs 0.0%** container-valid over 5,000 mutations each, same seeds and budget (`TestStructuredMutationBeatsByteLevel`) |
+| The gain comes from the fixups | Same mutations with repair disabled: **10.4%** (`TestFixupIsWhatMakesTheDifference`) |
+| Generation from `.xfg` produces valid inputs | **2,000/2,000** generated PNGs pass container validation, averaging 33 chunks; each also round-trips through the hand-written Go codec |
+| Per-operator yield is reported | `Scheduler.Report()`, ordered by yield, with attempts, applies, and apply rate |
+
+**Measured**, all zero-allocation: a full mutate-and-repair cycle on a real PNG
+is 5.0 µs (~200k/s); a mutation round alone is 1.1 µs; generating a ~33-chunk
+PNG from the grammar is 92 µs; an RNG draw is 0.4 ns.
+
+Two IR additions came out of the measurement rather than the plan: payload and
+element-count **bounds**, and an **immutable** flag. Without them byte operators
+resized the PNG chunk type field and corrupted the signature — mutations that
+produce inputs no reader gets past, which is not deeper exploration of PNG.
+Container validity went from 47% to 99.6% once the format's real constraints
+were expressible.
 
 ---
 

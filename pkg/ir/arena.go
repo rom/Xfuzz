@@ -181,6 +181,7 @@ func (a *Arena) Clone(n *Node) *Node {
 func (a *Arena) clone(n *Node) *Node {
 	c := a.New(n.Kind)
 	c.Width, c.Endian, c.Sel, c.Val = n.Width, n.Endian, n.Sel, n.Val
+	c.MinLen, c.MaxLen = n.MinLen, n.MaxLen
 	c.flags = n.flags &^ flagShared
 	c.Name = n.Name
 	c.Derive, c.Target = n.Derive, n.Target // derivations and refs are immutable
@@ -217,6 +218,7 @@ func (a *Arena) Mutable(n *Node) *Node {
 	a.stats.CopyOnWrite++
 	c := a.New(n.Kind)
 	c.Width, c.Endian, c.Sel, c.Val = n.Width, n.Endian, n.Sel, n.Val
+	c.MinLen, c.MaxLen = n.MinLen, n.MaxLen
 	c.flags = n.flags &^ flagShared
 	c.Name = n.Name
 	c.Derive, c.Target = n.Derive, n.Target
@@ -292,4 +294,50 @@ func (a *Arena) AllocKids(n int) []*Node {
 		return make([]*Node, 0, n)
 	}
 	return a.Kids(n)
+}
+
+// Buf returns arena-owned storage of length n. Its contents are unspecified;
+// the caller must fill every byte it intends to read.
+func (a *Arena) Buf(n int) []byte {
+	if n <= 0 {
+		return nil
+	}
+	if a == nil {
+		return make([]byte, n)
+	}
+	a.stats.Bytes += int64(n)
+	return a.byteBuf(n)
+}
+
+// GrowBytes returns a slice with the same contents as s and room for at least
+// need more bytes, taking new storage from the arena rather than the heap.
+//
+// Mutators that lengthen a payload go through this so that growth stays inside
+// the arena and steady-state fuzzing keeps allocating nothing.
+func (a *Arena) GrowBytes(s []byte, need int) []byte {
+	if need <= 0 || cap(s)-len(s) >= need {
+		return s
+	}
+	want := len(s) + need
+	if double := 2 * cap(s); double > want {
+		want = double
+	}
+	dst := a.Buf(want)[:len(s)]
+	copy(dst, s)
+	return dst
+}
+
+// GrowKids returns a child slice with the same contents as s and room for at
+// least need more children, taking new storage from the arena.
+func (a *Arena) GrowKids(s []*Node, need int) []*Node {
+	if need <= 0 || cap(s)-len(s) >= need {
+		return s
+	}
+	want := len(s) + need
+	if double := 2 * cap(s); double > want {
+		want = double
+	}
+	dst := a.AllocKids(want)[:len(s)]
+	copy(dst, s)
+	return dst
 }

@@ -2,18 +2,18 @@ goos: linux
 goarch: amd64
 pkg: github.com/rom/Xfuzz/bench
 cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
-BenchmarkHarnessOverhead-4   	  137974	      8729 ns/op	 469.21 MB/s	    114554 execs/s	       0 B/op	       0 allocs/op
-BenchmarkHarnessOverhead-4   	  138207	      8673 ns/op	 472.25 MB/s	    115296 execs/s	       0 B/op	       0 allocs/op
-BenchmarkHarnessOverhead-4   	  138015	      8676 ns/op	 472.09 MB/s	    115256 execs/s	       0 B/op	       0 allocs/op
-BenchmarkHarnessOverhead-4   	  137614	      8697 ns/op	 470.97 MB/s	    114984 execs/s	       0 B/op	       0 allocs/op
-BenchmarkHarnessOverhead-4   	  137588	      8680 ns/op	 471.87 MB/s	    115202 execs/s	       0 B/op	       0 allocs/op
-BenchmarkZeroAlloc-4         	11555637	       103.7 ns/op	       0 B/op	       0 allocs/op
-BenchmarkZeroAlloc-4         	11474799	       103.8 ns/op	       0 B/op	       0 allocs/op
-BenchmarkZeroAlloc-4         	11691891	       103.7 ns/op	       0 B/op	       0 allocs/op
-BenchmarkZeroAlloc-4         	11549053	       104.2 ns/op	       0 B/op	       0 allocs/op
-BenchmarkZeroAlloc-4         	11411364	       104.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  130638	      8728 ns/op	 469.30 MB/s	    114576 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  138043	      8734 ns/op	 468.97 MB/s	    114495 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  136200	      8797 ns/op	 465.64 MB/s	    113682 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  137235	      8826 ns/op	 464.10 MB/s	    113306 execs/s	       0 B/op	       0 allocs/op
+BenchmarkHarnessOverhead-4   	  133813	      8810 ns/op	 464.95 MB/s	    113513 execs/s	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	 9903758	       105.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11423514	       104.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11483571	       103.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	11019831	       106.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkZeroAlloc-4         	10551300	       106.7 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/rom/Xfuzz/bench	13.945s
+ok  	github.com/rom/Xfuzz/bench	13.591s
 ?   	github.com/rom/Xfuzz/cmd/xfuzz	[no test files]
 ?   	github.com/rom/Xfuzz/cmd/xfuzz-cc	[no test files]
 ?   	github.com/rom/Xfuzz/cmd/xfuzz-worker	[no test files]
@@ -33,41 +33,83 @@ goos: linux
 goarch: amd64
 pkg: github.com/rom/Xfuzz/pkg/codec
 cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
-BenchmarkPNGDecode-4            	 8066642	       148.5 ns/op	 619.49 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecode-4            	 8122164	       148.0 ns/op	 621.60 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecode-4            	 8046182	       147.9 ns/op	 621.92 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecode-4            	 8131760	       151.0 ns/op	 609.22 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecode-4            	 8101266	       149.5 ns/op	 615.42 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecodeFixEncode-4   	  637123	      1828 ns/op	  50.32 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecodeFixEncode-4   	  596036	      1833 ns/op	  50.19 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecodeFixEncode-4   	  647712	      1916 ns/op	  48.01 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecodeFixEncode-4   	  625536	      1911 ns/op	  48.15 MB/s	       0 B/op	       0 allocs/op
-BenchmarkPNGDecodeFixEncode-4   	  651993	      1835 ns/op	  50.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecode-4            	 8072275	       143.2 ns/op	 642.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecode-4            	 8474796	       142.9 ns/op	 643.74 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecode-4            	 8143771	       145.3 ns/op	 633.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecode-4            	 8284734	       144.4 ns/op	 637.26 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecode-4            	 8235602	       150.8 ns/op	 610.18 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecodeFixEncode-4   	  657412	      1828 ns/op	  50.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecodeFixEncode-4   	  666525	      1786 ns/op	  51.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecodeFixEncode-4   	  652442	      1810 ns/op	  50.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecodeFixEncode-4   	  669885	      1911 ns/op	  48.14 MB/s	       0 B/op	       0 allocs/op
+BenchmarkPNGDecodeFixEncode-4   	  627709	      1811 ns/op	  50.80 MB/s	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/rom/Xfuzz/pkg/codec	12.938s
+ok  	github.com/rom/Xfuzz/pkg/codec	13.004s
 ?   	github.com/rom/Xfuzz/pkg/corpus	[no test files]
 ?   	github.com/rom/Xfuzz/pkg/executor	[no test files]
 ?   	github.com/rom/Xfuzz/pkg/feedback	[no test files]
-?   	github.com/rom/Xfuzz/pkg/generate	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/rom/Xfuzz/pkg/generate
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkGenerate-4   	   13047	     93542 ns/op	      76 B/op	       0 allocs/op
+BenchmarkGenerate-4   	   12982	     92827 ns/op	      77 B/op	       0 allocs/op
+BenchmarkGenerate-4   	   12759	     91756 ns/op	      78 B/op	       0 allocs/op
+BenchmarkGenerate-4   	   12978	     93753 ns/op	      77 B/op	       0 allocs/op
+BenchmarkGenerate-4   	   13069	     91793 ns/op	      76 B/op	       0 allocs/op
+PASS
+ok  	github.com/rom/Xfuzz/pkg/generate	10.705s
 goos: linux
 goarch: amd64
 pkg: github.com/rom/Xfuzz/pkg/ir
 cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
-BenchmarkCloneFixEncode-4        	  536023	      2257 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCloneFixEncode-4        	  516181	      2238 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCloneFixEncode-4        	  529371	      2226 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCloneFixEncode-4        	  541773	      2216 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCloneFixEncode-4        	  541983	      2272 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCopyOnWriteMutation-4   	17499357	        68.97 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCopyOnWriteMutation-4   	16876809	        70.31 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCopyOnWriteMutation-4   	15575328	        68.62 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCopyOnWriteMutation-4   	17502570	        69.77 ns/op	       0 B/op	       0 allocs/op
-BenchmarkCopyOnWriteMutation-4   	17455208	        68.64 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCloneFixEncode-4        	  550266	      2205 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCloneFixEncode-4        	  555474	      2190 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCloneFixEncode-4        	  515382	      2270 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCloneFixEncode-4        	  555548	      2193 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCloneFixEncode-4        	  543446	      2173 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOnWriteMutation-4   	16368807	        70.74 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOnWriteMutation-4   	16983289	        71.57 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOnWriteMutation-4   	16814908	        71.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOnWriteMutation-4   	16839087	        70.01 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOnWriteMutation-4   	17096962	        70.40 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/rom/Xfuzz/pkg/ir	12.356s
-?   	github.com/rom/Xfuzz/pkg/mutate	[no test files]
+ok  	github.com/rom/Xfuzz/pkg/ir	12.451s
+goos: linux
+goarch: amd64
+pkg: github.com/rom/Xfuzz/pkg/mutate
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkSchedulerMutate-4   	 1000000	      1083 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSchedulerMutate-4   	 1000000	      1089 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSchedulerMutate-4   	 1000000	      1087 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSchedulerMutate-4   	 1000000	      1130 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSchedulerMutate-4   	 1000000	      1114 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMutateFixEncode-4   	  243183	      4957 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMutateFixEncode-4   	  244176	      4906 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMutateFixEncode-4   	  247068	      4814 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMutateFixEncode-4   	  246830	      4933 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMutateFixEncode-4   	  249021	      4940 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/rom/Xfuzz/pkg/mutate	12.732s
 ?   	github.com/rom/Xfuzz/pkg/plugin	[no test files]
-?   	github.com/rom/Xfuzz/pkg/schema	[no test files]
+goos: linux
+goarch: amd64
+pkg: github.com/rom/Xfuzz/pkg/rng
+cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+BenchmarkUint64-4   	1000000000	         0.4160 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUint64-4   	1000000000	         0.4011 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUint64-4   	1000000000	         0.3904 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUint64-4   	1000000000	         0.3653 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUint64-4   	1000000000	         0.3719 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntn-4     	475729824	         2.553 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntn-4     	477931110	         2.559 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntn-4     	409566848	         2.619 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntn-4     	412290193	         2.690 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIntn-4     	452039077	         2.667 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/rom/Xfuzz/pkg/rng	9.373s
+PASS
+ok  	github.com/rom/Xfuzz/pkg/schema	0.003s
 ?   	github.com/rom/Xfuzz/pkg/state	[no test files]
 PASS
 ok  	github.com/rom/Xfuzz/tools/archlint	0.003s
