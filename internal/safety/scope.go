@@ -77,6 +77,14 @@ func (r PortRange) String() string {
 // The zero Scope allows nothing but loopback. That is the safe default and the
 // one that makes the common case — fuzzing a local process — frictionless while
 // still refusing to reach anything else.
+//
+// Rules are built once, before the campaign starts, and are read-only
+// thereafter: Check and Dial are safe to call from every worker at once, Allow
+// is not safe to call alongside them. This is not a limitation being worked
+// around — a scope that could widen while traffic was flowing would mean the
+// allowlist a connection was checked against is not the one the operator
+// attested to, which is the point of recording the summary in the
+// authorization (see Authorization.ScopeSummary).
 type Scope struct {
 	// Rules are the allowed destinations.
 	Rules []Rule
