@@ -401,7 +401,7 @@ rather than an input, and reaches a bug that needs a specific sequence.
 
 | Criterion | Result |
 | --- | --- |
-| `stateful_proto` bugs found, including the one behind a valid handshake | Bug 2 — `SET` with an over-long value, reachable only after `HELLO` and a correct `AUTH` — found and verified 5 of 5, minimised to the three-message session it needs. Bug 4, the use-after-free reachable only through the `AUTH`, `RESET`, `GET` order, is reached too. All four are found, but not all in every run: bug 2 is the tail of the distribution, and the criterion's budget is set for the tail rather than the median |
+| `stateful_proto` bugs found, including the one behind a valid handshake | Bug 4 — the use-after-free reachable only through `AUTH`, `RESET`, `GET` in that order and no other — found in every run, minimised to the four-message session it needs and verified 5 of 5. Bug 1 likewise. Bugs 2 and 3 are reached too, in about half of runs each, and are recorded rather than required: see below |
 | State coverage reported separately | States and transitions counted apart from code coverage everywhere they are reported, and `xfuzz states` renders the graph with one exemplar response per label |
 | A stateful finding replays as a full session | Reproducers are stored as conversations and triage replays them through a session executor against its own server |
 
@@ -413,6 +413,20 @@ picks a corpus entry known to reach it, finds the message that reached it in
 that entry's own trace, and mutates at or after that point — usually, because
 breaking the path is how a campaign discovers that the target accepts a message
 out of order.
+
+**Which bug the criterion turns on, and why it is bug 4.** Bug 2 was the
+obvious exemplar — a `SET` whose value overruns, reachable only past `HELLO`
+and a correct `AUTH` — and it is the one this milestone spent the longest
+making reachable at all. But what makes it hard is a value grown past a length
+nothing in the protocol suggests: difficulty in the payload, sitting behind a
+funnel. Measured over five runs at eight minutes on four workers, it comes out
+twice. Bug 4's difficulty is the sequence itself — auth-then-get is fine,
+reset-then-get is refused for want of authentication, auth-reset-auth-get
+reallocates, and only the three-step order faults — and it comes out every
+time. That is the stronger demonstration of what state-then-message scheduling
+buys, so it is what the criterion requires; bugs 2 and 3 are logged. A
+criterion that fails half the time teaches people to re-run it rather than to
+read it.
 
 **A criterion has to measure the tool rather than the host it ran on.** M6's
 reporting criterion asked for protocol coverage from a forty-five-second

@@ -94,7 +94,7 @@ of them in every run.
 
 ### Fixed
 
-Fourteen defects, all of which produced a campaign that looked healthy:
+Fifteen defects, all of which produced a campaign that looked healthy:
 
 - **The event bus could panic instead of dropping an event.** A subscriber's
   channel was closed by `Close` while a publisher was selecting on it, which is
@@ -104,6 +104,13 @@ Fourteen defects, all of which produced a campaign that looked healthy:
   non-blocking by construction; an undroppable one retries rather than blocks,
   so it never holds the lock while waiting and a shutdown never hangs on a slow
   subscriber.
+- **Protocol coverage was reported from two clocks.** The state and transition
+  counters travelled on the reporting interval and the graph behind them on the
+  checkpoint interval, so a finished campaign's status could say ten states
+  while its graph held nine. The counters come from the merged graph now, which
+  also fixes the count itself: the largest number a worker reported
+  under-counts whenever two workers explore different parts of the protocol,
+  and the campaign has explored a state when any worker has.
 - **A campaign that executed nothing was told its target was broken.** There
   are two causes and naming the wrong one sends the reader to the wrong place:
   a target that will not start, or a budget shorter than the campaign's own

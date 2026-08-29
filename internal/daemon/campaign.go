@@ -689,6 +689,24 @@ func (c *Campaign) aggregate() metrics.Snapshot {
 	c.mu.Lock()
 	snap.Findings, snap.Buckets = c.findings, c.distinctBuckets()
 	c.mu.Unlock()
+
+	// Protocol coverage comes from the merged graph rather than from the
+	// workers' counters, for the same reason findings do: the campaign has
+	// explored a state when any worker has, so the campaign's number is the
+	// union and no worker holds it. Taking the largest a worker reported
+	// under-counts whenever two workers explore different parts of the
+	// protocol, which is the case a campaign runs several workers for.
+	//
+	// It also settles which of two numbers is right. The counters travel on
+	// the reporting interval and the graph on the checkpoint interval, so they
+	// disagree for as long as the gap between them — measured as a finished
+	// campaign whose status said ten states while its graph held nine, on the
+	// criterion whose whole subject is that this number is reported.
+	if model := c.StateModel(); model != nil && len(model.States) > 0 {
+		snap.States = len(model.States)
+		snap.Transitions = len(model.Transitions)
+		snap.IllegalMoves = len(model.Illegal)
+	}
 	return snap
 }
 
