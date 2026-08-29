@@ -516,7 +516,8 @@ func (s *Server) findingBuckets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"strategy": strategy, "buckets": bs, "count": len(bs)})
+	views := bucketViewsOf(bs)
+	writeJSON(w, http.StatusOK, map[string]any{"strategy": strategy, "buckets": views, "count": len(views)})
 }
 
 // TriageRequest bounds an on-demand triage run.

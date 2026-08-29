@@ -21,8 +21,11 @@ func sleeper(t *testing.T, ctx context.Context) executor.Handle {
 	if err != nil {
 		t.Skip("no sleep(1) on this host")
 	}
+	// Args carries argv in full, argv[0] included: a spec that omits it runs
+	// sleep with no operand, which exits 1 immediately and makes this a test of
+	// a process that was never alive.
 	h, err := NewTrustedSpawner().Start(ctx, executor.ProcSpec{
-		Path: sleep, Args: []string{"60"},
+		Path: sleep, Args: []string{sleep, "60"},
 	})
 	if err != nil {
 		t.Fatal(err)

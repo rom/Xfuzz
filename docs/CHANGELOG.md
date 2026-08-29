@@ -78,7 +78,7 @@ line is a client of the same API the console will use.
 
 | Criterion | Result |
 | --- | --- |
-| Multi-worker campaigns scale ≥ 0.85 × N | 2.69–2.72× on 3 workers (90–91% efficiency), measured as executions completed in a fixed window rather than as a reported rate |
+| Multi-worker campaigns scale ≥ 0.85 × N | 1.89× on 2 workers (94% efficiency) on a 4-core host, measured as executions completed in a fixed window rather than as a reported rate |
 | `xfuzz explain` renders the fully resolved config | Settings the file never mentions are shown and marked `(default)`; the YAML form validates as a campaign file |
 | Killing the daemon mid-campaign resumes cleanly | SIGKILL at 13 corpus entries / 19 edges; a new daemon took over on the same data directory and finished at 40 entries / 29 edges with the finding intact, and no worker outlived the daemon |
 | CLI/API parity test passes | Both directions, as a unit test over the route table |

@@ -146,15 +146,22 @@ func (c *Collector) recompute() {
 		total.TriageDropped += s.TriageDropped
 		total.WorkerRestarts += s.WorkerRestarts
 
-		// Coverage, corpus and findings are campaign-wide facts that every
-		// worker observes through the shared store, so they are the maximum
-		// reported rather than the sum. Summing them would multiply the
-		// campaign's coverage by its worker count.
+		// Coverage and the corpus are campaign-wide facts that every worker
+		// observes through the shared corpus, so they are the maximum reported
+		// rather than the sum. Summing them would multiply the campaign's
+		// coverage by its worker count.
 		total.Coverage = max(total.Coverage, s.Coverage)
 		total.MapDensity = max(total.MapDensity, s.MapDensity)
 		total.CorpusSize = max(total.CorpusSize, s.CorpusSize)
 		total.CorpusBytes = max(total.CorpusBytes, s.CorpusBytes)
-		total.Findings = max(total.Findings, s.Findings)
+
+		// Findings are not shared: each worker reports only what it found
+		// itself, so two workers with one finding each are two findings, and
+		// the maximum would report one. Buckets are the other way — two
+		// workers can reach the same bug — so the maximum is a floor rather
+		// than an answer, and the campaign, which records every finding
+		// centrally, refines it.
+		total.Findings += s.Findings
 		total.Buckets = max(total.Buckets, s.Buckets)
 
 		if s.LastNewCoverage.After(total.LastNewCoverage) {

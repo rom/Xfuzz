@@ -69,13 +69,21 @@ type Campaign struct {
 	binary  string
 	workDir string
 
-	mu        sync.Mutex
-	state     State
-	started   time.Time
-	stopped   time.Time
-	reason    string
-	lastNew   time.Time
-	buckets   map[string]bool
+	mu      sync.Mutex
+	state   State
+	started time.Time
+	stopped time.Time
+	reason  string
+	lastNew time.Time
+	// bucketOf maps each finding to the bucket it currently belongs to, rather
+	// than recording the set of buckets seen. Two things file a finding: the
+	// engine, whose in-loop bucketing is deliberately cheap, and triage, which
+	// re-buckets from the minimised reproducer and an execution it watched
+	// itself. They disagree by design, and a set would then hold two entries
+	// for one bug — so the campaign tracks where each finding *is*, and counts
+	// the distinct answers.
+	bucketOf  map[int64]string
+	findings  int
 	seen      map[string]bool
 	execsBase uint64
 
@@ -143,7 +151,7 @@ func NewCampaign(ctx context.Context, cfg *campaign.Resolved, opts CampaignOptio
 		binary:      opts.WorkerBinary,
 		workDir:     opts.WorkDir,
 		state:       StateCreated,
-		buckets:     map[string]bool{},
+		bucketOf:    map[int64]string{},
 		seen:        map[string]bool{},
 		pendingSync: map[int][]CorpusEntry{},
 		done:        make(chan struct{}),
@@ -402,7 +410,7 @@ func (c *Campaign) terminationReason() string {
 	snap := c.metrics.Snapshot()
 
 	c.mu.Lock()
-	started, lastNew, buckets := c.started, c.lastNew, len(c.buckets)
+	started, lastNew, buckets := c.started, c.lastNew, c.distinctBuckets()
 	c.mu.Unlock()
 
 	if stop.After > 0 && time.Since(started) >= stop.After.Std() {
@@ -455,7 +463,7 @@ func (c *Campaign) finish(ctx context.Context, reason string) {
 	_ = c.store.SetCampaignStatus(ctx, c.id, store.StatusFinished)
 	_, _ = c.store.Audit(ctx, "", store.AuditCampaignStop,
 		fmt.Sprintf("campaign=%s reason=%q execs=%d buckets=%d",
-			c.Config.Name, reason, c.metrics.Snapshot().Execs, len(c.buckets)))
+			c.Config.Name, reason, c.metrics.Snapshot().Execs, c.bucketCount()))
 	c.publish(EventCampaign, map[string]any{"state": string(StateFinished), "reason": reason})
 }
 
@@ -581,7 +589,7 @@ func (c *Campaign) Status() Status {
 	state, started, stopped, reason := c.state, c.started, c.stopped, c.reason
 	c.mu.Unlock()
 
-	snap := c.metrics.Snapshot()
+	snap := c.aggregate()
 	snap.WorkersHealthy = c.sup.Healthy()
 	snap.Workers = len(c.sup.Status())
 
@@ -614,6 +622,50 @@ func (c *Campaign) Status() Status {
 	}
 }
 
+// distinctBuckets counts the buckets findings are currently filed under. The
+// caller holds c.mu.
+func (c *Campaign) distinctBuckets() int {
+	seen := make(map[string]struct{}, len(c.bucketOf))
+	for _, key := range c.bucketOf {
+		seen[key] = struct{}{}
+	}
+	return len(seen)
+}
+
+// hasBucket reports whether any finding is already filed under a key. The
+// caller holds c.mu.
+func (c *Campaign) hasBucket(key string) bool {
+	for _, k := range c.bucketOf {
+		if k == key {
+			return true
+		}
+	}
+	return false
+}
+
+// bucketCount is distinctBuckets for a caller that does not hold c.mu.
+func (c *Campaign) bucketCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.distinctBuckets()
+}
+
+// aggregate returns the campaign's counters.
+//
+// The collector's total for everything the workers measure, and the campaign's
+// own record for findings and buckets. A worker knows what it found; only the
+// campaign has seen every worker's reports, so only it can tell two workers
+// finding the same bug from two workers finding different ones — and a live
+// view that disagrees with the campaign's own final status is worse than no
+// live view.
+func (c *Campaign) aggregate() metrics.Snapshot {
+	snap := c.metrics.Snapshot()
+	c.mu.Lock()
+	snap.Findings, snap.Buckets = c.findings, c.distinctBuckets()
+	c.mu.Unlock()
+	return snap
+}
+
 // onMessage handles one worker message. It runs on the supervisor's reader
 // goroutine, so nothing here may block for long.
 func (c *Campaign) onMessage(worker int, m *Message) {
@@ -641,7 +693,7 @@ func (c *Campaign) onMessage(worker int, m *Message) {
 			// and does not hold for a stream of per-worker numbers where the
 			// newest is whichever worker happened to report last. Per-worker
 			// counters are still exact, from the workers endpoint.
-			snap := c.metrics.Snapshot()
+			snap := c.aggregate()
 			c.bus.Publish(Event{Kind: EventMetrics, Campaign: c.Config.Name, Data: &snap})
 		}
 
@@ -773,9 +825,10 @@ func (c *Campaign) onFinding(ctx context.Context, worker int, f *FindingReport) 
 
 	c.mu.Lock()
 	key := strategy + ":" + signature
-	isNew := !c.buckets[key]
-	c.buckets[key] = true
-	buckets := len(c.buckets)
+	isNew := !c.hasBucket(key)
+	c.bucketOf[rec.ID] = key
+	c.findings++
+	buckets := c.distinctBuckets()
 	c.mu.Unlock()
 
 	c.bus.Publish(Event{Kind: EventFinding, Campaign: c.Config.Name, Worker: worker,
@@ -848,13 +901,20 @@ func (c *Campaign) onTriaged(res triage.Result) {
 	}
 
 	// Triage's bucket is computed from the minimised reproducer and from an
-	// execution it watched itself, so it is better evidence than the worker's.
-	if res.Signature != "" {
+	// execution it watched itself, so it is better evidence than the worker's —
+	// but only when it actually saw the failure. A reproducer that did not
+	// reproduce yields no evidence at all, and filing every such finding under
+	// one signature would merge unrelated bugs into a single bucket for the
+	// sole reason that none of them could be re-run.
+	if res.Signature != "" && res.Verify.Reproduced > 0 {
 		if err := c.store.Rebucket(ctx, res.ID, res.Strategy, res.Signature); err != nil {
 			c.warn(fmt.Sprintf("re-bucketing finding %d: %v", res.ID, err))
 		} else {
+			// Replaces the engine's provisional bucket for this finding
+			// rather than joining it: they are two answers to one question,
+			// and triage's is the better evidenced.
 			c.mu.Lock()
-			c.buckets[res.Strategy+":"+res.Signature] = true
+			c.bucketOf[res.ID] = res.Strategy + ":" + res.Signature
 			c.mu.Unlock()
 		}
 	}

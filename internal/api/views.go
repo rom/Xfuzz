@@ -107,6 +107,37 @@ func findingViewOf(f *store.Finding) findingView {
 	}
 }
 
+// bucketView is a bucket as the API reports it.
+//
+// A view rather than the store's own record, for the same reason findings have
+// one: the store's field names are Go's, and an API that answered in Go field
+// names for one resource and snake_case for the rest would be answering in two
+// languages.
+type bucketView struct {
+	ID        int64     `json:"id"`
+	Strategy  string    `json:"strategy"`
+	Signature string    `json:"signature"`
+	Kind      string    `json:"kind,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	Count     int64     `json:"count"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
+func bucketViewOf(b *store.Bucket) bucketView {
+	return bucketView{
+		ID: b.ID, Strategy: b.Strategy, Signature: b.Signature,
+		Kind: b.Kind, Summary: b.Summary, Count: b.Count, FirstSeen: b.FirstSeenAt,
+	}
+}
+
+func bucketViewsOf(bs []*store.Bucket) []bucketView {
+	out := make([]bucketView, 0, len(bs))
+	for _, b := range bs {
+		out = append(out, bucketViewOf(b))
+	}
+	return out
+}
+
 // storeOf returns the store a campaign writes to.
 func (s *Server) storeOf(c *daemon.Campaign) (*store.Store, error) {
 	st := c.Store()

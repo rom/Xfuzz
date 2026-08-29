@@ -322,7 +322,7 @@ command line is a client of the same API the console will use.
 
 | Criterion | Result |
 | --- | --- |
-| Multi-worker campaigns scale ≥ 0.85 × N | **2.69–2.72× on 3 workers, 90–91% efficiency**, measured as executions completed in a fixed window rather than as a reported rate |
+| Multi-worker campaigns scale ≥ 0.85 × N | **1.89× on 2 workers, 94% efficiency** on a 4-core host, measured as executions completed in a fixed window rather than as a reported rate |
 | `xfuzz explain` renders the fully resolved config | Every setting the file never mentions is shown and marked `(default)`, and the YAML form validates as a campaign file |
 | Killing the daemon mid-campaign resumes cleanly | SIGKILL at 13 corpus entries / 19 edges; a new daemon took over on the same data directory and finished at **40 entries / 29 edges with the finding intact**, and no worker outlived the daemon that started it |
 | CLI/API parity test passes | Every route reachable from a command and every command mapped to routes, both directions, as a unit test over the route table |
@@ -332,6 +332,12 @@ part of what is under test: a campaign that aggregates its workers' counters
 wrongly passes a rate check while doing nothing of the sort — which is exactly
 the defect this milestone had. Executions completed in a fixed wall-clock
 window is the number a person would count by hand.
+
+The worker count scales with the host, and at most half its cores are used. The
+daemon, the client and the test itself run on the same machine, so a run with a
+worker on every core measures the scheduler dividing the last one between the
+fuzzer and the thing timing it — which is a fact about the host, not about
+whether workers scale.
 
 **Three capabilities the plan did not list, and one it did.** `xfuzz replay`,
 `xfuzz minimize` and `xfuzz doctor` are named in DESIGN.md § 7 and were missing

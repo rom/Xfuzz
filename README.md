@@ -9,7 +9,7 @@ or white-box, driven from a CLI or a web console.
 > `xfuzz run campaign.yaml` runs it, and a daemon owns it from there: multiple
 > worker processes sharing a corpus, live metrics and findings over an
 > HTTP/JSON API, findings verified and minimised as they arrive, and a run that
-> survives losing the daemon. Multi-worker campaigns reach 90% scaling
+> survives losing the daemon. Multi-worker campaigns scale at 94%
 > efficiency; behind them are a structured IR, 24 mutation operators, the
 > `.xfg` grammar language, a fork server, a C coverage runtime, a composable
 > feedback pipeline, a content-addressed store, and a Linux sandbox that

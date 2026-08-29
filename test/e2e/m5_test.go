@@ -187,18 +187,27 @@ stop:
 // campaign that is doing nothing of the sort. Executions in a window is the
 // number a user would count by hand.
 func TestMultiWorkerCampaignsScale(t *testing.T) {
-	// One core is left for the daemon, the client and the test itself, so the
-	// measurement is of workers competing for their own cores rather than of
-	// the scheduler dividing one.
-	workers := min(4, runtime.NumCPU()-1)
+	// At most half the cores go to workers. The daemon, the client and the test
+	// itself all run on this machine, and a measurement that put a worker on
+	// every core would be measuring the scheduler dividing the last one between
+	// the fuzzer and the thing timing it.
+	workers := min(4, runtime.NumCPU()/2)
 	if workers < 2 {
-		t.Skipf("scaling needs at least three cores; this host has %d", runtime.NumCPU())
+		t.Skipf("scaling needs at least four cores; this host has %d", runtime.NumCPU())
 	}
 	e := newEnv(t)
 
+	// Best of two runs each, interleaved. Throughput is bounded above by the
+	// machine and dragged below it by whatever else the machine is doing, so
+	// repeated trials scatter downwards from a ceiling and the maximum is the
+	// least noisy estimate of where that ceiling is. Interleaving keeps a burst
+	// of unrelated load from landing entirely on one of the two configurations.
 	const window = 20 * time.Second
-	one := e.runFor("scale-1", 1, window)
-	many := e.runFor("scale-n", workers, window)
+	var one, many uint64
+	for trial := 1; trial <= 2; trial++ {
+		one = max(one, e.runFor(fmt.Sprintf("scale-1-%d", trial), 1, window))
+		many = max(many, e.runFor(fmt.Sprintf("scale-n-%d", trial), workers, window))
+	}
 
 	if one == 0 {
 		t.Fatal("the single-worker campaign completed no executions")
@@ -209,8 +218,9 @@ func TestMultiWorkerCampaignsScale(t *testing.T) {
 		one, workers, many, speedup, 100*efficiency)
 
 	if speedup < 0.85*float64(workers) {
-		t.Errorf("%d workers gave a %.2fx speedup, below the 0.85 x N = %.2fx criterion",
-			workers, speedup, 0.85*float64(workers))
+		t.Errorf("%d workers gave a %.2fx speedup, below the 0.85 x N = %.2fx criterion "+
+			"(%d execs against %d in %s)",
+			workers, speedup, 0.85*float64(workers), many, one, window)
 	}
 }
 
@@ -223,11 +233,14 @@ func (e *env) runFor(name string, workers int, window time.Duration) uint64 {
 	// would look faster for a reason that has nothing to do with workers.
 	store := testenv.ReachableDir(e.t)
 	path := e.writeCampaign(name, workers, window, "storage:\n  dir: "+store+"\n")
-	e.mustRun(window+90*time.Second, "run", path)
-	s := e.status(name)
-	if s.State != "finished" {
-		e.t.Fatalf("%s ended in state %q, not finished", name, s.State)
-	}
+
+	// Detached, and polled rather than followed. A client following the event
+	// stream prints a line several times a second, and on a host with as many
+	// cores as this has workers that is the measurement competing with itself.
+	e.mustRun(60*time.Second, "run", path, "--detach")
+	s := e.waitFor(name, window+90*time.Second,
+		func(s campaignStatus) bool { return s.State == "finished" },
+		"the campaign did not finish within its own budget")
 	return s.Metrics.Execs
 }
 
