@@ -227,9 +227,15 @@ func (c *Campaign) Minimize(ctx context.Context, id int64, budget int) (*Minimiz
 	if err != nil {
 		return nil, err
 	}
-	payload, err := reproducerOf(st, f)
+	// From the input as the engine found it, not from whatever an earlier pass
+	// reduced it to. Asking to minimise again is asking for a better job, and
+	// the existing reproducer is a local optimum the last pass already reached
+	// — starting there with a larger budget mostly re-derives it. It also makes
+	// the report legible: "2000 bytes to 19" is the number somebody wants, and
+	// "2 bytes to 2, 0% smaller" reads like a failure when it is a re-run.
+	payload, err := st.Blobs().Get(f.Digest)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("daemon: finding %d has no stored input: %w", f.ID, err)
 	}
 	if budget <= 0 {
 		budget = c.Config.Triage.MinimizeBudget
@@ -269,7 +275,7 @@ func (c *Campaign) Minimize(ctx context.Context, id int64, budget int) (*Minimiz
 
 // reproducerOf fetches the payload a finding should be re-run with: the
 // minimised form when there is one, since that is the artefact a person works
-// from.
+// from and the one whose behaviour a replay is being asked about.
 func reproducerOf(st *store.Store, f *store.Finding) ([]byte, error) {
 	digest := f.Digest
 	if !f.Minimized.IsZero() {
