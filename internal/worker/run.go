@@ -120,7 +120,21 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 	w.built = b
-	defer b.close()
+	defer func() {
+		b.close()
+		// Said on the way out, because a closer that failed has left something
+		// behind on this host and the next campaign is the one that meets it.
+		//
+		// To stderr as well as to the daemon: by the time release runs, the
+		// status pipe may already be closed at the far end — the supervisor
+		// stops reading once the worker is on its way out — and a report
+		// written into a pipe nobody reads is the same as no report. The
+		// daemon captures a worker's output, so that channel outlives this one.
+		for _, err := range b.closeErrs {
+			w.report("warn", err.Error())
+			fmt.Fprintf(os.Stderr, "worker %d: %v\n", w.opts.ID, err)
+		}
+	}()
 
 	seeds, err := w.loadCorpus(ctx)
 	if err != nil {

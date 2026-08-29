@@ -74,7 +74,7 @@ func (b *built) buildSession(ctx context.Context, cfg *campaign.Resolved) error 
 	}
 	b.executor = sess
 	b.tier = "session"
-	b.closers = append(b.closers, func() { sess.Close() })
+	b.closers = append(b.closers, closer{"session target", sess.Close})
 
 	if cfg.State != nil && cfg.State.Guide != nil && *cfg.State.Guide {
 		g, gerr := guidanceFor(cfg)

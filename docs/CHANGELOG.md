@@ -173,18 +173,25 @@ cost more executions than the campaign spends fuzzing.
 
 ### Known issues
 
-- A managed session server can outlive its worker. Every target runs in its own
-  process group so that killing it kills what it started, which also means the
-  worker's group does not contain it; a worker that does not complete its own
-  shutdown leaves the server listening on the address the next campaign wants.
-  A worker now gets a bounded grace period to shut down before the supervisor
-  kills it, which is right on its own terms, but it has not been shown to close
-  this hole: one server per worker still survives a finished campaign here.
-  Diagnosing further needs worker output the daemon does not currently keep.
-  It is not only untidy: the milestone's exit criteria pass individually and
-  the second one failed once when run straight after the first, on a host
-  carrying four abandoned servers — so the leak is already costing a campaign
-  that follows another one.
+- A managed session server can outlive its worker: one per worker survives a
+  finished campaign. Every target runs in its own process group so that killing
+  it kills what it started, which also means the worker's group does not
+  contain it, and a worker that does not complete its own shutdown leaves the
+  server behind. A worker now gets a bounded grace period to shut down before
+  the supervisor kills it, and a closer that fails now says so on the worker's
+  own output as well as to the daemon — the status pipe is closed by then, so
+  the report that would have named the cause was going nowhere. Neither has
+  been shown to close the hole.
+
+  What it costs is startup, not correctness: the abandoned servers hold no
+  address the next campaign wants, but they are contention, and a campaign
+  short enough for startup to be most of its budget is where that shows.
+  Measured: the milestone's exit criteria pass individually, and the second
+  failed once when run straight after the first on a host carrying four
+  abandoned servers; separately, a twenty-second campaign on a loaded host can
+  reach its time budget having imported no corpus at all. A campaign whose
+  budget is shorter than its own startup deserves to be told so, which the
+  health check does not yet say.
 
 ### Added — M5 Daemon, API, and CLI (2026-08-29)
 

@@ -54,8 +54,14 @@ type built struct {
 	// state is the protocol guidance, nil on a stateless campaign.
 	state *state.Guidance
 
-	closers []func()
+	closers []closer
 	closed  sync.Once
+
+	// closeErrs is what release reported, kept so the worker can say it. A
+	// closer that fails is saying the host is now in a state the next campaign
+	// will meet — a target that outlived its worker, a region still mapped —
+	// and discarding that is how one campaign quietly costs the next one.
+	closeErrs []error
 
 	// tier is which executor was actually used, which may not be the one asked
 	// for, and fallbackReason says why when they differ. Reported to the daemon
@@ -65,6 +71,12 @@ type built struct {
 	fallbackReason string
 }
 
+// closer releases one acquired resource, saying what it is when it fails.
+type closer struct {
+	what string
+	fn   func() error
+}
+
 // close releases everything build acquired, in the reverse of the order it was
 // acquired in.
 //
@@ -72,10 +84,17 @@ type built struct {
 // returns, and a caller that owns the worker calls Close — and a second release
 // is not harmless: closing a fork server twice used to mean two goroutines
 // waiting for one process to die.
+//
+// Failures are collected rather than discarded. "The target did not die within
+// five seconds of SIGKILL; something escaped its process group" is a sentence
+// the operator needs, and it was being thrown away.
 func (b *built) close() {
 	b.closed.Do(func() {
 		for i := len(b.closers) - 1; i >= 0; i-- {
-			b.closers[i]()
+			if err := b.closers[i].fn(); err != nil {
+				b.closeErrs = append(b.closeErrs,
+					fmt.Errorf("releasing the %s: %w", b.closers[i].what, err))
+			}
 		}
 	})
 }
@@ -212,7 +231,7 @@ func (b *built) buildSafety(ctx context.Context, cfg *campaign.Resolved) error {
 			DisableCore:       true,
 		},
 	}
-	b.closers = append(b.closers, func() { b.sandbox.Close() })
+	b.closers = append(b.closers, closer{"sandbox", b.sandbox.Close})
 
 	// The scope guard, which on a session campaign is the dialer itself. Built
 	// even for a file campaign: a target that reaches out is refused by the
@@ -287,7 +306,7 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 		return fmt.Errorf("worker: creating the coverage region: %w", err)
 	}
 	b.shm = shm
-	b.closers = append(b.closers, func() { shm.Close() })
+	b.closers = append(b.closers, closer{"coverage region", shm.Close})
 
 	b.coverage = feedback.NewCoverageMap("coverage", cfg.Feedback.MapSize)
 	b.coverage.SetBuffer(shm.Bytes())
@@ -380,7 +399,7 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 		}
 		b.executor = fs
 		b.tier = "forkserver"
-		b.closers = append(b.closers, func() { fs.Close() })
+		b.closers = append(b.closers, closer{"fork server", fs.Close})
 		return nil
 
 	case campaign.ExecutorSubprocess:
@@ -405,7 +424,7 @@ func (b *built) buildSubprocess(cfg *campaign.Resolved, spawner *safety.Spawner,
 	}
 	b.executor = sub
 	b.tier = "subprocess"
-	b.closers = append(b.closers, func() { sub.Close() })
+	b.closers = append(b.closers, closer{"subprocess executor", sub.Close})
 	return nil
 }
 
