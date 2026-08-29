@@ -1,6 +1,7 @@
 package feedback
 
 import (
+	"fmt"
 	"hash/maphash"
 	"regexp"
 	"strconv"
@@ -261,6 +262,8 @@ func (o *CrashObjective) IsFinding(_ []Observer, ek ExitKind) (bool, Finding, er
 		f.Detail = o.obs.Combined()
 		if name, ok := signalNames[o.obs.signal]; ok {
 			f.Summary = "fatal signal " + name
+		} else if o.obs.signal != 0 {
+			f.Summary = fmt.Sprintf("fatal signal %d", o.obs.signal)
 		}
 	}
 	return true, f, nil

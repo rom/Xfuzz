@@ -33,11 +33,14 @@ rather than an input, and reach a bug that needs a specific sequence to get to.
   composing with coverage under ADR-0007's algebra. This is the reason ADR-0006
   exists: two sessions can execute identical lines and leave the target in
   entirely different places.
-- `StateScheduler` picks a rarely-visited state to aim for, finds the message
-  that reached it in that session's own trace, and mutates at or after that
-  point. A session is a funnel — the handshake has to stay valid for anything
-  past it to be reachable — and a fuzzer that does not know it is a funnel
-  keeps kicking the entrance.
+- `StateScheduler` picks a rarely-visited state to aim for, picks a corpus
+  entry known to reach it, finds the message that reached it in that entry's
+  own trace, and mutates at or after that point. Three choices rather than two:
+  aiming at a state without choosing an entry that can reach it leaves the aim
+  inert, because an entry that never got there has no informed place to cut. A
+  session is a funnel — the handshake has to stay valid for anything past it to
+  be reachable — and a fuzzer that does not know it is a funnel keeps kicking
+  the entrance.
 
 **T6, the session executor**
 
@@ -81,7 +84,36 @@ evidence of getting through the funnel rather than of stumbling past it.
 
 ### Fixed
 
-Seven defects, all of which produced a campaign that looked healthy:
+Eleven defects, all of which produced a campaign that looked healthy:
+
+- **Seed selection was not state-aware**, which left the state choice inert.
+  The entry came from the coverage scheduler, so an entry that never reached
+  the state being aimed at gave the message choice nothing to work with and it
+  degraded to "anywhere". Measured on `stateful_proto`: 8 of 148 corpus entries
+  carried a complete handshake, so roughly 95% of the budget went to entries
+  that could not reach the state the campaign was aiming for, and the bug
+  behind the handshake stayed unreached for the length of a campaign.
+- **The fuzzer's own SIGKILL was filed as a finding.** A managed server is
+  killed when the context it was started with ends, and a server restarted
+  during a session inherited that session's ten-second timeout — so it was
+  killed some seconds later, in the middle of a *later* session, and the kill
+  was read as the target dying. Every campaign carried a "target terminated
+  abnormally" finding, signal 9, against an input that did nothing and that
+  reproduced 0 times out of 5. A managed server's life is the campaign's now,
+  and a target that dies of a signal it cannot have sent itself is not a
+  finding whatever else it is.
+- **A restart could report the previous server's death against its
+  successor.** The exit flag and result were shared across generations while a
+  goroutine reaping the old process was still running. Each generation owns its
+  own now, so a stale reaper writes where nothing reads.
+- **Bucketing collapsed every digit run, including the one naming the bug.**
+  `stateful_proto`'s four bugs each print their own number and all four reduced
+  to one bucket key, so a second, different bug was filed as a duplicate of the
+  first and discarded. Only addresses and long numbers vary between runs of one
+  bug; a line number, an error code or a bug index is part of what the message
+  says. The one-line report had the same failure from the other end, truncating
+  a bucket key from the right — on the very line announcing that a second bug
+  had been found.
 
 - **Trimming destroyed the session it was trimming.** Candidates were delivered
   as one long message rather than as a conversation, so the comparison
@@ -117,6 +149,25 @@ told to bind, naming the directory and the identity rather than surfacing it as
 a server that would not talk; and triage replays a stateful finding as a
 session rather than as a blob on standard input, which reported every real bug
 as unreproducible.
+
+Triage can also be told a target's own failure vocabulary. The generic marker
+prefixes cover assertions and panics; `triage.markers` adds a codebase's own,
+threaded through verification as well as bucketing because divergence is also a
+question about class. And a corpus loaded from the store is traced before
+fuzzing starts: `LoadCorpus` deliberately admits without executing, which for a
+stateful campaign means every entry is scheduled without a trace and the
+state-then-message split never engages.
+
+### Known issues
+
+- A managed session server can outlive its worker. Every target runs in its own
+  process group so that killing it kills what it started, which also means the
+  worker's group does not contain it; a worker that does not complete its own
+  shutdown leaves the server listening on the address the next campaign wants.
+  A worker now gets a bounded grace period to shut down before the supervisor
+  kills it, which is right on its own terms, but it has not been shown to close
+  this hole: one server per worker still survives a finished campaign here.
+  Diagnosing further needs worker output the daemon does not currently keep.
 
 ### Added — M5 Daemon, API, and CLI (2026-08-29)
 

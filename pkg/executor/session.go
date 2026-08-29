@@ -213,19 +213,40 @@ type Session struct {
 	Shm     SharedMemory
 	Backend string
 
-	handle Handle
-	conn   net.Conn
+	// srv is the managed target, or nil when the campaign did not give one.
+	srv  *server
+	conn net.Conn
 
-	// exited is set by the reaper goroutine when the managed server ends, and
-	// result holds how. A flag rather than a Wait with a short timeout on every
-	// session: that cost fifty milliseconds per execution, which on a tier
-	// whose whole budget is a few milliseconds per message was most of the
-	// execution.
-	exited atomic.Bool
-	result ProcResult
+	// lifetime is the context the managed server's life is tied to: the
+	// campaign's, never one session's. See spawnCtx.
+	lifetime context.Context
 
 	execs uint64
 	buf   []byte
+}
+
+// server is one generation of the managed target: its handle, whether it has
+// exited, and how.
+//
+// Per generation rather than per session, because a restart replaces the
+// process while the goroutine reaping the previous one is still running.
+// Sharing one flag and one result across generations lets that goroutine
+// report the old process's death against the new one, and the campaign files
+// a finding against an input that did nothing wrong. Measured: a session
+// following a restart reported a crash whose summary named no signal, because
+// the stale result that made it look like a crash had been overwritten by a
+// clean one before the output was harvested. Giving each generation its own
+// state makes a stale reaper write where nothing reads.
+type server struct {
+	handle Handle
+
+	// exited is set by the reaper goroutine when this generation ends, and
+	// result holds how. A flag rather than a Wait with a short timeout on
+	// every session: that cost fifty milliseconds per execution, which on a
+	// tier whose whole budget is a few milliseconds per message was most of
+	// the execution.
+	exited atomic.Bool
+	result ProcResult
 }
 
 // NewSession returns a session executor. Nothing is started until Start.
@@ -270,6 +291,7 @@ func (e *Session) Capabilities() Caps {
 
 // Start brings the target up, if this executor is managing it.
 func (e *Session) Start(ctx context.Context) error {
+	e.lifetime = ctx
 	if e.opts.Reset == ResetSnapshot {
 		return ErrSnapshotUnsupported
 	}
@@ -280,6 +302,22 @@ func (e *Session) Start(ctx context.Context) error {
 }
 
 // startServer launches the managed target and waits for it to listen.
+// spawnCtx is the context a managed server's life is tied to.
+//
+// The executor's, never the caller's. The spawner kills a process when the
+// context it was started with is done, and a session context carries
+// SessionTimeout — so a server restarted in the middle of a session was killed
+// some seconds later, in the middle of a *later* session, and the SIGKILL was
+// read as the target dying. Measured: a finding per campaign reading "target
+// terminated abnormally" with signal 9, filed against an input that did
+// nothing, and reproducing 0 times out of 5.
+func (e *Session) spawnCtx() context.Context {
+	if e.lifetime != nil {
+		return e.lifetime
+	}
+	return context.Background()
+}
+
 func (e *Session) startServer(ctx context.Context) error {
 	spec := e.spec
 	if e.Shm != nil {
@@ -291,23 +329,24 @@ func (e *Session) startServer(ctx context.Context) error {
 		}
 		spec.StderrFile = e.stderr
 	}
-	h, err := e.spawner.Start(ctx, spec)
+	h, err := e.spawner.Start(e.spawnCtx(), spec)
 	if err != nil {
 		return fmt.Errorf("executor %s: starting the target: %w", e.name, err)
 	}
-	e.handle = h
-	e.exited.Store(false)
+	srv := &server{handle: h}
+	e.srv = srv
 	go func() {
 		res, _ := h.Wait()
 		// Written before the flag, and read after it: the flag is the
 		// happens-before edge, so no lock is needed for a value only ever
-		// written once.
-		e.result = res
-		e.exited.Store(true)
+		// written once. Written into this generation's own state, so a reaper
+		// that outlives its restart reports nothing about its successor.
+		srv.result = res
+		srv.exited.Store(true)
 	}()
 	if err := e.waitReady(ctx); err != nil {
 		h.Kill()
-		e.handle = nil
+		e.srv = nil
 		return err
 	}
 	return nil
@@ -374,7 +413,7 @@ func (e *Session) Run(ctx context.Context, in Input, obs []feedback.Observer) (f
 	}
 
 	e.execs++
-	e.harvestStderr()
+	e.harvestStderr(ek)
 
 	for _, o := range obs {
 		if perr := o.Post(ek); perr != nil {
@@ -445,7 +484,7 @@ func (e *Session) deliver(ctx context.Context, msgs [][]byte) (feedback.ExitKind
 			// every remaining message, and on a target with a shallow bug that
 			// is most of the campaign's wall-clock time.
 			silent = true
-			if e.exited.Load() {
+			if e.exited() {
 				return e.afterHangup(), nil
 			}
 		case rerr != nil:
@@ -476,23 +515,33 @@ func (e *Session) afterHangup() feedback.ExitKind {
 	return e.liveness()
 }
 
+// Signals a target cannot raise on itself as a fault, so their presence means
+// something outside the target ended it.
+const (
+	sigKill = 9
+	sigTerm = 15
+)
+
 // HangupGrace is how long a dropped connection waits for the target's exit
 // status before concluding the target is still alive.
 const HangupGrace = 100 * time.Millisecond
 
 // awaitExit waits briefly for the reaper to observe the managed target's exit.
 func (e *Session) awaitExit(d time.Duration) {
-	if e.handle == nil || e.exited.Load() {
+	if e.srv == nil || e.exited() {
 		return
 	}
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
-		if e.exited.Load() {
+		if e.exited() {
 			return
 		}
 	}
 }
+
+// exited reports whether the current generation of the managed target has ended.
+func (e *Session) exited() bool { return e.srv != nil && e.srv.exited.Load() }
 
 // liveness asks the managed process whether the target is still alive.
 //
@@ -502,17 +551,24 @@ func (e *Session) awaitExit(d time.Duration) {
 // unmanaged target's crash is reported as an ordinary end, and the campaign is
 // told at startup that this is what it is getting.
 func (e *Session) liveness() feedback.ExitKind {
-	if e.handle == nil || !e.exited.Load() {
+	if e.srv == nil || !e.exited() {
 		return feedback.ExitOK
 	}
-	res := e.result
+	res := e.srv.result
 	switch {
 	case res.OOM:
 		return feedback.ExitOOM
-	case res.Signal != 0:
-		return feedback.ExitCrash
 	case res.TimedOut:
 		return feedback.ExitTimeout
+	case res.Signal == sigKill || res.Signal == sigTerm:
+		// Not a finding, whatever else it is. A target does not send itself
+		// these; something outside it did — this executor replacing the
+		// server, an operator, the kernel where the cgroup accounting did not
+		// reach us — and filing an infrastructure event as a crash produces a
+		// bug report that never reproduces and an input that is not to blame.
+		return feedback.ExitOK
+	case res.Signal != 0:
+		return feedback.ExitCrash
 	}
 	// Exited without a signal. A server that stops on its own mid-campaign is
 	// not a crash, but it is not nothing either: every later session will fail
@@ -527,7 +583,7 @@ func (e *Session) session(ctx context.Context) (net.Conn, error) {
 	// to keep dialling a process that is gone. Without this a campaign using
 	// reconnect stops fuzzing at its first finding, which is the moment it
 	// starts being useful.
-	if e.handle != nil && e.exited.Load() && e.opts.Reset != ResetRestart {
+	if e.srv != nil && e.exited() && e.opts.Reset != ResetRestart {
 		if err := e.restartServer(ctx); err != nil {
 			return nil, err
 		}
@@ -612,9 +668,9 @@ func (e *Session) restartServer(ctx context.Context) error {
 		return nil
 	}
 	e.dropConnection()
-	if e.handle != nil {
-		e.handle.Kill()
-		e.handle = nil
+	if e.srv != nil {
+		e.srv.handle.Kill()
+		e.srv = nil
 	}
 	return e.startServer(ctx)
 }
@@ -768,7 +824,7 @@ func (e *Session) truncateStderr() {
 // reports "target terminated abnormally" rather than naming the signal, and a
 // summary that is identical for every crash is one that cannot distinguish two
 // bugs.
-func (e *Session) harvestStderr() {
+func (e *Session) harvestStderr(ek feedback.ExitKind) {
 	if e.Output == nil {
 		return
 	}
@@ -779,12 +835,20 @@ func (e *Session) harvestStderr() {
 		}
 	}
 	exitCode, signal := 0, 0
-	if e.handle != nil && e.exited.Load() {
-		exitCode, signal = e.result.ExitCode, e.result.Signal
+	if e.srv != nil && e.exited() {
+		exitCode, signal = e.srv.result.ExitCode, e.srv.result.Signal
 	}
-	if len(buf) == 0 && signal == 0 && exitCode == 0 {
+	if ek == feedback.ExitOK && len(buf) == 0 && signal == 0 && exitCode == 0 {
+		// Nothing new to say, and the observer already holds this session's
+		// last response. Overwriting it with an empty buffer would throw away
+		// the only account of what the target said.
 		return
 	}
+	// An execution that did not end well always records, even with nothing to
+	// record. Otherwise the observer keeps whatever the last reply left there
+	// and the objective reads a status of zero — which is how a crash comes to
+	// be reported as "target terminated abnormally" with no signal named and
+	// no output, the least actionable finding a fuzzer can produce.
 	e.Output.Record(nil, buf, exitCode, signal)
 }
 
@@ -795,9 +859,9 @@ func (e *Session) Close() error {
 		e.stderr = nil
 	}
 	e.dropConnection()
-	if e.handle != nil {
-		err := e.handle.Kill()
-		e.handle = nil
+	if e.srv != nil {
+		err := e.srv.handle.Kill()
+		e.srv = nil
 		return err
 	}
 	return nil

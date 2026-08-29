@@ -307,15 +307,11 @@ func (s *Supervisor) runOnce(ctx context.Context, w *worker) error {
 	close(writerDone)
 	w.writerWG.Wait()
 
-	// A short grace period before killing, because the worker has shutdown of
-	// its own to do and killing it takes that away.
-	//
-	// A session-tier worker manages a long-lived server process, and every
-	// target runs in its own process group so that killing it kills what it
-	// started — which also means the worker's process group does not contain
-	// it. Kill the worker and the server it was managing is orphaned, still
-	// listening on the address the next campaign will want. Measured: one
-	// abandoned server per worker per campaign, surviving every subsequent run.
+	// A short grace period before killing, because a worker on its way out has
+	// shutdown of its own to do and killing it takes that away: closing its
+	// store, and releasing the resources its executor holds — a session-tier
+	// worker manages a long-lived server process, and every target runs in its
+	// own process group so that killing the worker does not reach it.
 	//
 	// Bounded, because a supervisor that waits on a wedged worker is a campaign
 	// that will not stop. The worker has already closed its status pipe here,
