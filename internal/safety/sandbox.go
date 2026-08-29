@@ -233,6 +233,12 @@ func (s *Sandbox) Explain() string {
 	}
 	if s.HostPIDs {
 		notes = append(notes, "the target shares the host PID namespace by configuration")
+	} else if caps.PIDNS {
+		notes = append(notes,
+			"a PID namespace is used for fork-server targets and not for one-shot ones: "+
+				"a process that is PID 1 in its own namespace cannot abort(), so a target "+
+				"executed directly inside one would report an assertion failure as a "+
+				"segmentation fault")
 	}
 	if s.WritableRoot {
 		notes = append(notes, "the root filesystem is writable by configuration")
@@ -551,12 +557,32 @@ func (s *Sandbox) probeReadOnlyRoot() bool {
 	args = append(args, "--", probe)
 	cmd := exec.Command(s.helper, args...)
 	platform.ConfigureProcess(cmd, false)
-	platform.ConfigureSandbox(cmd, s.namespaces())
+	platform.ConfigureSandbox(cmd, s.namespaces(false))
 	return cmd.Run() == nil
 }
 
 // namespaces returns the namespace options for this policy.
-func (s *Sandbox) namespaces() platform.SandboxOptions {
+//
+// forks says whether the process being launched will fork its own executions,
+// as a fork server does, rather than being the executed program itself. It
+// decides one thing: whether the target gets a PID namespace.
+//
+// A PID namespace makes the first process in it PID 1, and the kernel treats
+// PID 1 specially — it discards signals sent to it from inside its own
+// namespace unless a handler is installed. abort(3) is implemented by raising
+// SIGABRT at oneself, so for a target that *is* PID 1 the abort does nothing
+// and glibc falls back to dereferencing a null pointer. The campaign then
+// records a segmentation fault where an assertion failed. That is not a
+// cosmetic difference: bucketing separates findings by their failure class, and
+// minimisation preserves it, so every assert(), every Rust panic under
+// panic=abort, and every sanitizer report would be filed under the wrong bug.
+//
+// A fork server is unaffected, because the process it forks for each execution
+// is PID 2 and upwards. So the namespace is used exactly where it does not
+// change the target's own semantics, and left out where it would. The one
+// remaining gap is a fork server whose target aborts during startup, before the
+// first fork; that surfaces as a handshake failure rather than as a finding.
+func (s *Sandbox) namespaces(forks bool) platform.SandboxOptions {
 	if s.Unconfined {
 		return platform.SandboxOptions{}
 	}
@@ -581,7 +607,7 @@ func (s *Sandbox) namespaces() platform.SandboxOptions {
 		UID: uid,
 		GID: gid,
 	}
-	if c.PIDNS && !s.HostPIDs {
+	if c.PIDNS && !s.HostPIDs && forks {
 		o.PIDNS = true
 	}
 	if c.NetNS && !s.Network {

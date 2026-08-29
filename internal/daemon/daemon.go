@@ -254,7 +254,7 @@ func (d *Daemon) Forget(name string) error {
 		return fmt.Errorf("daemon: campaign %q is %s; stop it first", name, s)
 	}
 	delete(d.campaigns, name)
-	return nil
+	return c.Close()
 }
 
 // Close stops every campaign and releases the stores.
@@ -281,6 +281,7 @@ func (d *Daemon) Close(ctx context.Context) error {
 		if s := c.State(); s == StateRunning || s == StatePaused {
 			_ = c.Stop(ctx, "daemon shutting down")
 		}
+		_ = c.Close()
 	}
 	var firstErr error
 	for _, s := range stores {

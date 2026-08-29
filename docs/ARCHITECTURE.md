@@ -75,15 +75,22 @@ github.com/rom/Xfuzz
 │   ├── store/              SQL metadata + CAS blob store, migrations
 │   ├── triage/             classify, bucket, minimise, verify
 │   ├── safety/             sandbox, scope guard, audit log
-│   ├── api/                gRPC services + REST gateway
+│   ├── api/                HTTP/JSON services + SSE event stream (ADR-0024)
+│   ├── client/             the API client the CLI is built on
 │   ├── daemon/             campaign manager, supervision, event bus
+│   ├── worker/             builds an engine from a campaign file, speaks the
+│   │                       worker protocol
 │   ├── metrics/            counters, series, health diagnostics
 │   ├── corpussync/         cross-worker corpus synchronisation
 │   ├── version/            build identity, injected at link time
+│   ├── testenv/            fixtures for integration tests, and nothing else
 │   └── platform/           OS-specific: linux/ darwin/ windows/
 ├── web/                    TypeScript SPA → embedded static assets
 ├── runtime/                xfuzz-rt: the C coverage runtime, embedded for
 │   └── csrc/               xfuzz-cc to compile into targets (never into Xfuzz)
+├── test/
+│   └── e2e/                milestone exit criteria, measured against the
+│                           shipped binaries rather than the packages behind them
 ├── testdata/
 │   ├── targets/            planted-bug integration targets
 │   └── corpora/            reference corpora
@@ -107,7 +114,7 @@ Rules that keep the layering honest:
 | `pkg-no-internal` | `pkg/` never imports `internal/` |
 | `core-no-executor` | `pkg/ir`, `pkg/feedback`, `pkg/corpus` never import `pkg/executor` — the core must not know how inputs are delivered |
 | `platform-build-tags` | Nothing outside `internal/platform` carries GOOS or GOARCH build constraints (a bare `cgo` constraint is fine — ADR-0017) |
-| `spawn-confinement` | Nothing outside `internal/safety` spawns a process; it reaches OS specifics through `internal/platform`. `cmd/xfuzz-cc` and `cmd/xfuzz-sandbox` are allowlisted: each *is* an exec wrapper, and the allowlist is in the lint source where a reviewer sees it |
+| `spawn-confinement` | Nothing outside `internal/safety` spawns a process; it reaches OS specifics through `internal/platform`. `cmd/xfuzz-cc`, `cmd/xfuzz-sandbox` and `internal/testenv` are allowlisted — the first two *are* exec wrappers and the third exists only to build test fixtures — and the allowlist is in the lint source where a reviewer sees it |
 | `dial-confinement` | Nothing outside `internal/safety` opens an outbound connection — every one must pass the scope guard (ADR-0012) |
 | `no-cmd-import` | Nothing imports `cmd/` |
 | `no-stdlib-plugin` | Nothing imports Go's `plugin` package (rejected by ADR-0010) |

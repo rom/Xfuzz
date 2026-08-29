@@ -79,9 +79,18 @@ func resolve(f *File, set KeySet, path string, profiles ...string) (*Resolved, e
 	// would invite the question of whether they still apply, and they do not.
 	f.Profiles = nil
 
-	if dir := filepath.Dir(path); dir != "" && dir != "." {
-		absolutise(f, dir)
+	// Always, including when the file was named without a directory. A resolved
+	// configuration is meant to mean the same thing wherever it is read — the
+	// daemon hands it to worker processes with a different working directory,
+	// and writes it out as the record of what ran — so a path left relative is
+	// a path that means something different to each reader. Where the name
+	// carries no directory the loader's own is the only sensible base, and
+	// pinning it to that at least makes the answer definite.
+	base := filepath.Dir(path)
+	if abs, err := filepath.Abs(base); err == nil {
+		base = abs
 	}
+	absolutise(f, base)
 	defaults(f, set)
 
 	r := &Resolved{File: *f, Path: path, Profiles: applied, Set: set}

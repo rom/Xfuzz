@@ -11,6 +11,7 @@ import (
 	"github.com/rom/Xfuzz/internal/metrics"
 	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/internal/store"
+	"github.com/rom/Xfuzz/internal/triage"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpus"
 	"github.com/rom/Xfuzz/pkg/corpusio"
@@ -52,6 +53,17 @@ type Campaign struct {
 	sup     *Supervisor
 	sandbox *safety.Sandbox
 	scope   *safety.Scope
+
+	// triage re-runs the target outside the fuzz loop: verification,
+	// minimisation, and the on-demand replay a person asks for from the console
+	// days later. Nil when the campaign disabled triage, and every entry point
+	// says so rather than silently doing nothing.
+	//
+	// The runner outlives the campaign's run — a finding is examined after the
+	// campaign that produced it has finished — while triageQueue, which does
+	// the automatic pass over new findings, stops with the workers.
+	triage      *Triage
+	triageQueue *triage.Worker
 
 	id      int64
 	binary  string
@@ -162,6 +174,28 @@ func NewCampaign(ctx context.Context, cfg *campaign.Resolved, opts CampaignOptio
 		return nil, err
 	}
 
+	if cfg.Triage.Enabled != nil && *cfg.Triage.Enabled {
+		c.triage = NewTriage(cfg, c.sandbox)
+		c.triageQueue = triage.NewWorker(triage.Config{
+			Runner:       c.triage,
+			Strategy:     triage.StrategyNamed(cfg.Triage.Strategy),
+			Trials:       cfg.Triage.Trials,
+			SkipMinimize: cfg.Triage.Minimize != nil && !*cfg.Triage.Minimize,
+			MinimizeOpts: triage.MinimizeOptions{MaxRuns: cfg.Triage.MinimizeBudget},
+			// One at a time. More than one means more than one copy of the
+			// target running, which for a target that binds a port or writes a
+			// fixed path is wrong, and triage is off the hot path anyway.
+			Workers: 1,
+			Report:  c.onTriaged,
+		})
+	}
+
+	if c.workDir != "" {
+		if err := c.writeCampaignFile(); err != nil {
+			return nil, err
+		}
+	}
+
 	c.sup = NewSupervisor(cfg.Name, opts.Spawner, opts.Bus)
 	c.sup.OnMessage = c.onMessage
 	return c, nil
@@ -260,6 +294,13 @@ func (c *Campaign) Start(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
+
+	if c.triageQueue != nil {
+		// context.WithoutCancel: triage must finish the finding it is holding
+		// even as the campaign stops, because a finding recorded but never
+		// examined is the one a person will look at first.
+		c.triageQueue.Start(context.WithoutCancel(runCtx))
+	}
 
 	for id := 0; id < c.Config.Workers.Count; id++ {
 		spec := WorkerSpec{
@@ -394,6 +435,18 @@ func (c *Campaign) finish(ctx context.Context, reason string) {
 	c.sup.Stop(10 * time.Second)
 	c.flushSync()
 
+	// After the workers, so every finding they reported is queued, and before
+	// the campaign is declared finished, so "finished" means triage is done
+	// too. On-demand replay and minimisation stay available: the runner is not
+	// closed here.
+	c.mu.Lock()
+	q := c.triageQueue
+	c.triageQueue = nil
+	c.mu.Unlock()
+	if q != nil {
+		q.Close()
+	}
+
 	c.mu.Lock()
 	c.state = StateFinished
 	c.stopped = time.Now()
@@ -404,6 +457,29 @@ func (c *Campaign) finish(ctx context.Context, reason string) {
 		fmt.Sprintf("campaign=%s reason=%q execs=%d buckets=%d",
 			c.Config.Name, reason, c.metrics.Snapshot().Execs, len(c.buckets)))
 	c.publish(EventCampaign, map[string]any{"state": string(StateFinished), "reason": reason})
+}
+
+// Close releases what the campaign holds after it is no longer wanted.
+//
+// Separate from finish: a finished campaign is still answerable — its findings
+// are replayed and minimised long after its workers are gone — so the triage
+// runner and the sandbox outlive the run and are released only when the
+// campaign itself is dropped.
+func (c *Campaign) Close() error {
+	c.mu.Lock()
+	q := c.triageQueue
+	c.triageQueue = nil
+	c.mu.Unlock()
+	if q != nil {
+		q.Close()
+	}
+	if c.triage != nil {
+		_ = c.triage.Close()
+	}
+	if c.sandbox != nil {
+		return c.sandbox.Close()
+	}
+	return nil
 }
 
 // Stop ends the campaign.
@@ -707,6 +783,88 @@ func (c *Campaign) onFinding(ctx context.Context, worker int, f *FindingReport) 
 			"id": rec.ID, "kind": f.Kind, "signal": f.Signal, "summary": f.Summary,
 			"bucket": signature, "new_bucket": isNew, "buckets": buckets,
 		}})
+
+	// And now the slow part, off this goroutine. Submit never blocks: this runs
+	// on the supervisor's reader, and a reader waiting on triage is a worker
+	// waiting to report.
+	c.submitTriage(triage.Job{
+		ID:    rec.ID,
+		Input: f.Payload,
+		Observed: triage.Outcome{
+			Signal:  f.Signal,
+			Finding: rec.Finding,
+		},
+	})
+}
+
+// submitTriage queues a finding for the automatic pass, if there still is one.
+//
+// Under the lock for the whole submission, not just to read the queue. Closing
+// a triage worker closes its job channel, so a submission that raced the close
+// would panic rather than be dropped — and Submit itself never blocks, so
+// holding the lock across it costs nothing.
+func (c *Campaign) submitTriage(job triage.Job) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.triageQueue != nil {
+		c.triageQueue.Submit(job)
+	}
+}
+
+// onTriaged records what triage concluded about a finding.
+//
+// It runs on the triage worker's own goroutine, so it may take its time; what
+// it must not do is disagree silently with what was already published. A
+// finding that does not reproduce keeps its row and gains a state saying so,
+// rather than disappearing — "we looked and it is not real" is a result, and
+// deleting it would make the same crash a new finding an hour later.
+func (c *Campaign) onTriaged(res triage.Result) {
+	ctx := context.Background()
+	if res.Err != nil {
+		c.warn(fmt.Sprintf("triaging finding %d: %v", res.ID, res.Err))
+		return
+	}
+
+	f, err := c.store.Finding(ctx, res.ID)
+	if err != nil {
+		c.warn(fmt.Sprintf("triage cannot find finding %d: %v", res.ID, err))
+		return
+	}
+
+	minimized := f.Minimized
+	size := f.MinimizedSize
+	if len(res.Minimized) > 0 && len(res.Minimized) < f.OriginalSize {
+		if d, err := c.store.PutBlob(ctx, res.Minimized); err == nil {
+			minimized, size = d, len(res.Minimized)
+		} else {
+			c.warn(fmt.Sprintf("storing the minimised reproducer for finding %d: %v", res.ID, err))
+		}
+	}
+
+	if err := c.store.UpdateTriage(ctx, res.ID, res.State, res.Verify.Trials, res.Verify.Rate(),
+		minimized, size, f.Notes); err != nil {
+		c.warn(fmt.Sprintf("recording triage for finding %d: %v", res.ID, err))
+		return
+	}
+
+	// Triage's bucket is computed from the minimised reproducer and from an
+	// execution it watched itself, so it is better evidence than the worker's.
+	if res.Signature != "" {
+		if err := c.store.Rebucket(ctx, res.ID, res.Strategy, res.Signature); err != nil {
+			c.warn(fmt.Sprintf("re-bucketing finding %d: %v", res.ID, err))
+		} else {
+			c.mu.Lock()
+			c.buckets[res.Strategy+":"+res.Signature] = true
+			c.mu.Unlock()
+		}
+	}
+
+	c.publish(EventTriage, map[string]any{
+		"finding": res.ID, "state": res.State,
+		"trials": res.Verify.Trials, "rate": res.Verify.Rate(),
+		"bucket": res.Signature, "strategy": res.Strategy,
+		"original_size": f.OriginalSize, "minimized_size": size,
+	})
 }
 
 // onCheckpoint records a worker's resume state.

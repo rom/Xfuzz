@@ -10,73 +10,16 @@ package worker
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/rom/Xfuzz/internal/daemon"
+	"github.com/rom/Xfuzz/internal/testenv"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpus"
 )
-
-func buildTarget(t *testing.T, name string) string {
-	t.Helper()
-	if _, err := exec.LookPath("clang"); err != nil {
-		t.Skip("clang is not installed; instrumented targets cannot be built here")
-	}
-	dir := reachable(t)
-	out := filepath.Join(dir, name)
-	cmd := exec.Command("go", "run", "./cmd/xfuzz-cc", "-O1", "-o", out,
-		filepath.Join("testdata", "targets", name+".c"))
-	cmd.Dir = repoRoot(t)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building %s: %v\n%s", name, err, b)
-	}
-	if err := os.Chmod(out, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
-
-// reachable returns a directory the target's own identity can enter.
-//
-// A test temp directory is 0700, and the sandbox gives the target a uid of its
-// own, so a binary built there is a binary the target cannot execute. The
-// sandbox now refuses that at startup rather than producing a campaign with no
-// executions — which is what a real deployment has to arrange too.
-func reachable(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	for p := dir; p != "/" && p != "."; p = filepath.Dir(p) {
-		if err := os.Chmod(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if p == os.TempDir() {
-			break
-		}
-	}
-	return dir
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := filepath.Abs(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("no go.mod above the test directory")
-		}
-		dir = parent
-	}
-}
 
 // campaignFor writes a campaign file around a target.
 func campaignFor(t *testing.T, target, extra string) *campaign.Resolved {
@@ -172,7 +115,7 @@ func (o *observer) get(fn func(*observer) bool) bool {
 }
 
 func TestWorkerFuzzesAndReportsOverTheProtocol(t *testing.T) {
-	cfg := campaignFor(t, buildTarget(t, "simple_parser"), "")
+	cfg := campaignFor(t, testenv.BuildTarget(t, "simple_parser"), "")
 	p := newPipes(t)
 	obs := &observer{}
 	go obs.watch(p)
@@ -223,7 +166,7 @@ func TestWorkerFuzzesAndReportsOverTheProtocol(t *testing.T) {
 }
 
 func TestWorkerDoesNotEchoSyncedEntries(t *testing.T) {
-	cfg := campaignFor(t, buildTarget(t, "simple_parser"), "")
+	cfg := campaignFor(t, testenv.BuildTarget(t, "simple_parser"), "")
 	p := newPipes(t)
 	obs := &observer{}
 	go obs.watch(p)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -576,11 +577,23 @@ stop:
 `, cname, target)
 }
 
+// onePath reads the single campaign file an argument list names.
+//
+// Absolute, because the path leaves this process. The daemon resolves a
+// campaign's relative paths — its target, its seeds, its grammar — against the
+// directory the file came from, and it has only the name this client sends to
+// work out what that was. A bare "campaign.yaml" would be resolved against the
+// daemon's working directory, which is not the user's, and the campaign would
+// look for its target in a place nobody named.
 func onePath(args []string) (string, error) {
 	if len(args) != 1 {
 		return "", errors.New("expected exactly one campaign file")
 	}
-	return args[0], nil
+	abs, err := filepath.Abs(args[0])
+	if err != nil {
+		return "", err
+	}
+	return abs, nil
 }
 
 func oneName(args []string) (string, error) {

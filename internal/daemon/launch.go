@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/rom/Xfuzz/internal/safety"
@@ -40,15 +42,48 @@ const (
 	WorkerStatusFD  = 4
 )
 
+// CampaignFileName is what the daemon calls the copy of the campaign it writes
+// into a run's working directory.
+const CampaignFileName = "campaign.yaml"
+
+// campaignFile is the file workers are given.
+func (c *Campaign) campaignFile() string {
+	return filepath.Join(c.workDir, CampaignFileName)
+}
+
+// writeCampaignFile materialises the resolved configuration beside the run.
+//
+// Workers are given this copy rather than the path the client named, for four
+// reasons that are really one: the client's path is not the daemon's. It is
+// relative to a working directory the worker does not share; it may not exist
+// on the daemon's machine at all; its includes and profiles would have to be
+// resolved a second time, by a different process, and could resolve
+// differently; and it can be edited while the campaign runs.
+//
+// The copy is the fully resolved form, with every path already absolute, so it
+// means the same thing from anywhere — and it leaves the run's directory
+// holding exactly the configuration that produced it, which is what makes a
+// campaign a reviewable artefact rather than a shell history entry (ADR-0016).
+func (c *Campaign) writeCampaignFile() error {
+	doc, err := c.Config.YAML()
+	if err != nil {
+		return fmt.Errorf("daemon: rendering the resolved campaign: %w", err)
+	}
+	if err := os.WriteFile(c.campaignFile(), doc, 0o644); err != nil {
+		return fmt.Errorf("daemon: writing the campaign file: %w", err)
+	}
+	return nil
+}
+
 // workerArgs returns the worker's argument vector.
 func (c *Campaign) workerArgs(id int) []string {
 	args := []string{
-		"--campaign", c.Config.Path,
+		"--campaign", c.campaignFile(),
 		"--worker", strconv.Itoa(id),
 	}
-	for _, p := range c.Config.Profiles {
-		args = append(args, "--profile", p)
-	}
+	// No --profile: the file above is already resolved, so applying the
+	// profiles again would be applying them twice.
+	//
 	// The store the daemon actually opened, not the one the file asked for. A
 	// campaign that names no directory still has a store — the daemon's default
 	// — and a worker told only what the file said looks for one that does not

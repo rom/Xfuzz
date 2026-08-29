@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -189,6 +190,10 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, daemon.ErrNotRunning):
 		return http.StatusConflict
+	case errors.Is(err, daemon.ErrNoTriage):
+		// The campaign turned triage off, so the capability is absent rather
+		// than the request being wrong.
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}
@@ -201,6 +206,23 @@ func decodeBody(r *http.Request, v any) error {
 		return fmt.Errorf("unreadable request body: %w", err)
 	}
 	return nil
+}
+
+// decodeOptional reads a request body that a client may leave out.
+//
+// An absent body means "use the campaign's own settings". A present but
+// unreadable one is still an error: a client that sent a body with a
+// misspelled field asked for something, and answering with the defaults would
+// look like it worked.
+func decodeOptional(r *http.Request, v any) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	err := decodeBody(r, v)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 // maxRequestBytes bounds a request body. Campaign documents are the largest

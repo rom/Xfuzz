@@ -80,6 +80,7 @@ var importRules = []rule{
 			"internal/platform/",
 			"tools/",             // repo tooling shells out to the Go toolchain
 			"bench/",             // the benchmark harness drives external processes
+			"internal/testenv/",  // test fixtures: builds targets and binaries for integration tests
 			"cmd/xfuzz-cc/",      // the compiler wrapper execs a compiler by definition
 			"cmd/xfuzz-sandbox/", // the sandbox helper's whole purpose is to become the target
 		},

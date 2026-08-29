@@ -209,6 +209,27 @@ func (c Chain) Signature(o Outcome, cl Class) (string, bool) {
 	return "", false
 }
 
+// StrategyNamed returns the strategy a campaign file asked for.
+//
+// An unknown name gives the default chain rather than an error: the campaign
+// file's own validation is where a bad name is refused, and a second refusal
+// here would mean a campaign that validated could still fail to start on the
+// same field.
+func StrategyNamed(name string) Strategy {
+	switch name {
+	case "signal":
+		return SignalStrategy{}
+	case "marker":
+		return MarkerStrategy{}
+	case "frames":
+		return FrameStrategy{}
+	case "coverage":
+		return CoverageStrategy{}
+	default:
+		return DefaultChain()
+	}
+}
+
 // Bucket computes a finding's bucket under a strategy.
 func Bucket(s Strategy, o Outcome, c Class) (strategy, signature string) {
 	sig, ok := s.Signature(o, c)

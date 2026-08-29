@@ -80,6 +80,14 @@ type Worker struct {
 	stop     atomic.Bool
 	stopMsg  string
 	incoming chan *daemon.Message
+
+	// started is set by Run before it builds anything, and running is closed
+	// when Run returns. Close consults both: Run releases what it built, so a
+	// Close overlapping it would be tearing down an executor mid-execution.
+	started   atomic.Bool
+	running   chan struct{}
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // New prepares a worker.
@@ -91,12 +99,16 @@ func New(opts Options) *Worker {
 		opts:     opts,
 		reported: map[corpus.Digest]bool{},
 		incoming: make(chan *daemon.Message, 64),
+		running:  make(chan struct{}),
 	}
 }
 
 // Run builds the engine and fuzzes until the budget ends, the daemon says stop,
 // or the context is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
+	w.started.Store(true) // before anything is built, so Close never races it
+	defer close(w.running)
+
 	if w.opts.Status != nil {
 		w.enc = daemon.NewEncoder(w.opts.Status)
 	}
@@ -525,12 +537,28 @@ func (w *Worker) report(level, text string) {
 }
 
 // Close releases the worker's resources.
+//
+// Safe to call while Run is in flight, and that is the case worth being careful
+// about: Run owns the executor for as long as it is fuzzing, so a Close that
+// simply released it would be tearing down a fork server mid-execution. Instead
+// Close asks the worker to stop and waits for Run to return, which it does at
+// the end of the current slice — bounded by the reporting interval, not by the
+// campaign's budget.
+//
+// Idempotent, and safe before Run is ever called: a worker whose build failed
+// is closed by a caller that never got as far as fuzzing.
 func (w *Worker) Close() error {
-	if w.built != nil {
-		w.built.close()
-	}
-	if w.store != nil {
-		return w.store.Close()
-	}
-	return nil
+	w.closeOnce.Do(func() {
+		if w.started.Load() {
+			w.requestStop("closed")
+			<-w.running
+		}
+		if w.built != nil {
+			w.built.close()
+		}
+		if w.store != nil {
+			w.closeErr = w.store.Close()
+		}
+	})
+	return w.closeErr
 }

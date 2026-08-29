@@ -112,7 +112,7 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 		timeout = s.DefaultTimeout
 	}
 
-	cmd, err := s.command(spec)
+	cmd, err := s.command(spec, false)
 	if err != nil {
 		return executor.ProcResult{}, err
 	}
@@ -183,7 +183,12 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 //
 // This is the one place a process is constructed, so it is the one place
 // confinement is applied. Nothing reaches exec without passing through here.
-func (s *Spawner) command(spec executor.ProcSpec) (*exec.Cmd, error) {
+// command builds the process, wrapped in the helper and confined.
+//
+// forks says whether the process will fork its own executions rather than being
+// the executed program itself; it decides whether a PID namespace is safe. See
+// Sandbox.namespaces.
+func (s *Spawner) command(spec executor.ProcSpec, forks bool) (*exec.Cmd, error) {
 	path := spec.Path
 	if !filepath.IsAbs(path) && !strings.ContainsRune(path, filepath.Separator) {
 		resolved, err := exec.LookPath(path)
@@ -217,7 +222,7 @@ func (s *Spawner) command(spec executor.ProcSpec) (*exec.Cmd, error) {
 	cmd := &exec.Cmd{Path: helperPath, Args: helperArgv, Dir: cmdDir, Env: spec.Env}
 	platform.ConfigureProcess(cmd, spec.Quarantine)
 	if sb.Require != LevelNone || sb.Level() > LevelMinimal {
-		platform.ConfigureSandbox(cmd, sb.namespaces())
+		platform.ConfigureSandbox(cmd, sb.namespaces(forks))
 	}
 	if cg := sb.ensureCgroup(); cg != nil {
 		cg.Attach(cmd)
@@ -338,7 +343,7 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 		return nil, fmt.Errorf("safety: creating the status pipe: %w", perr)
 	}
 
-	cmd, err := s.command(spec)
+	cmd, err := s.command(spec, true)
 	if err != nil {
 		ctlRead.Close()
 		ctlWrite.Close()

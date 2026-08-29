@@ -336,7 +336,12 @@ func TestForkServerThroughput(t *testing.T) {
 	}
 	t.Logf("campaign: %.0f exec/s over %d executions, engine overhead %.1f%%",
 		stats.ExecsPerSecond(), stats.Execs, 100*stats.Overhead())
-	if stats.Overhead() > 0.10 {
+	switch {
+	case raceDetector:
+		t.Logf("SKIPPING the 10%% overhead budget from ASR-0007: under -race the engine's " +
+			"own code is instrumented and the target, a native binary in another process, " +
+			"is not, so the ratio measures the detector rather than the fuzzer")
+	case stats.Overhead() > 0.10:
 		t.Errorf("engine overhead was %.1f%%, above the 10%% budget in ASR-0007: the "+
 			"fuzzer's own bookkeeping is costing more than the target", 100*stats.Overhead())
 	}

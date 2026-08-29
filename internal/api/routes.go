@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime"
 	"strconv"
 	"time"
 
 	"github.com/rom/Xfuzz/internal/daemon"
 	"github.com/rom/Xfuzz/internal/metrics"
+	"github.com/rom/Xfuzz/internal/platform"
+	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/internal/store"
+	"github.com/rom/Xfuzz/internal/version"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpusio"
 )
@@ -73,6 +77,12 @@ func (s *Server) register() {
 		Name: "finding.get", Summary: "Fetch one finding with its reproducer", handler: s.findingGet})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/buckets", Service: ServiceFinding,
 		Name: "finding.buckets", Summary: "List finding buckets", handler: s.findingBuckets})
+	s.route(Route{Method: "POST", Path: "/v1/campaigns/{name}/findings/{id}/replay", Service: ServiceFinding,
+		Name: "finding.replay", Summary: "Re-run a finding's reproducer and record whether it still fails",
+		Mutating: true, handler: s.findingReplay})
+	s.route(Route{Method: "POST", Path: "/v1/campaigns/{name}/findings/{id}/minimize", Service: ServiceFinding,
+		Name: "finding.minimize", Summary: "Reduce a finding's reproducer, preserving its failure class",
+		Mutating: true, handler: s.findingMinimize})
 
 	// EventService: the live stream.
 	s.route(Route{Method: "GET", Path: "/v1/events", Service: ServiceEvent,
@@ -82,6 +92,9 @@ func (s *Server) register() {
 	// AdminService: version, workers, capabilities, audit.
 	s.route(Route{Method: "GET", Path: "/v1/info", Service: ServiceAdmin,
 		Name: "admin.info", Summary: "Daemon version and status", handler: s.adminInfo})
+	s.route(Route{Method: "GET", Path: "/v1/capabilities", Service: ServiceAdmin,
+		Name: "admin.capabilities", Summary: "What this host can do, and why anything is missing",
+		handler: s.adminCapabilities})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/workers", Service: ServiceAdmin,
 		Name: "admin.workers", Summary: "Worker states", handler: s.adminWorkers})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/safety", Service: ServiceAdmin,
@@ -506,6 +519,65 @@ func (s *Server) findingBuckets(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"strategy": strategy, "buckets": bs, "count": len(bs)})
 }
 
+// TriageRequest bounds an on-demand triage run.
+type TriageRequest struct {
+	// Trials is how many times replay runs the reproducer. Zero uses the
+	// campaign's own triage.trials.
+	Trials int `json:"trials,omitempty"`
+
+	// Budget is how many executions minimisation may spend. Zero uses the
+	// campaign's own triage.minimize_budget.
+	Budget int `json:"budget,omitempty"`
+}
+
+func (s *Server) findingReplay(w http.ResponseWriter, r *http.Request) {
+	c, id, ok := s.findingTarget(w, r)
+	if !ok {
+		return
+	}
+	var req TriageRequest
+	_ = decodeOptional(r, &req)
+
+	rep, err := c.Replay(r.Context(), id, req.Trials)
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
+func (s *Server) findingMinimize(w http.ResponseWriter, r *http.Request) {
+	c, id, ok := s.findingTarget(w, r)
+	if !ok {
+		return
+	}
+	var req TriageRequest
+	_ = decodeOptional(r, &req)
+
+	rep, err := c.Minimize(r.Context(), id, req.Budget)
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, rep)
+}
+
+// findingTarget resolves the campaign and finding a request names, answering
+// the client itself when either is wrong.
+func (s *Server) findingTarget(w http.ResponseWriter, r *http.Request) (*daemon.Campaign, int64, bool) {
+	c, err := s.daemon.Campaign(r.PathValue("name"))
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return nil, 0, false
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("%q is not a finding id", r.PathValue("id")))
+		return nil, 0, false
+	}
+	return c, id, true
+}
+
 // --- admin ------------------------------------------------------------------
 
 func (s *Server) adminInfo(w http.ResponseWriter, r *http.Request) {
@@ -616,4 +688,96 @@ func durationOrDefault(d, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// --- capabilities -----------------------------------------------------------
+
+// Capability is one thing the host can or cannot do.
+//
+// Available and a reason together, because "not available" with no reason is a
+// message nobody can act on — which is the whole point of the doctor command
+// (ASR-0006, ADR-0002).
+type Capability struct {
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Detail    string `json:"detail,omitempty"`
+}
+
+// CapabilitiesResponse describes what this host can do.
+type CapabilitiesResponse struct {
+	Platform     string       `json:"platform"`
+	Version      version.Info `json:"version"`
+	Isolation    string       `json:"isolation"`
+	Explanation  string       `json:"explanation"`
+	Capabilities []Capability `json:"capabilities"`
+	Notes        []string     `json:"notes,omitempty"`
+}
+
+// adminCapabilities reports what the running host provides.
+//
+// Probed rather than assumed: a build that contains the code for a mechanism
+// tells you nothing about whether the kernel, the filesystem, or the container
+// this daemon runs in will let it work. Everything here is measured on the host
+// answering the request.
+func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
+	sandbox := &safety.Sandbox{}
+	defer sandbox.Close()
+	level, caps := sandbox.Probe()
+
+	cs := []Capability{
+		{Name: "user-namespace", Available: caps.UserNS,
+			Detail: "how an unprivileged fuzzer gets the other namespaces at all"},
+		{Name: "mount-namespace", Available: caps.MountNS,
+			Detail: "a read-only root, so a target cannot write to the corpus"},
+		{Name: "pid-namespace", Available: caps.PIDNS,
+			Detail: "a target cannot see or signal anything outside its own run"},
+		{Name: "network-namespace", Available: caps.NetNS,
+			Detail: "a target reaches nothing unless the campaign allows it"},
+		{Name: "seccomp", Available: caps.Seccomp,
+			Detail: "the syscall denylist (ADR-0022)"},
+		{Name: "rlimits", Available: caps.Rlimits,
+			Detail: "memory, process and file-size ceilings"},
+		{Name: "cgroups", Available: caps.Cgroups != platform.CgroupNone,
+			Detail: cgroupDetail(caps.Cgroups)},
+		{Name: "process-groups", Available: platform.ProcessGroupsSupported(),
+			Detail: "killing a target's whole tree rather than leaking its children"},
+		{Name: "shared-memory", Available: platform.NewSharedMemoryProvider().Available(),
+			Detail: "the coverage map; without it only black-box campaigns are possible"},
+	}
+	cs = append(cs, foundTool(safety.HelperName,
+		"installs limits and the denylist in the process that becomes the target"))
+	cs = append(cs, foundTool(daemon.WorkerBinaryName, "runs a campaign's workers"))
+	cs = append(cs, foundTool("clang", "builds instrumented targets through xfuzz-cc"))
+
+	writeJSON(w, http.StatusOK, CapabilitiesResponse{
+		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
+		Version:      version.Get(),
+		Isolation:    level.String(),
+		Explanation:  sandbox.Explain(),
+		Capabilities: cs,
+		Notes:        caps.Notes,
+	})
+}
+
+func cgroupDetail(mode string) string {
+	switch mode {
+	case platform.CgroupV2:
+		return "memory and process limits applied at clone time, so a target cannot fork out of them"
+	case platform.CgroupV1:
+		return "v1 only: a process is added after it exists, so a target that forks immediately " +
+			"can escape the limit — which is why v1 does not count towards strong isolation"
+	default:
+		return "no cgroup interface: memory limits rest on rlimits alone"
+	}
+}
+
+// foundTool reports whether a helper binary can be found, and says where the
+// lookup goes so that a missing one is fixable rather than mysterious.
+func foundTool(name, purpose string) Capability {
+	path, err := safety.FindTool(name)
+	if err != nil {
+		return Capability{Name: name, Available: false,
+			Detail: purpose + "; not found beside the running binary or on PATH"}
+	}
+	return Capability{Name: name, Available: true, Detail: purpose + "; " + path}
 }

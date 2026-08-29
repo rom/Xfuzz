@@ -120,12 +120,18 @@ func TestSandboxNamespaceOptionsFollowConfiguration(t *testing.T) {
 	sb.Probe()
 	caps := platform.DetectSandbox()
 
-	full := sb.namespaces()
+	full := sb.namespaces(true)
 	if caps.NetNS && !full.NetNS {
 		t.Error("the default policy left the target in the host network namespace")
 	}
 	if caps.PIDNS && !full.PIDNS {
 		t.Error("the default policy left the target in the host PID namespace")
+	}
+	// And not for a target that is executed directly: it would be PID 1 in that
+	// namespace, and PID 1 cannot abort() itself. See Sandbox.namespaces.
+	if sb.namespaces(false).PIDNS {
+		t.Error("a one-shot target was put in a PID namespace, where its abort() " +
+			"would be discarded and reported as a segmentation fault")
 	}
 	if caps.UserNS && full.UID == 0 {
 		t.Error("the target is mapped to root inside its user namespace")
@@ -133,7 +139,7 @@ func TestSandboxNamespaceOptionsFollowConfiguration(t *testing.T) {
 
 	relaxed := &Sandbox{Network: true, HostPIDs: true}
 	relaxed.Probe()
-	o := relaxed.namespaces()
+	o := relaxed.namespaces(true)
 	if o.NetNS || o.PIDNS {
 		t.Error("the relaxations were configured but not applied")
 	}
@@ -248,7 +254,7 @@ func TestUnconfinedIsHonestAboutItself(t *testing.T) {
 		t.Fatalf("Explain does not say the process is unconfined:\n%s", sb.Explain())
 	}
 	// It applies no namespaces and asks the helper for nothing.
-	if o := sb.namespaces(); o.UserNS || o.MountNS || o.PIDNS || o.NetNS {
+	if o := sb.namespaces(true); o.UserNS || o.MountNS || o.PIDNS || o.NetNS {
 		t.Fatalf("an unconfined sandbox still requested namespaces: %+v", o)
 	}
 	sb.HelperPath = helperForTest(t)

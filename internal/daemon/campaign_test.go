@@ -9,6 +9,7 @@ import (
 
 	"github.com/rom/Xfuzz/internal/metrics"
 	"github.com/rom/Xfuzz/internal/store"
+	"github.com/rom/Xfuzz/internal/testenv"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpus"
 	"github.com/rom/Xfuzz/pkg/executor"
@@ -27,34 +28,10 @@ type fixture struct {
 	cmds     []chan *Message
 }
 
-// reachableDir is a temporary directory a confined target can enter.
-//
-// t.TempDir gives a 0700 directory, which is right for a test's own files and
-// wrong for a target: the sandbox runs it under an unprivileged uid of its own,
-// and that uid cannot traverse a directory owned by the test's. Campaigns
-// refuse to start on exactly this, so a fixture that did not fix it would be
-// testing the refusal rather than the campaign.
-func reachableDir(t *testing.T) string {
-	t.Helper()
-	// Not t.TempDir: that hands out a subdirectory of a 0700 parent it made for
-	// the test, and it is the parent that blocks the traversal, so chmod on
-	// what it returns fixes nothing. One directory directly under the system
-	// temporary directory has one component to fix.
-	dir, err := os.MkdirTemp("", "xfuzz-campaign-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	if err := os.Chmod(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
-
 func newFixture(t *testing.T, yaml string, workers int) *fixture {
 	t.Helper()
 
-	dir := reachableDir(t)
+	dir := testenv.ReachableDir(t)
 	targetPath := filepath.Join(dir, "target")
 	if err := os.WriteFile(targetPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
@@ -419,7 +396,7 @@ func TestCampaignPauseAndResume(t *testing.T) {
 
 func TestCampaignRefusesARemoteRunWithoutAuthorization(t *testing.T) {
 	// Caught before anything starts, not after the first packet.
-	dir := reachableDir(t)
+	dir := testenv.ReachableDir(t)
 	targetPath := filepath.Join(dir, "target")
 	os.WriteFile(targetPath, []byte("#!/bin/sh\n"), 0o755)
 	path := filepath.Join(dir, "c.yaml")
@@ -462,14 +439,14 @@ func TestCampaignReportsHealth(t *testing.T) {
 }
 
 func TestDaemonRefusesDuplicateAndOverLimitCampaigns(t *testing.T) {
-	dir := reachableDir(t)
+	dir := testenv.ReachableDir(t)
 	d, err := New(Options{DataDir: dir, MaxCampaigns: 1, Spawner: &fakeSpawner{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close(context.Background())
 
-	cfgDir := reachableDir(t)
+	cfgDir := testenv.ReachableDir(t)
 	os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755)
 	mk := func(name string) *campaign.Resolved {
 		p := filepath.Join(cfgDir, name+".yaml")
@@ -499,14 +476,14 @@ func TestDaemonSharesOneStorePerDirectory(t *testing.T) {
 	// Two campaigns pointed at one directory are pointed at one SQLite
 	// database, and opening it twice in one process is how a daemon deadlocks
 	// against itself.
-	dir := reachableDir(t)
+	dir := testenv.ReachableDir(t)
 	d, err := New(Options{DataDir: dir, Spawner: &fakeSpawner{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer d.Close(context.Background())
 
-	cfgDir := reachableDir(t)
+	cfgDir := testenv.ReachableDir(t)
 	os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755)
 	var stores []*store.Store
 	for _, name := range []string{"a", "b"} {

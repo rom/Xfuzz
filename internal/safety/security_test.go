@@ -294,7 +294,7 @@ func TestSecuritySandboxIsOnByDefault(t *testing.T) {
 	sb := &Sandbox{}
 	sb.Probe()
 	caps := platform.DetectSandbox()
-	if caps.NetNS && !sb.namespaces().NetNS {
+	if caps.NetNS && !sb.namespaces(true).NetNS {
 		t.Fatal("the default policy leaves a target in the host network namespace")
 	}
 }

@@ -15,13 +15,16 @@ var (
 )
 
 // Info describes the running build.
+//
+// Tagged because it is served over the API, where every other field is
+// snake_case; Go's default field names would make this one object shout.
 type Info struct {
-	Version  string
-	Commit   string
-	Date     string
-	Go       string
-	Platform string
-	CGO      bool
+	Version  string `json:"version"`
+	Commit   string `json:"commit"`
+	Date     string `json:"date"`
+	Go       string `json:"go"`
+	Platform string `json:"platform"`
+	CGO      bool   `json:"cgo"`
 }
 
 // Get returns the build identity, falling back to VCS stamps recorded by the
