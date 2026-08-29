@@ -796,3 +796,6 @@ func parsePortRange(s string) (lo, hi uint16, err error) {
 	}
 	return uint16(l), uint16(l), nil
 }
+
+// Store returns the store this campaign writes to.
+func (c *Campaign) Store() *store.Store { return c.store }
