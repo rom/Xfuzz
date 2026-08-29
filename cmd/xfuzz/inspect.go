@@ -259,9 +259,14 @@ func findingsGet(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// Re-marshalled rather than passed through, so that --json here is the
+	// reproducer and its account of itself rather than the whole record. The
+	// signal is part of that account: the summary names it only for the
+	// signals that have names, and for the rest the number is the information.
 	var f struct {
 		ID         int64    `json:"id"`
 		Kind       string   `json:"kind"`
+		Signal     int      `json:"signal"`
 		Summary    string   `json:"summary"`
 		Detail     string   `json:"detail"`
 		Frames     []string `json:"frames"`
