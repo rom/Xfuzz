@@ -173,6 +173,10 @@ cost more executions than the campaign spends fuzzing.
   kills it, which is right on its own terms, but it has not been shown to close
   this hole: one server per worker still survives a finished campaign here.
   Diagnosing further needs worker output the daemon does not currently keep.
+  It is not only untidy: the milestone's exit criteria pass individually and
+  the second one failed once when run straight after the first, on a host
+  carrying four abandoned servers — so the leak is already costing a campaign
+  that follows another one.
 
 ### Added — M5 Daemon, API, and CLI (2026-08-29)
 

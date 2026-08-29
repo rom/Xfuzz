@@ -142,6 +142,8 @@ func (e *statefulEnv) states(name string) stateModel {
 type findingDetail struct {
 	ID         int    `json:"id"`
 	Kind       string `json:"kind"`
+	Signal     int    `json:"signal"`
+	Summary    string `json:"summary"`
 	Detail     string `json:"detail"`
 	Reproducer []byte `json:"reproducer"`
 }
@@ -337,29 +339,56 @@ func TestStatefulFindingsReplayAsSessions(t *testing.T) {
 		t.Fatal("the campaign reported no findings to replay")
 	}
 
-	multi := 0
+	// Only the sequence-gated bugs prove anything about sessions. Bug 1 needs
+	// one message, so a one-message reproducer for it is minimisation working
+	// rather than a session being thrown away — asserting that every
+	// reproducer holds several messages would fail on the correct answer.
+	sequenceGated := map[string]bool{"2": true, "3": true, "4": true}
+	named, replay := 0, 0
 	for _, f := range fs {
-		lines := strings.Count(string(f.Reproducer), "\n")
-		t.Logf("finding %d: %d message(s), detail %q", f.ID, lines, strings.TrimSpace(f.Detail))
-		if lines > 1 {
-			multi++
+		lines := strings.Count(strings.TrimRight(string(f.Reproducer), "\r\n"), "\n") + 1
+		t.Logf("finding %d: %d message(s), signal %d, detail %q",
+			f.ID, lines, f.Signal, strings.TrimSpace(f.Detail))
+
+		// No finding may be attributable to the harness. A target does not send
+		// itself these; this executor does, when it replaces a server — and it
+		// used to file the result as a crash, against an input that did
+		// nothing, on every campaign.
+		if f.Signal == 9 || f.Signal == 15 {
+			t.Errorf("finding %d was filed for signal %d, which the target cannot "+
+				"have sent itself: the harness is reporting on its own actions",
+				f.ID, f.Signal)
 		}
-		// The target's own account of what went wrong. A finding that says only
-		// "terminated abnormally" cannot be bucketed by marker and cannot be
-		// acted on by a person.
+
+		// The target's own account of what went wrong, where it gave one. Not
+		// every crash carries a marker — a fault the target did not announce is
+		// still a fault — so this counts rather than requires, and the campaign
+		// has to produce at least one finding it can name.
 		if !strings.Contains(f.Detail, "XFUZZ-BUG-") {
-			t.Errorf("finding %d carries no marker from the target: %q", f.ID, f.Detail)
+			continue
+		}
+		named++
+		if replay == 0 {
+			replay = f.ID
+		}
+		for n := range sequenceGated {
+			if strings.Contains(f.Detail, "XFUZZ-BUG-"+n) && lines < 2 {
+				t.Errorf("finding %d is bug %s, which needs a sequence, but its "+
+					"reproducer is one message: findings are not being stored as sessions",
+					f.ID, n)
+			}
 		}
 	}
-	if multi == 0 {
-		t.Error("every reproducer is a single message; findings are not being stored as sessions")
+	if named == 0 {
+		t.Fatalf("not one of %d findings carries the target's own account of the "+
+			"failure; nothing here can be acted on by a person", len(fs))
 	}
 
 	// And replaying one through the daemon reproduces it. This is the half that
 	// was silently broken: triage replayed a conversation as a blob on standard
 	// input, which is not the same execution, and reported every finding
 	// unreproducible.
-	out := e.mustRun(3*time.Minute, "replay", "replay", fmt.Sprint(fs[0].ID))
+	out := e.mustRun(3*time.Minute, "replay", "replay", fmt.Sprint(replay))
 	t.Logf("replay: %s", strings.TrimSpace(out))
 	if strings.Contains(out, "0 of") {
 		t.Errorf("a finding recorded by a session campaign did not reproduce as a session:\n%s", out)
