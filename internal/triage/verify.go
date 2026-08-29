@@ -75,6 +75,15 @@ func (r VerifyReport) String() string {
 // is a note that something non-deterministic happened, and filing it as a bug
 // wastes the time of whoever picks it up.
 func Verify(ctx context.Context, r Runner, input []byte, trials int) (VerifyReport, error) {
+	return DefaultClassifier.Verify(ctx, r, input, trials)
+}
+
+// Verify re-runs a reproducer, classifying each run with this classifier.
+//
+// The classifier matters here and not only at bucketing time: divergence is
+// "did this reproduce as the same thing", and a classifier that cannot see the
+// target's own marker cannot tell two of its bugs apart to notice.
+func (cl *Classifier) Verify(ctx context.Context, r Runner, input []byte, trials int) (VerifyReport, error) {
 	if trials <= 0 {
 		trials = DefaultTrials
 	}
@@ -93,7 +102,7 @@ func Verify(ctx context.Context, r Runner, input []byte, trials int) (VerifyRepo
 		if !o.Crashed() {
 			continue
 		}
-		c := Classify(o)
+		c := cl.Classify(o)
 		rep.Reproduced++
 		switch {
 		case rep.Class.Kind == "":

@@ -58,7 +58,10 @@ func NewGuidance(fn StateFn) *Guidance {
 // The returned label is what the scheduler was aiming for, or empty. It is
 // recorded in the corpus entry's provenance, which is the difference between a
 // campaign whose choices can be reviewed afterwards and one whose cannot.
-func (g *Guidance) Target(parent corpus.Digest, tree *ir.Node, r *rng.Rand) (*ir.Node, Label) {
+//
+// aim carries the state this entry was selected for by Seed, so that the two
+// halves of the decision agree.
+func (g *Guidance) Target(aim Aim, parent corpus.Digest, tree *ir.Node, r *rng.Rand) (*ir.Node, Label) {
 	if g == nil || tree == nil {
 		return tree, ""
 	}
@@ -73,11 +76,24 @@ func (g *Guidance) Target(parent corpus.Digest, tree *ir.Node, r *rng.Rand) (*ir
 		return tree, ""
 	}
 
-	c := g.Scheduler.Pick(g.Traces.Get(parent), len(session.Children), r)
+	c := g.Scheduler.Pick(g.Traces.Get(parent), len(session.Children), aim.State, r)
 	if c.Message < 0 || c.Message >= len(session.Children) {
 		return tree, ""
 	}
 	return session.Children[c.Message], c.Target
+}
+
+// Seed chooses which corpus entry to fuzz next, from the state up.
+//
+// Reports false when the state model has nothing to say — early on, or for a
+// rare state no entry reaches — and the campaign's coverage scheduler picks
+// instead. Both schedulers are needed: coverage grows the corpus, and this one
+// decides which of what coverage found is worth spending a budget on.
+func (g *Guidance) Seed(c *corpus.Corpus, r *rng.Rand) (Aim, bool) {
+	if g == nil {
+		return Aim{}, false
+	}
+	return g.Scheduler.PickSeed(g.Traces, c, r)
 }
 
 // Record stores the trace the last execution produced, against the entry that

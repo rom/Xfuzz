@@ -473,7 +473,7 @@ func printEvent(kind string, data []byte) bool {
 			} `json:"data"`
 		}
 		if json.Unmarshal(data, &e) == nil && e.Data.NewBucket {
-			fmt.Printf("\n  finding: %s %s [%s]\n", e.Data.Kind, e.Data.Summary, short(e.Data.Bucket))
+			fmt.Printf("\n  finding: %s %s [%s]\n", e.Data.Kind, e.Data.Summary, shortBucket(e.Data.Bucket))
 		}
 	case "campaign":
 		var e struct {
@@ -538,11 +538,29 @@ func elapsedOf(s daemon.Status) time.Duration {
 	return end.Sub(s.Started)
 }
 
+// short trims a digest to a column width. A digest is uniform, so its head
+// identifies it as well as any other part.
 func short(s string) string {
 	if len(s) > 16 {
 		return s[:16]
 	}
 	return s
+}
+
+// shortBucket trims a bucket key for a one-line report, keeping both ends.
+//
+// From the middle rather than the tail, unlike a digest: a bucket key is a
+// prefix saying what kind of failure it was and a suffix saying which one, and
+// it is the suffix that separates two bugs of the same kind. Truncating from
+// the right rendered "crash|XFUZZ-BUG-1" and "crash|XFUZZ-BUG-2" identically —
+// on the very line announcing that a second, different bug had been found.
+func shortBucket(s string) string {
+	const max = 28
+	if len(s) <= max {
+		return s
+	}
+	head := (max - 1) / 2
+	return s[:head] + "…" + s[len(s)-(max-1-head):]
 }
 
 // starterCampaign is what `xfuzz init` writes.

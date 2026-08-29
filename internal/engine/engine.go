@@ -341,14 +341,28 @@ loop:
 			break loop
 		}
 
-		i, err := e.cfg.Schedule.Next(e.cfg.Corpus, e.seedRand)
-		if err != nil {
-			return e.finish(start, "scheduler: "+err.Error()), err
+		// Which entry to fuzz. A stateful campaign asks the state model first:
+		// it picks a state worth exploring past and then an entry that is known
+		// to reach it, which is the choice coverage cannot make (ADR-0006).
+		// When it has nothing to say — no traces yet, or no entry reaching the
+		// state it drew — the coverage scheduler decides, as it does throughout
+		// a stateless campaign.
+		var aim state.Aim
+		i, ok := 0, false
+		if e.cfg.State != nil {
+			aim, ok = e.cfg.State.Seed(e.cfg.Corpus, e.seedRand)
+			i = aim.Seed
+		}
+		if !ok {
+			var err error
+			if i, err = e.cfg.Schedule.Next(e.cfg.Corpus, e.seedRand); err != nil {
+				return e.finish(start, "scheduler: "+err.Error()), err
+			}
 		}
 		parent := e.cfg.Corpus.At(i)
 		energy := e.cfg.Schedule.Energy(e.cfg.Corpus, i)
 
-		admitted, best, stop, err := e.fuzzOne(ctx, parent, energy, b)
+		admitted, best, stop, err := e.fuzzOne(ctx, parent, aim, energy, b)
 		if err != nil {
 			return e.finish(start, "error"), err
 		}
@@ -362,7 +376,7 @@ loop:
 }
 
 // fuzzOne spends one seed's energy budget.
-func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy int, b Budget) (
+func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, aim state.Aim, energy int, b Budget) (
 	admitted int, best feedback.Score, stop bool, err error) {
 
 	for k := 0; k < energy; k++ {
@@ -385,7 +399,7 @@ func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy in
 		// state-then-message split.
 		target, aimed := tree, state.Label("")
 		if e.cfg.State != nil {
-			target, aimed = e.cfg.State.Target(parent.ID, tree, e.mctx.Nodes)
+			target, aimed = e.cfg.State.Target(aim, parent.ID, tree, e.mctx.Nodes)
 		}
 
 		ops := e.cfg.Mutators.Mutate(e.mctx, target)
@@ -663,10 +677,20 @@ func bucketKey(f feedback.Finding) string {
 
 // markerOf reduces a target's own output to something bucketable.
 //
-// The first non-empty line, with digit runs collapsed and the length capped: an
-// assertion message names the bug, and the counter or address in it names this
-// particular occurrence of it. Keeping the numbers would give every crash its
-// own bucket, which is the opposite failure and just as useless.
+// The first non-empty line, with the parts that vary between runs of one bug
+// replaced and the length capped: an assertion message names the bug, and the
+// address or counter in it names this particular occurrence of it. Keeping the
+// varying parts would give every crash its own bucket, which is the opposite
+// failure and just as useless.
+//
+// What varies is addresses and long numbers, not numbers as such. A short
+// number is usually part of what the message *says* — an assertion's line
+// number, an error code, the index of a planted bug — and collapsing those
+// merges bugs the target went to the trouble of telling apart. Measured on
+// stateful_proto, whose four bugs each print their own number: collapsing every
+// digit run reported all four as one bucket. This is the same rule triage's own
+// classifier applies, so a finding's bucket during a run and after triage are
+// computed alike.
 func markerOf(detail string) string {
 	line := detail
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
@@ -678,22 +702,54 @@ func markerOf(detail string) string {
 	}
 
 	var b strings.Builder
-	inDigits := false
-	for _, r := range line {
-		if r >= '0' && r <= '9' {
-			if !inDigits {
-				b.WriteByte('#')
-				inDigits = true
-			}
+	for i := 0; i < len(line) && b.Len() < maxMarkerBytes; {
+		if n := hexAddrAt(line, i); n > 0 {
+			b.WriteString("0xADDR")
+			i += n
 			continue
 		}
-		inDigits = false
-		b.WriteRune(r)
-		if b.Len() >= maxMarkerBytes {
-			break
+		if n := digitsAt(line, i); n >= volatileDigits {
+			b.WriteByte('#')
+			i += n
+			continue
 		}
+		b.WriteByte(line[i])
+		i++
 	}
 	return b.String()
+}
+
+// volatileDigits is how long a digit run has to be before it is treated as
+// varying rather than as part of the message. Five, because pids, offsets and
+// counters reach it and line numbers, error codes and bug indices rarely do.
+const volatileDigits = 5
+
+// hexAddrAt reports the length of the 0x-prefixed address at i, or 0.
+func hexAddrAt(s string, i int) int {
+	if i+2 >= len(s) || s[i] != '0' || (s[i+1] != 'x' && s[i+1] != 'X') {
+		return 0
+	}
+	j := i + 2
+	for j < len(s) && isHexDigit(s[j]) {
+		j++
+	}
+	if j == i+2 {
+		return 0
+	}
+	return j - i
+}
+
+// digitsAt reports the length of the decimal run at i, or 0.
+func digitsAt(s string, i int) int {
+	j := i
+	for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+		j++
+	}
+	return j - i
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // maxMarkerBytes bounds a marker. A target that prints a paragraph on failure

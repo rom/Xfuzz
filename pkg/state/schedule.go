@@ -39,6 +39,11 @@ type Scheduler struct {
 	// breaking the path is occasionally exactly right — that is how a campaign
 	// discovers the target accepts a message out of order.
 	TailBias float64
+
+	// candidates is the scratch list PickSeed builds each call. A worker's
+	// scheduler is used by one goroutine, so reusing it keeps seed selection
+	// allocation-free on a path that runs once per seed.
+	candidates []int
 }
 
 // Default scheduling constants. Named rather than buried: they are tuning
@@ -62,6 +67,68 @@ func NewScheduler(m *Model) *Scheduler {
 	}
 }
 
+// Aim is one scheduling decision: which corpus entry to fuzz, and the state it
+// was chosen for.
+//
+// The two travel together because separating them wastes both. A seed chosen
+// for reaching a state, then mutated at a message chosen for a *different*
+// state, is a seed chosen at random with extra steps.
+type Aim struct {
+	// Seed is the corpus index to fuzz.
+	Seed int
+
+	// State is what that entry was chosen for, and what the message choice
+	// should go on to aim past. Empty when the choice was not state-informed.
+	State Label
+}
+
+// PickSeed chooses which corpus entry to fuzz, aiming at a state.
+//
+// ADR-0006's scheduler is three choices, not two: which state to aim for, which
+// entry can reach it, and which of that entry's messages to change. Picking the
+// state without picking the entry leaves the first choice inert, because the
+// entry then comes from the coverage scheduler, and an entry that never reached
+// the state has no informed place to cut — so the message choice degrades to
+// "anywhere" on nearly every execution.
+//
+// Measured on stateful_proto: 8 of 148 corpus entries carried a complete
+// handshake, so a campaign whose seeds were chosen by coverage alone spent
+// roughly 95% of its budget on entries that could not reach the state it was
+// aiming at, and the bug behind the handshake stayed unreached.
+//
+// Reports false when there is no informed choice to make — no trace, no rare
+// state, or no entry that reached it. That is the common case early on and it
+// is not a failure: the campaign's own scheduler decides, which is what keeps
+// coverage in charge of the part of the corpus the state model says nothing
+// about yet.
+func (s *Scheduler) PickSeed(traces *TraceStore, c *corpus.Corpus, r *rng.Rand) (Aim, bool) {
+	if c == nil || c.Len() == 0 || traces.Len() == 0 {
+		return Aim{}, false
+	}
+	if !r.Chance(s.Explore) {
+		return Aim{}, false
+	}
+	target := s.pickState(r)
+	if target == "" {
+		return Aim{}, false
+	}
+
+	s.candidates = s.candidates[:0]
+	for i := 0; i < c.Len(); i++ {
+		if t := traces.Get(c.At(i).ID); t != nil && t.Reached(target) {
+			s.candidates = append(s.candidates, i)
+		}
+	}
+	if len(s.candidates) == 0 {
+		return Aim{}, false
+	}
+	// Uniform among the entries that reach the state, for the reason pickState
+	// is uniform among the rare states: what distinguishes these entries is
+	// their coverage, and coverage already has a scheduler of its own — this
+	// one exists to say something coverage cannot.
+	return Aim{Seed: s.candidates[r.Intn(len(s.candidates))], State: target}, true
+}
+
 // Choice is where in a session to mutate, and why.
 type Choice struct {
 	// Message is the index of the message to mutate, or -1 for "anywhere",
@@ -81,15 +148,27 @@ type Choice struct {
 // nil for an entry that has never run — a fresh seed, or one imported from a
 // corpus. That case is not an error: it means there is nothing to aim with, so
 // the choice is "anywhere", and the session will have a trace the next time.
-func (s *Scheduler) Pick(trace *Trace, messages int, r *rng.Rand) Choice {
+//
+// aim is the state seed selection chose this entry for, or empty when the entry
+// was chosen some other way and the state is this function's to pick.
+func (s *Scheduler) Pick(trace *Trace, messages int, aim Label, r *rng.Rand) Choice {
 	if messages <= 0 {
 		return Choice{Message: -1}
 	}
-	if trace == nil || trace.Len() == 0 || !r.Chance(s.Explore) {
+	if trace == nil || trace.Len() == 0 {
 		return Choice{Message: r.Intn(messages)}
 	}
 
-	target := s.pickState(r)
+	// An aim from seed selection is honoured rather than re-rolled: this entry
+	// was chosen because it reaches that state, and picking a different one now
+	// would throw that away.
+	target := aim
+	if target == "" {
+		if !r.Chance(s.Explore) {
+			return Choice{Message: r.Intn(messages)}
+		}
+		target = s.pickState(r)
+	}
 	if target == "" {
 		return Choice{Message: r.Intn(messages)}
 	}

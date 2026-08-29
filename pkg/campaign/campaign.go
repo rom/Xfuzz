@@ -352,6 +352,15 @@ type Triage struct {
 
 	// Strategy selects bucketing: chain, frames, marker, coverage, or signal.
 	Strategy string `yaml:"strategy,omitempty" json:"strategy,omitempty" doc:"Bucketing strategy: chain, frames, marker, coverage, or signal."`
+
+	// Markers are line prefixes that identify a failure in the target's own
+	// words, in addition to the generic ones.
+	//
+	// A program that names its own failures gives better evidence of which bug
+	// this is than any signal number, and every codebase names them
+	// differently: "MYPROJ-FATAL", "check failed:", a company prefix. Without
+	// this, such a target's bugs all bucket together under one signal.
+	Markers []string `yaml:"markers,omitempty" json:"markers,omitempty" doc:"Extra line prefixes that name a failure in the target's own words."`
 }
 
 // Stop is when the campaign ends.

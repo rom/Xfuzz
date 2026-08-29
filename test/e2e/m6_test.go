@@ -89,6 +89,8 @@ seeds:
   dirs: [%s]
 feedback:
   coverage: sancov
+triage:
+  markers: ["XFUZZ-BUG-"]
 workers:
   count: %d
 stop:
@@ -168,6 +170,26 @@ func (e *statefulEnv) findings(name string) []findingDetail {
 	return all
 }
 
+// bucketsOf maps each finding to the bucket triage filed it under.
+func (e *statefulEnv) bucketsOf(name string) map[int]int64 {
+	e.t.Helper()
+	var list struct {
+		Findings []struct {
+			ID     int   `json:"id"`
+			Bucket int64 `json:"bucket"`
+		} `json:"findings"`
+	}
+	out := e.mustRun(60*time.Second, "findings", "list", name, "--json")
+	if err := json.Unmarshal([]byte(out), &list); err != nil {
+		e.t.Fatalf("decoding the finding list: %v\n%s", err, out)
+	}
+	m := map[int]int64{}
+	for _, f := range list.Findings {
+		m[f.ID] = f.Bucket
+	}
+	return m
+}
+
 // bugsFound returns which planted bugs the campaign reported, by number.
 //
 // From the target's own marker rather than from a signal or a bucket count: the
@@ -225,6 +247,24 @@ func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 	if !found["2"] {
 		t.Errorf("the bug behind the handshake was not found in %s; "+
 			"the campaign authenticated but never reached past it", budget)
+	}
+
+	// Two bugs the target itself distinguishes must not share a bucket. They
+	// die of the same signal at the same depth, so a bucketing that reads only
+	// the signal reports one bug and the second is discarded as a duplicate of
+	// the first — which is how finding it stops counting as finding it.
+	buckets := e.bucketsOf("proto")
+	byBug := map[string]int64{}
+	for _, f := range e.findings("proto") {
+		for _, n := range []string{"1", "2", "3", "4"} {
+			if strings.Contains(f.Detail, "XFUZZ-BUG-"+n) {
+				byBug[n] = buckets[f.ID]
+			}
+		}
+	}
+	if a, b := byBug["1"], byBug["2"]; a != 0 && b != 0 && a == b {
+		t.Errorf("the shallow bug and the bug behind the handshake share bucket %d; "+
+			"the target names them apart and triage does not", a)
 	}
 }
 

@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/rom/Xfuzz/pkg/corpus"
 
+	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/feedback"
 	"github.com/rom/Xfuzz/pkg/rng"
 )
@@ -151,10 +153,45 @@ func (e *Engine) LoadCorpus(entries []*corpus.Testcase) (loaded, skipped int, er
 			loaded++
 		}
 	}
+
+	// A stateful campaign needs each entry's trace, and a trace only exists
+	// once the entry has run.
+	//
+	// LoadCorpus deliberately admits without executing: on a resumed campaign
+	// with a large corpus, running every entry costs minutes before any fuzzing
+	// starts. But the state scheduler decides which message of a session to
+	// mutate by looking up where that session got to, and an entry with no
+	// trace gets the fallback — a uniformly random message. With the whole
+	// corpus loaded this way that is every entry, so the state-then-message
+	// split never engages at all and the campaign spends its budget on the
+	// handshake. Measured: a campaign whose seeds contained a valid handshake
+	// never reached the authenticated state.
 	if loaded == 0 && len(entries) > 0 {
 		return loaded, skipped, fmt.Errorf(
 			"engine: none of the %d stored entries could be loaded; the campaign has no corpus to resume from",
 			len(entries))
 	}
+	if e.cfg.State != nil {
+		e.traceCorpus(context.Background())
+	}
 	return loaded, skipped, nil
+}
+
+// traceCorpus runs each entry once so that it has a trace to be scheduled by.
+//
+// Best effort: an entry that fails to run keeps no trace and is scheduled
+// without one, which is the same position it was in before. A failure here must
+// not stop a campaign from starting, because the corpus is the thing it was
+// going to fuzz.
+func (e *Engine) traceCorpus(ctx context.Context) {
+	for i := 0; i < e.cfg.Corpus.Len(); i++ {
+		tc := e.cfg.Corpus.At(i)
+		_, err := e.cfg.Executor.Run(ctx,
+			executor.Input{Bytes: tc.Bytes, Node: tc.Input}, e.cfg.Observers)
+		if err != nil {
+			return
+		}
+		e.stats.Execs++
+		e.cfg.State.Record(tc.ID)
+	}
 }

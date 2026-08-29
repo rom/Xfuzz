@@ -64,6 +64,10 @@ type Config struct {
 	// Strategy buckets findings. Nil means DefaultChain.
 	Strategy Strategy
 
+	// Classifier recognises the target's own failure markers. Nil means the
+	// generic set, which is right for a target that says nothing of its own.
+	Classifier *Classifier
+
 	// Trials is how many times each reproducer is verified. Zero means
 	// DefaultTrials.
 	Trials int
@@ -180,7 +184,7 @@ func (w *Worker) Stats() (dropped, completed uint64) {
 func (w *Worker) Triage(ctx context.Context, job Job) Result {
 	res := Result{ID: job.ID, Minimized: job.Input}
 
-	verify, err := Verify(ctx, w.cfg.Runner, job.Input, w.cfg.Trials)
+	verify, err := w.classifier().Verify(ctx, w.cfg.Runner, job.Input, w.cfg.Trials)
 	res.Verify = verify
 	if err != nil {
 		res.Err = err
@@ -200,7 +204,7 @@ func (w *Worker) Triage(ctx context.Context, job Job) Result {
 		if opts.Preserve == nil {
 			want := verify.Class
 			opts.Preserve = func(o Outcome) bool {
-				return o.Crashed() && Classify(o).Equal(want)
+				return o.Crashed() && w.classifier().Classify(o).Equal(want)
 			}
 		}
 		var (
@@ -234,6 +238,14 @@ func (w *Worker) Triage(ctx context.Context, job Job) Result {
 		res.Err = err
 		return res
 	}
-	res.Strategy, res.Signature = Bucket(w.cfg.Strategy, final, Classify(final))
+	res.Strategy, res.Signature = Bucket(w.cfg.Strategy, final, w.classifier().Classify(final))
 	return res
+}
+
+// classifier is the campaign's classifier, or the generic one.
+func (w *Worker) classifier() *Classifier {
+	if w.cfg.Classifier != nil {
+		return w.cfg.Classifier
+	}
+	return DefaultClassifier
 }

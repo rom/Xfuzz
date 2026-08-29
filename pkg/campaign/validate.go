@@ -298,6 +298,12 @@ func (r *Resolved) validateTriage(add addFunc) {
 		add("triage.strategy", "is coverage but feedback.coverage is none",
 			"coverage bucketing has nothing to bucket on")
 	}
+	for i, m := range t.Markers {
+		if strings.TrimSpace(m) == "" {
+			add(fmt.Sprintf("triage.markers[%d]", i), "is empty",
+				"an empty prefix matches every line, so every crash would carry the first line as its bucket")
+		}
+	}
 }
 
 func (r *Resolved) validateStop(add addFunc) {

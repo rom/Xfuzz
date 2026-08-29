@@ -196,6 +196,7 @@ func NewCampaign(ctx context.Context, cfg *campaign.Resolved, opts CampaignOptio
 		c.triageQueue = triage.NewWorker(triage.Config{
 			Runner:       c.triage,
 			Strategy:     triage.StrategyNamed(cfg.Triage.Strategy),
+			Classifier:   triage.NewClassifier(cfg.Triage.Markers...),
 			Trials:       cfg.Triage.Trials,
 			SkipMinimize: cfg.Triage.Minimize != nil && !*cfg.Triage.Minimize,
 			MinimizeOpts: triage.MinimizeOptions{MaxRuns: cfg.Triage.MinimizeBudget},

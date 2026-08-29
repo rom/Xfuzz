@@ -423,6 +423,13 @@
           "description": "Run triage. Defaults to true.",
           "type": "boolean"
         },
+        "markers": {
+          "description": "Extra line prefixes that name a failure in the target's own words.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "minimize": {
           "description": "Minimise reproducers. Defaults to true.",
           "type": "boolean"

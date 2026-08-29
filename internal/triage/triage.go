@@ -119,6 +119,22 @@ type Classifier struct {
 // DefaultClassifier recognises the failure markers common to C, C++, and Go.
 var DefaultClassifier = &Classifier{MarkerPrefixes: genericMarkerPrefixes}
 
+// NewClassifier returns a classifier that also recognises a campaign's own
+// markers.
+//
+// The generic set is kept rather than replaced. A target that prints its own
+// diagnostic can still die of an assertion in a library it did not write, and a
+// campaign that named one marker should not thereby stop recognising the other.
+func NewClassifier(extra ...string) *Classifier {
+	if len(extra) == 0 {
+		return DefaultClassifier
+	}
+	prefixes := make([]string, 0, len(genericMarkerPrefixes)+len(extra))
+	prefixes = append(prefixes, extra...)
+	prefixes = append(prefixes, genericMarkerPrefixes...)
+	return &Classifier{MarkerPrefixes: prefixes}
+}
+
 // Classify reduces an outcome to its class, using the default classifier.
 func Classify(o Outcome) Class { return DefaultClassifier.Classify(o) }
 
@@ -177,8 +193,12 @@ func extractMarker(out string, prefixes []string) string {
 // normaliseMarker strips what varies between runs of the same bug.
 //
 // An assertion message carrying a line number is stable; one carrying an
-// address is not, and leaving the address in would give every execution of one
-// bug its own bucket.
+// address or a pid is not, and leaving those in would give every execution of
+// one bug its own bucket. Short numbers survive on purpose: a line number, an
+// error code or the index of a planted bug is part of what the message says,
+// and collapsing those merges bugs the target went to the trouble of telling
+// apart. The engine applies the same rule while a campaign runs, so a finding's
+// live bucket and its triaged bucket agree.
 func normaliseMarker(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -194,6 +214,17 @@ func normaliseMarker(s string) string {
 				continue
 			}
 		}
+		if s[i] >= '0' && s[i] <= '9' {
+			j := i
+			for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+				j++
+			}
+			if j-i >= volatileDigits {
+				b.WriteByte('#')
+				i = j
+				continue
+			}
+		}
 		b.WriteByte(s[i])
 		i++
 	}
@@ -204,6 +235,11 @@ func normaliseMarker(s string) string {
 	}
 	return out
 }
+
+// volatileDigits is how long a digit run has to be before it is treated as
+// varying rather than as part of the message. Five, because pids, offsets and
+// counters reach it and line numbers, error codes and bug indices rarely do.
+const volatileDigits = 5
 
 func isHexDigit(c byte) bool {
 	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')

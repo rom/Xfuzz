@@ -307,11 +307,20 @@ func (s *Supervisor) runOnce(ctx context.Context, w *worker) error {
 	close(writerDone)
 	w.writerWG.Wait()
 
-	// Kill rather than wait: the worker has closed its status pipe, so it is
-	// either exiting or wedged, and a supervisor that waits on a wedged worker
-	// is a campaign that will not stop.
-	_ = handle.Kill()
-	res, _ := handle.Wait()
+	// A short grace period before killing, because the worker has shutdown of
+	// its own to do and killing it takes that away.
+	//
+	// A session-tier worker manages a long-lived server process, and every
+	// target runs in its own process group so that killing it kills what it
+	// started — which also means the worker's process group does not contain
+	// it. Kill the worker and the server it was managing is orphaned, still
+	// listening on the address the next campaign will want. Measured: one
+	// abandoned server per worker per campaign, surviving every subsequent run.
+	//
+	// Bounded, because a supervisor that waits on a wedged worker is a campaign
+	// that will not stop. The worker has already closed its status pipe here,
+	// so it is on its way out and the wait is short in every ordinary case.
+	res, _ := waitOrKill(handle, workerExitGrace)
 
 	s.mu.Lock()
 	w.handle = nil
@@ -550,4 +559,33 @@ func sortStatus(s []WorkerStatus) {
 			s[j], s[j-1] = s[j-1], s[j]
 		}
 	}
+}
+
+// workerExitGrace is how long a worker gets to finish its own shutdown after
+// its status pipe closes. Long enough to kill a managed target and flush a
+// checkpoint, short enough that a wedged worker does not hold up a campaign.
+const workerExitGrace = 3 * time.Second
+
+// waitOrKill waits for a process to exit, killing it if it takes too long.
+func waitOrKill(h executor.Handle, d time.Duration) (executor.ProcResult, error) {
+	type outcome struct {
+		res executor.ProcResult
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		res, err := h.Wait()
+		done <- outcome{res, err}
+	}()
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case o := <-done:
+		return o.res, o.err
+	case <-timer.C:
+	}
+	_ = h.Kill()
+	o := <-done
+	return o.res, o.err
 }

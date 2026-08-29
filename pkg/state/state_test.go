@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rom/Xfuzz/pkg/corpus"
 	"github.com/rom/Xfuzz/pkg/feedback"
 	"github.com/rom/Xfuzz/pkg/rng"
 )
@@ -283,7 +284,7 @@ func TestSchedulerAimsPastTheTargetedState(t *testing.T) {
 
 	var aimed, atOrAfter int
 	for i := 0; i < 2000; i++ {
-		c := s.Pick(tr, 3, r)
+		c := s.Pick(tr, 3, "", r)
 		if c.Target == "" {
 			continue
 		}
@@ -307,7 +308,7 @@ func TestSchedulerFallsBackWithoutATrace(t *testing.T) {
 	s := NewScheduler(NewModel())
 	r := rng.New(1)
 	for i := 0; i < 100; i++ {
-		c := s.Pick(nil, 4, r)
+		c := s.Pick(nil, 4, "", r)
 		if c.Message < 0 || c.Message >= 4 {
 			t.Fatalf("Pick with no trace chose message %d of 4", c.Message)
 		}
@@ -315,7 +316,7 @@ func TestSchedulerFallsBackWithoutATrace(t *testing.T) {
 			t.Fatalf("Pick with no trace claimed to aim at %q", c.Target)
 		}
 	}
-	if c := s.Pick(nil, 0, r); c.Message != -1 {
+	if c := s.Pick(nil, 0, "", r); c.Message != -1 {
 		t.Errorf("an empty session chose message %d, want -1", c.Message)
 	}
 }
@@ -369,5 +370,132 @@ func TestTraceStoreIsBounded(t *testing.T) {
 	tr.Observe("b")
 	if got.Len() != 1 {
 		t.Errorf("the stored trace followed a later mutation: %v", got)
+	}
+}
+
+// Seed selection is the half of ADR-0006's scheduler that decides *which*
+// session gets a budget. Without it the state choice is inert: the entry comes
+// from coverage, most entries never reach the state, and the message choice
+// falls back to "anywhere" — which is the funnel problem the scheduler exists
+// to solve.
+func TestSchedulerPicksSeedsThatReachTheState(t *testing.T) {
+	m := NewModel()
+
+	reaches := NewTrace()
+	reaches.Observe("greeting")
+	reaches.Observe("authenticated")
+	m.Record(reaches, nil)
+
+	stops := NewTrace()
+	stops.Observe("greeting")
+	m.Record(stops, nil)
+	// "greeting" is now the common state and "authenticated" the rare one.
+	for i := 0; i < 10; i++ {
+		m.Record(stops, nil)
+	}
+
+	c := corpus.New()
+	traces := NewTraceStore()
+	for i := 0; i < 20; i++ {
+		tc := &corpus.Testcase{ID: corpus.Digest{byte(i)}, Bytes: []byte{byte(i)}}
+		if !c.Add(tc) {
+			t.Fatalf("entry %d was not admitted", i)
+		}
+		// One entry in twenty reaches the rare state, which is roughly the
+		// proportion measured on a real stateful campaign's corpus.
+		if i == 7 {
+			traces.Put(tc.ID, reaches)
+		} else {
+			traces.Put(tc.ID, stops)
+		}
+	}
+
+	s := NewScheduler(m)
+	s.Explore = 1
+	r := rng.New(0x5EED)
+
+	var aimed, atSeven int
+	for i := 0; i < 500; i++ {
+		aim, ok := s.PickSeed(traces, c, r)
+		if !ok {
+			continue
+		}
+		aimed++
+		if aim.State == "authenticated" {
+			if aim.Seed != 7 {
+				t.Fatalf("aiming at the rare state chose entry %d, which never reaches it", aim.Seed)
+			}
+			atSeven++
+		}
+		if aim.State == "" {
+			t.Fatal("PickSeed reported a choice with no state behind it")
+		}
+	}
+	if aimed == 0 {
+		t.Fatal("the scheduler never made a state-informed seed choice")
+	}
+	if atSeven == 0 {
+		t.Error("the rare state was never aimed at, so seed selection never used the model")
+	}
+}
+
+// A seed chosen for reaching a state, then mutated at a message chosen for a
+// different state, is a seed chosen at random with extra steps. Pick honours the
+// aim it is given rather than drawing again.
+func TestSchedulerHonoursTheSeedsAim(t *testing.T) {
+	m := NewModel()
+	tr := NewTrace()
+	tr.Observe("greeting")      // message 0
+	tr.Observe("authenticated") // message 1
+	tr.Observe("stored")        // message 2
+	m.Record(tr, nil)
+	// Make "greeting" look rare, so an unaimed Pick would prefer it and the two
+	// cases are distinguishable.
+	for i := 0; i < 50; i++ {
+		other := NewTrace()
+		other.Observe("authenticated")
+		other.Observe("stored")
+		m.Record(other, nil)
+	}
+
+	s := NewScheduler(m)
+	s.Explore = 1
+	r := rng.New(7)
+	for i := 0; i < 200; i++ {
+		c := s.Pick(tr, 3, "authenticated", r)
+		if c.Target != "authenticated" {
+			t.Fatalf("Pick aimed at %q despite being handed \"authenticated\"", c.Target)
+		}
+	}
+}
+
+// PickSeed must decline rather than guess: a campaign with no traces, or aiming
+// at a state nothing reaches, has to leave the choice to coverage.
+func TestSchedulerDeclinesWithoutCandidates(t *testing.T) {
+	s := NewScheduler(NewModel())
+	s.Explore = 1
+	r := rng.New(3)
+
+	if _, ok := s.PickSeed(NewTraceStore(), corpus.New(), r); ok {
+		t.Error("PickSeed claimed a choice on an empty corpus")
+	}
+
+	m := NewModel()
+	reached := NewTrace()
+	reached.Observe("only-state")
+	m.Record(reached, nil)
+
+	c := corpus.New()
+	tc := &corpus.Testcase{ID: corpus.Digest{1}, Bytes: []byte{1}}
+	c.Add(tc)
+	traces := NewTraceStore()
+	traces.Put(tc.ID, NewTrace()) // ran, but reached nothing
+
+	s = NewScheduler(m)
+	s.Explore = 1
+	for i := 0; i < 50; i++ {
+		if _, ok := s.PickSeed(traces, c, r); ok {
+			t.Fatal("PickSeed chose an entry that never reached the state it aimed at")
+		}
 	}
 }

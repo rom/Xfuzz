@@ -162,6 +162,14 @@ the top frame merges distinct bugs, hashing the full stack splits one bug into
 hundreds. Re-bucketing an existing finding set with a new strategy is a supported
 operation that preserves triage state.
 
+The strongest signal, where it exists, is the target's own words: a program that
+prints which assertion failed has already told its bugs apart, and no signal
+number or coverage hash improves on that. The generic markers are recognised out
+of the box; a codebase with its own failure vocabulary names it in
+`triage.markers`, and what varies between runs of one bug — addresses, pids,
+offsets — is normalised away while what the message *says*, its line numbers and
+error codes included, is kept.
+
 ### 4.6 Campaigns are observable and resumable — ASR-0012
 
 Live metrics (exec/s, coverage, stability, engine overhead, per-mutator yield,
