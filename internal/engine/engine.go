@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/rom/Xfuzz/pkg/codec"
@@ -503,6 +504,15 @@ func (e *Engine) trim(input []byte) []byte {
 	// harvested by the execution that just happened, so the map still holds it.
 	want := e.coverage.Signature()
 
+	// And the states it reached, which coverage does not imply. A session that
+	// authenticated and one that did not can cover identical edges — the
+	// handshake's code is in the accumulated map either way — so trimming
+	// against coverage alone is free to delete the handshake. Measured: a
+	// corpus of four-message conversations collapsed to three-byte fragments
+	// like "T \n", and the campaign lost every path past the funnel it had
+	// spent minutes finding.
+	wantStates := e.stateSignature()
+
 	cur := append(e.trimBuf[:0], input...)
 	spent := 0
 
@@ -515,15 +525,25 @@ func (e *Engine) trim(input []byte) []byte {
 			candidate = append(candidate, cur[:pos]...)
 			candidate = append(candidate, cur[pos+step:]...)
 
-			ek, err := e.cfg.Executor.Run(context.Background(),
-				executor.Input{Bytes: candidate}, e.cfg.Observers)
+			// Through the codec, so a candidate is delivered as the same
+			// kind of thing the original was. Without it a session's trim
+			// candidates arrive as one long message rather than a
+			// conversation, the target replies once instead of four times,
+			// and the comparison that decides whether to keep the reduction
+			// is against an execution that never happened.
+			in := executor.Input{Bytes: candidate}
+			if node, derr := e.cfg.Codec.Decode(nil, candidate); derr == nil {
+				in.Node = node
+			}
+
+			ek, err := e.cfg.Executor.Run(context.Background(), in, e.cfg.Observers)
 			spent++
 			e.stats.Execs++
 			e.stats.TrimExecs++
 			if err != nil || ek == feedback.ExitError {
 				break
 			}
-			if e.coverage.Signature() != want {
+			if e.coverage.Signature() != want || e.stateSignature() != wantStates {
 				continue
 			}
 			cur = append(cur[:0], candidate...)
@@ -620,11 +640,65 @@ func bucketKey(f feedback.Finding) string {
 		}
 		return key
 	}
+	// Without frames, what the target said about itself is the best evidence
+	// there is — better than a signal number, and on a black-box target the
+	// only evidence at all. A summary like "target terminated abnormally" is
+	// the same for every crash, so bucketing on it collapses a target's whole
+	// bug set into one bucket and the engine, which keeps only the first input
+	// per bucket, discards every bug after the first as a duplicate. That is
+	// how a campaign finds four planted bugs and reports one.
+	//
+	// It errs toward splitting. Over-splitting costs a longer findings list and
+	// is repaired by triage, which re-buckets from a minimised reproducer and
+	// an execution it watched itself; over-merging loses bugs outright and
+	// nothing downstream can recover them.
+	if m := markerOf(f.Detail); m != "" {
+		return key + "|" + m
+	}
 	if f.Summary != "" {
 		return key + "|" + f.Summary
 	}
 	return key
 }
+
+// markerOf reduces a target's own output to something bucketable.
+//
+// The first non-empty line, with digit runs collapsed and the length capped: an
+// assertion message names the bug, and the counter or address in it names this
+// particular occurrence of it. Keeping the numbers would give every crash its
+// own bucket, which is the opposite failure and just as useless.
+func markerOf(detail string) string {
+	line := detail
+	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
+		line = line[:i]
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	inDigits := false
+	for _, r := range line {
+		if r >= '0' && r <= '9' {
+			if !inDigits {
+				b.WriteByte('#')
+				inDigits = true
+			}
+			continue
+		}
+		inDigits = false
+		b.WriteRune(r)
+		if b.Len() >= maxMarkerBytes {
+			break
+		}
+	}
+	return b.String()
+}
+
+// maxMarkerBytes bounds a marker. A target that prints a paragraph on failure
+// would otherwise put the paragraph in every report that names the bucket.
+const maxMarkerBytes = 64
 
 // trace writes one line per execution, for the determinism check.
 func (e *Engine) trace(encoded []byte, ek feedback.ExitKind, interesting, finding bool) {
@@ -660,3 +734,30 @@ func (e *Engine) SortedBuckets() []string {
 // is the hot loop, and everything that would slow it down is somebody else's
 // job (ARCHITECTURE section 4).
 func (e *Engine) Corpus() *corpus.Corpus { return e.cfg.Corpus }
+
+// stateSignature identifies the protocol states the last execution reached.
+//
+// The set rather than the sequence: trimming may legitimately remove a
+// repetition, and requiring the exact order would refuse most useful
+// reductions. What it must not do is lose a state, because that is the path the
+// entry exists to preserve.
+func (e *Engine) stateSignature() string {
+	if e.cfg.State == nil {
+		return ""
+	}
+	t := e.cfg.State.Trace()
+	if t == nil {
+		return ""
+	}
+	seen := make(map[state.Label]struct{}, len(t.States))
+	labels := make([]string, 0, len(t.States))
+	for _, l := range t.States {
+		if _, dup := seen[l]; dup {
+			continue
+		}
+		seen[l] = struct{}{}
+		labels = append(labels, string(l))
+	}
+	sort.Strings(labels)
+	return strings.Join(labels, ",")
+}

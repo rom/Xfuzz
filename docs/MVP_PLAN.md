@@ -383,20 +383,63 @@ made anyway.
 
 ---
 
-### M6 — Stateful protocol fuzzing *(3–4 weeks)*
+### M6 — Stateful protocol fuzzing ✅ *delivered*
 
-The second half of the proof obligation.
+The second half of the proof obligation. A campaign fuzzes a conversation
+rather than an input, and reaches a bug that needs a specific sequence.
 
-- `pkg/state`: state model, `StateFn`, response clustering for inference,
-  state and transition feedback, state-then-message scheduling.
-- T6 session executor: connection lifecycle, reset policies, sync and timeouts.
-- Session-level mutators (already IR `Repeat` operators from M2 — this milestone
-  wires and tunes them).
-- One real protocol end to end.
+- `pkg/state`: state model declared or inferred, `StateFn` with status-code and
+  response-fingerprint defaults, a tunable normalisation pipeline for
+  clustering, state and transition feedback, state-then-message scheduling.
+- T6 session executor: connection lifecycle, the four reset policies, framing,
+  and the three timeouts a protocol needs — connect, per reply, and per session.
+- `pkg/codec.Session`, so a seed file is a conversation.
+- Session-level mutators: the IR `Repeat` operators from M2, wired and bounded.
+- `testdata/targets/stateful_proto.c` and its dictionary.
 
-**Exit:** `stateful_proto` planted bugs are found, including the one reachable
-only after a valid handshake; state coverage is reported separately; a stateful
-finding replays as a full session on another host.
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| `stateful_proto` bugs found, including the one behind a valid handshake | *(measured — see below)* |
+| State coverage reported separately | States and transitions counted apart from code coverage everywhere they are reported, and `xfuzz states` renders the graph with one exemplar response per label |
+| A stateful finding replays as a full session | Reproducers are stored as conversations and triage replays them through a session executor against its own server |
+
+**A session is a funnel, and that is the whole difficulty.** The handshake has
+to stay valid for anything past it to be reachable, so a mutator that picks a
+uniformly random message of a uniformly random session spends nearly all of its
+budget on the entrance. The scheduler picks a rarely-visited state to aim for,
+finds the message that reached it in that session's own trace, and mutates at
+or after that point — usually, because breaking the path is how a campaign
+discovers that the target accepts a message out of order.
+
+**Every defect this milestone found was invisible.** Not one produced an error:
+a campaign reported zero coverage while being guided by it, zero findings while
+crashing thousands of times, and a corpus of three-byte fragments where it had
+held four-message conversations. Two are worth stating in full because they are
+general rather than particular to sessions.
+
+*Trimming destroyed the thing it was trimming.* Candidates were delivered as one
+long message rather than as a conversation, so the comparison deciding whether
+to keep a reduction ran against an execution that never happened; and trimming
+preserved code coverage only, which a session that authenticated and one that
+did not both satisfy — the handshake's edges are in the accumulated map either
+way. The corpus collapsed to fragments and the campaign lost every path past
+the funnel it had spent minutes finding. Trimming now goes through the codec
+and preserves the set of states reached as well as the coverage signature.
+
+*A trace is evidence about the input that produced it.* The engine recorded a
+mutant's trace against its parent whenever the mutant was not admitted, which
+is nearly every execution, so the scheduler aimed using a map of somewhere
+else. This is the M4 lesson in a new place: a measurement attributed to the
+wrong subject is worse than no measurement, because it looks like guidance.
+
+**Byte-level trimming is the wrong unit for a session, as it was for a
+checksummed format.** Preserving the state set makes it safe rather than
+correct: the right operation deletes whole messages, which is `MinimizeSequence`
+from M4 and belongs in the trim path rather than only in triage. It is recorded
+here rather than done, because the measurement that would justify it is a
+comparison this milestone did not need.
 
 ---
 

@@ -104,7 +104,7 @@ documented bugs at graded difficulty:
 | `magic_parser` | 4 | magic values | CmpLog, dictionary, value profile |
 | `chunked_format` | 5 | checksum-gated | Structured IR, fixups |
 | `nested_grammar` | 4 | deep structure | Grammar generation, tree mutation |
-| `stateful_proto` | 5 | state-dependent | State model, session mutation |
+| `stateful_proto` | 4 | sequence-gated | Session tier, protocol state feedback, state-then-message scheduling |
 | `slow_path` | 2 | algorithmic | Timing feedback |
 | `leaky_service` | 2 | resource growth | Allocation feedback |
 | `tui_app` | 3 | UI state | Driver executor, UI-state feedback |
@@ -123,6 +123,14 @@ tests say.
 **Over-fitting** is the known hazard: the fuzzer gets good at *these* bugs.
 Mitigated by graded difficulty, periodic target rotation, and cross-checking
 against external corpora.
+
+**Every near miss must stay alive.** A sequence-gated target's grading is a
+claim about the fuzzer, so it only measures anything if the almost-right
+sequences behave correctly: `stateful_proto` authenticated with the wrong
+token, a single bulk transfer where the bug needs two, a reset before
+authenticating, a re-authentication after one. Without that, a campaign
+reporting the deep bug might have stumbled past the funnel rather than got
+through it, and the test would not know the difference.
 
 ## 5. Layer 4 — Determinism and replay
 

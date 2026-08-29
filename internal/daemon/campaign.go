@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -272,12 +273,28 @@ func (c *Campaign) prepareSafety(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A session campaign's target binds a socket, and the daemon runs one of its
+	// own for triage. The read-only root must not cover where it goes, and the
+	// target's unprivileged identity must be able to create it — the same
+	// arrangement the worker makes for its own copy, and for the same reason:
+	// the path is one Xfuzz chose, so it is Xfuzz's job to make it usable.
+	writable := s.Writable
+	var creates []string
+	if c.Config.Session != nil {
+		addr := campaign.ResolveAddress(c.Config.Session.Address, triageWorkerID)
+		if network, path, aerr := campaign.SplitAddress(addr); aerr == nil && network == "unix" {
+			writable = append(append([]string(nil), writable...), filepath.Dir(path))
+			creates = append(creates, path)
+		}
+	}
+
 	c.sandbox = &safety.Sandbox{
 		Require:  level,
 		Name:     c.Config.Name,
 		Target:   c.Config.Target.Path,
 		Network:  s.Network,
-		Writable: s.Writable,
+		Writable: writable,
+		Creates:  creates,
 		Workdir:  c.Config.Target.Dir,
 		Auditor:  scope.Auditor,
 	}

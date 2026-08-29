@@ -762,19 +762,30 @@ func (e *Session) truncateStderr() {
 	_, _ = e.stderr.Seek(0, io.SeekStart)
 }
 
-// harvestStderr hands the session's output to the observer.
+// harvestStderr hands the session's output and exit status to the observer.
+//
+// The status matters as much as the output. Without it every crash on this tier
+// reports "target terminated abnormally" rather than naming the signal, and a
+// summary that is identical for every crash is one that cannot distinguish two
+// bugs.
 func (e *Session) harvestStderr() {
-	if e.stderr == nil || e.Output == nil {
+	if e.Output == nil {
 		return
 	}
-	if _, err := e.stderr.Seek(0, io.SeekStart); err != nil {
+	var buf []byte
+	if e.stderr != nil {
+		if _, err := e.stderr.Seek(0, io.SeekStart); err == nil {
+			buf, _ = io.ReadAll(io.LimitReader(e.stderr, int64(e.opts.ReadLimit)))
+		}
+	}
+	exitCode, signal := 0, 0
+	if e.handle != nil && e.exited.Load() {
+		exitCode, signal = e.result.ExitCode, e.result.Signal
+	}
+	if len(buf) == 0 && signal == 0 && exitCode == 0 {
 		return
 	}
-	buf, err := io.ReadAll(io.LimitReader(e.stderr, int64(e.opts.ReadLimit)))
-	if err != nil || len(buf) == 0 {
-		return
-	}
-	e.Output.Record(nil, buf, 0, 0)
+	e.Output.Record(nil, buf, exitCode, signal)
 }
 
 // Close implements Executor.

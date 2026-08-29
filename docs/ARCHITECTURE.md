@@ -64,10 +64,10 @@ github.com/rom/Xfuzz
 │   ├── mutate/             mutators, mutator scheduling
 │   ├── generate/           grammar-driven generation
 │   ├── feedback/           Observer, Feedback, Objective + algebra
-│   ├── executor/           Executor interface + tiers T0–T7
+│   ├── executor/           Executor interface + tiers T0–T7, incl. T6 sessions
 │   ├── corpus/             corpus, testcase, provenance, scheduler
 │   ├── corpusio/           AFL and libFuzzer corpus import/export
-│   ├── state/              state model, inference, state scheduling
+│   ├── state/              state model, inference, state feedback, scheduling
 │   ├── campaign/           campaign config schema, resolution, validation
 │   └── plugin/             external plugin protocol + Starlark host
 ├── internal/
@@ -470,6 +470,20 @@ seed file ──► codec.Decode ──► ir.Node ──► Corpus (store: SQL 
                                                                 ▼
                                                         console / CLI / export
 ```
+
+A stateful campaign is the same picture with one substitution: the unit is a
+session rather than an input, so the executor delivers a sequence of messages
+and reads a reply to each, a state observer labels those replies, and state
+novelty joins code coverage in the feedback stack. The corpus, the scheduler,
+the mutators and the triage pipeline are unchanged — which is ASR-0002's whole
+claim, that statefulness is an axis rather than a second tool.
+
+What is genuinely different is *which* part of the input gets mutated. A session
+is a funnel: the handshake has to stay valid for anything past it to be
+reachable, so a mutator picking a uniformly random message spends nearly all its
+budget on the entrance. The state scheduler picks a rarely-visited state to aim
+for, finds the message that reached it in that session's own trace, and mutates
+at or after that point (ADR-0006).
 
 The two halves of that fork run in different processes. Everything down to
 `Objective` is the worker's, in its hot loop; triage is the daemon's, on a

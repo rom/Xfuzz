@@ -11,6 +11,113 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M6 Stateful protocol fuzzing (2026-08-29)
+
+The second half of the proof obligation. A campaign can now fuzz a conversation
+rather than an input, and reach a bug that needs a specific sequence to get to.
+
+**`pkg/state` — the protocol state machine as a feedback signal (ADR-0006)**
+
+- `StateModel` holding states and transitions, declared or inferred, with the
+  two counted separately: a target with five states has twenty-five ordered
+  pairs, and the bugs live in the pairs nobody expected to be reachable.
+- `StateFn` maps a response to a label. `status` reads the leading token, which
+  covers SMTP, FTP, POP3, IRC, Redis and HTTP; `fingerprint` hashes the
+  response's shape for everything else.
+- Where fingerprinting is concerned, the whole difficulty is the normalisation,
+  so it is a named, ordered pipeline a campaign can tune rather than one clever
+  function — over raw bytes every nonce becomes a state, and over nothing but
+  length distinct states merge. The model keeps one exemplar response per label
+  so a bad clustering can be looked at rather than guessed about.
+- `StateFeedback` admits a session that reached a new state or made a new move,
+  composing with coverage under ADR-0007's algebra. This is the reason ADR-0006
+  exists: two sessions can execute identical lines and leave the target in
+  entirely different places.
+- `StateScheduler` picks a rarely-visited state to aim for, finds the message
+  that reached it in that session's own trace, and mutates at or after that
+  point. A session is a funnel — the handshake has to stay valid for anything
+  past it to be reachable — and a fuzzer that does not know it is a funnel
+  keeps kicking the entrance.
+
+**T6, the session executor**
+
+- One execution is a whole session: connect, send each message, read each
+  reply, close. Messages come from the `Repeat` node's children rather than
+  from splitting an encoded stream, so a message boundary is a real boundary
+  and the sequence operators need no framing knowledge.
+- It dials through a `Dialer` interface, which is the scope guard in a
+  campaign — the same shape as `Spawner` is for processes, and the architecture
+  lint means an executor that reached the network another way would not
+  compile.
+- Framing is configuration, not a guess: `idle` needs no protocol knowledge and
+  is the default, and its quiet period per message is what caps a stateful
+  campaign's throughput; `line` is far faster where it applies.
+- The four reset policies are honoured as written, `snapshot` included — which
+  is refused by name with what to use instead, because a campaign that asked
+  for it and silently got `reconnect` has findings that do not mean what it
+  thinks.
+
+**`pkg/codec.Session`** makes a seed file a conversation: one file is one
+exchange, one line is one message. An example of the protocol being spoken
+correctly is the most useful thing a person can supply to a stateful campaign,
+and without this codec the campaign has to rediscover the handshake by
+insertion when the seed file already contained it.
+
+**Campaign file, CLI and reporting**
+
+- `session:` and `state:` blocks. The session block's presence is what selects
+  the tier — a separate mode switch would let a file ask for sessions and give
+  no address, and both halves of that look valid and cannot work.
+- `{worker}` in a session address, because each worker runs its own copy of the
+  target and a fixed address means the second binds what the first holds.
+- State and transition counts are reported beside code coverage, never folded
+  into it, and `xfuzz states` renders the graph with the exemplars.
+
+**`testdata/targets/stateful_proto.c`** — four bugs graded by how much of the
+state machine each needs: one message; a valid two-step handshake; two bulk
+transfers on one connection; and an `AUTH`, `RESET`, `GET` order and no other.
+Every near miss stays alive, which is what makes finding the second one
+evidence of getting through the funnel rather than of stumbling past it.
+
+### Fixed
+
+Seven defects, all of which produced a campaign that looked healthy:
+
+- **Trimming destroyed the session it was trimming.** Candidates were delivered
+  as one long message rather than as a conversation, so the comparison
+  deciding whether to keep a reduction was against an execution that never
+  happened; and it preserved code coverage only, which a session that
+  authenticated and one that did not both satisfy. A corpus of four-message
+  conversations collapsed to three-byte fragments, losing every path past the
+  funnel the campaign had spent minutes finding.
+- **A trace was recorded against the wrong input.** A mutant's trace went to
+  its parent whenever the mutant was not admitted — nearly every execution — so
+  the scheduler aimed with a map of somewhere else and the state-then-message
+  split was undone on almost every iteration.
+- **Coverage read zero on every stateful campaign.** The engine reached for the
+  map feedback with a type assertion on the stack root, which stops working the
+  moment state guidance is composed alongside it. A stack is a tree, so it is
+  now searched.
+- **Findings read zero.** A crash and an orderly disconnect are the same event
+  on a socket, and only the process status separates them — but the process had
+  just died, so its exit was still in flight when the status was read.
+- **One mutated message could cost a whole session.** Mutation strips a line's
+  terminator, the target waits for the rest, the fuzzer waits for a reply, and
+  the full read timeout is charged for every remaining message.
+- **A dead server was not restarted** unless the policy said `restart`, so a
+  campaign using `reconnect` stopped fuzzing at its first finding.
+- **The resolved form of a stateful campaign failed its own validation**, and
+  the daemon hands workers that resolved file — so a campaign that validated
+  when submitted could not be loaded by the worker meant to run it.
+
+Also: the scope guard treated a Unix socket as a network destination and
+refused it for having no port, though there is no remote host to be in or out
+of scope; the sandbox now checks that the target can create the socket it is
+told to bind, naming the directory and the identity rather than surfacing it as
+a server that would not talk; and triage replays a stateful finding as a
+session rather than as a blob on standard input, which reported every real bug
+as unreproducible.
+
 ### Added — M5 Daemon, API, and CLI (2026-08-29)
 
 The tool becomes a tool. A campaign is a file, a daemon runs it, and the command
