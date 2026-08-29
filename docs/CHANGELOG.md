@@ -24,6 +24,14 @@ rather than an input, and reach a bug that needs a specific sequence to get to.
 - `StateFn` maps a response to a label. `status` reads the leading token, which
   covers SMTP, FTP, POP3, IRC, Redis and HTTP; `fingerprint` hashes the
   response's shape for everything else.
+- Each label says how many distinct responses produced it. A state label is a
+  hash and a hash explains nothing, so the model keeps one exemplar per label —
+  and, where the label covers more than one response, says how many. On
+  `stateful_proto` the default `status` function makes "250 stored" and "250
+  transfer complete" one state, which is what a status code is *for* and is
+  also why a campaign aiming at 250 gets whichever the corpus happens to hold.
+  Saying so is the difference between a clustering somebody can fix and one
+  they have to guess at.
 - Where fingerprinting is concerned, the whole difficulty is the normalisation,
   so it is a named, ordered pipeline a campaign can tune rather than one clever
   function — over raw bytes every nonce becomes a state, and over nothing but

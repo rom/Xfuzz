@@ -1102,6 +1102,12 @@ func (c *Campaign) StateModel() *StateReport {
 				if e.Exemplar == "" {
 					e.Exemplar = s.Exemplar
 				}
+				// The largest a worker saw, not the sum: each holds its own
+				// bounded sample of the same responses, so adding them would
+				// count one coarse label several times over.
+				if s.Variants > e.Variants {
+					e.Variants = s.Variants
+				}
 				continue
 			}
 			cp := s

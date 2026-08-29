@@ -499,3 +499,41 @@ func TestSchedulerDeclinesWithoutCandidates(t *testing.T) {
 		}
 	}
 }
+
+// A state label is a hash, and a hash explains nothing — so the model has to
+// say when one label is covering several different responses. That is the
+// difference between a clustering somebody can fix and one they have to guess
+// at, and on a status-code protocol it is the common case: "250 stored" and
+// "250 transfer complete" are one state under the default state function.
+func TestModelCountsTheResponsesBehindALabel(t *testing.T) {
+	m := NewModel()
+	fn := &StatusFn{}
+
+	for _, resp := range [][]byte{
+		[]byte("250 stored\r\n"),
+		[]byte("250 transfer complete\r\n"),
+		[]byte("250 stored\r\n"),
+		[]byte("220 ready\r\n"),
+	} {
+		l := fn.Label(resp)
+		tr := NewTrace()
+		tr.Observe(l)
+		m.Record(tr, map[Label][]byte{l: resp})
+	}
+
+	if got := m.Variants("250"); got != 2 {
+		t.Errorf("label 250 reports %d distinct responses, want 2: the model is "+
+			"not saying that one label covers two states", got)
+	}
+	if got := m.Variants("220"); got != 1 {
+		t.Errorf("label 220 reports %d distinct responses, want 1", got)
+	}
+	if got := m.Variants("404"); got != 0 {
+		t.Errorf("a label never seen reports %d responses, want 0", got)
+	}
+
+	// And it is visible in the report, not only through the API.
+	if out := m.Explain(40); !strings.Contains(out, "more response") {
+		t.Errorf("the state report does not mention that a label is coarse:\n%s", out)
+	}
+}

@@ -286,6 +286,11 @@ type StateCount struct {
 
 	// Exemplar is the first response that produced this label, truncated.
 	Exemplar string `json:"exemplar,omitempty"`
+
+	// Variants is how many distinct responses produced this label, capped.
+	// More than one means the state function merged responses, which is how a
+	// campaign aiming at a state can keep landing somewhere it has been.
+	Variants int `json:"variants,omitempty"`
 }
 
 // TransitionCount is one move and how often it was made.

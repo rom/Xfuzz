@@ -223,6 +223,7 @@ func runStates(ctx context.Context, args []string) error {
 			Label    string `json:"label"`
 			Count    int    `json:"count"`
 			Exemplar string `json:"exemplar"`
+			Variants int    `json:"variants"`
 		} `json:"states"`
 		Transitions []struct {
 			From  string `json:"from"`
@@ -254,7 +255,14 @@ func runStates(ctx context.Context, args []string) error {
 
 	fmt.Printf("%-14s %9s  %s\n", "STATE", "VISITS", "WHAT THE TARGET SAID")
 	for _, st := range rep.States {
-		fmt.Printf("%-14s %9d  %s\n", st.Label, st.Count, st.Exemplar)
+		fmt.Printf("%-14s %9d  %s", st.Label, st.Count, st.Exemplar)
+		if st.Variants > 1 {
+			// Said here rather than left to be discovered, because a label
+			// covering several responses is why aiming at it may not take a
+			// campaign anywhere new.
+			fmt.Printf("  (+%d more)", st.Variants-1)
+		}
+		fmt.Println()
 	}
 
 	if *showMoves {

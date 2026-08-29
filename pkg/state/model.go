@@ -2,6 +2,7 @@ package state
 
 import (
 	"fmt"
+	"hash/fnv"
 	"strings"
 	"sync"
 )
@@ -34,9 +35,26 @@ type Model struct {
 	// what ADR-0006 means by inference being inspectable.
 	exemplar map[Label][]byte
 
+	// variants counts how many distinct responses produced each label, bounded.
+	//
+	// The measure of how coarse the clustering is. One state per response is a
+	// state function that has learned nothing; one state for every response the
+	// target can give is one that has learned too much. The default status
+	// function reads a reply's leading token, which is right for a status-code
+	// protocol and merges anything that shares a code — measured on
+	// stateful_proto, "250 stored" and "250 transfer complete" are one state,
+	// so a scheduler aiming at 250 gets whichever the corpus happens to hold.
+	// Saying so is the difference between a clustering somebody can fix and one
+	// they have to guess at.
+	variants map[Label]map[uint64]bool
+
 	// illegal counts transitions the declared model does not permit.
 	illegal map[Transition]int
 }
+
+// maxVariants bounds how many distinct responses are remembered per label. Just
+// enough to say "this label is coarse", not enough to become a second corpus.
+const maxVariants = 16
 
 // NewModel returns an empty model: everything is inferred and nothing is
 // declared illegal.
@@ -45,6 +63,7 @@ func NewModel() *Model {
 		states:      map[Label]int{},
 		transitions: map[Transition]int{},
 		exemplar:    map[Label][]byte{},
+		variants:    map[Label]map[uint64]bool{},
 		illegal:     map[Transition]int{},
 	}
 }
@@ -146,10 +165,20 @@ func (m *Model) Record(t *Trace, exemplars map[Label][]byte) Novelty {
 			continue
 		}
 		m.states[s]++
+		ex, have := exemplars[s]
+		if !have {
+			continue
+		}
 		if _, ok := m.exemplar[s]; !ok {
-			if ex, have := exemplars[s]; have {
-				m.exemplar[s] = append([]byte(nil), ex...)
-			}
+			m.exemplar[s] = append([]byte(nil), ex...)
+		}
+		seen := m.variants[s]
+		if seen == nil {
+			seen = map[uint64]bool{}
+			m.variants[s] = seen
+		}
+		if len(seen) < maxVariants {
+			seen[hashBytes(ex)] = true
 		}
 	}
 	for _, tr := range t.Transitions() {
@@ -230,6 +259,18 @@ func (m *Model) Exemplar(l Label) ([]byte, bool) {
 	return b, ok
 }
 
+// Variants reports how many distinct responses produced a label, capped.
+//
+// One means the label says exactly what the target said. More means the state
+// function merged responses, which may be right — a status code is meant to
+// merge — and may be why a campaign aiming at that state keeps landing
+// somewhere it has already been.
+func (m *Model) Variants(l Label) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.variants[l])
+}
+
 // Rarest returns the states visited least often, fewest first.
 //
 // What the scheduler biases toward. A state reached once in a million sessions
@@ -267,6 +308,9 @@ func (m *Model) Explain(maxExemplar int) string {
 		fmt.Fprintf(&b, "  %-14s %8d visit(s)", l, counts[l])
 		if ex, ok := m.Exemplar(l); ok && maxExemplar > 0 {
 			fmt.Fprintf(&b, "  %q", excerpt(ex, maxExemplar))
+		}
+		if v := m.Variants(l); v > 1 {
+			fmt.Fprintf(&b, "  (+%d more response(s) under this label)", v-1)
 		}
 		b.WriteString("\n")
 	}
@@ -313,4 +357,12 @@ func excerpt(b []byte, n int) string {
 		}
 	}
 	return string(out)
+}
+
+// hashBytes fingerprints a response so that distinct ones can be counted
+// without keeping them all.
+func hashBytes(b []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(b)
+	return h.Sum64()
 }

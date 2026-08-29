@@ -516,7 +516,11 @@ func (w *Worker) sendStates() {
 
 	rep := &daemon.StateReport{Fn: g.Observer.Fn().Name()}
 	for _, l := range labels {
-		sc := daemon.StateCount{Label: string(l), Count: counts[l]}
+		sc := daemon.StateCount{
+			Label:    string(l),
+			Count:    counts[l],
+			Variants: g.Model.Variants(l),
+		}
 		if ex, ok := g.Model.Exemplar(l); ok {
 			sc.Exemplar = state.Excerpt(ex, stateExemplarBytes)
 		}
