@@ -398,6 +398,13 @@ make test-all          # everything except extended fuzzing
 
 `make help` lists them all.
 
+The integration suite runs its packages one at a time. Several of them spawn
+processes and measure throughput, and run concurrently each one's numbers become
+a function of what the others happen to be doing — a scaling measurement taken
+while three other packages are fuzzing is not a measurement, and a daemon
+competing with three test binaries for four cores fails for reasons that have
+nothing to do with the code.
+
 Pre-commit runs layers 1–2 plus lint. Pull requests run everything except
 extended fuzzing. Nightly runs extended fuzzing and the full benchmark suite with
 statistical comparison against the recorded baseline.

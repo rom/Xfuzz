@@ -108,6 +108,11 @@ Four defects, three of which produced no error at all:
   should leak a process, not wedge the fuzzer.
 - **A worker's output went to `/dev/null`**, so a worker that died before it
   could speak the protocol left "exited with status 1" as the whole diagnosis.
+- **Killing a handle whose process had already been reaped sent a signal
+  anyway.** A process group is killed with `kill(-pid)`, and once the leader is
+  reaped that pid can be handed to something else — which for a fuzzer creating
+  processes by the million is routine rather than remote. The symptom is a
+  daemon or a worker vanishing with nothing to trace it to.
 
 Also: shared memory was created owned by the fuzzer while the target runs under
 an unprivileged uid, so coverage was always empty — the region is chowned to the
@@ -130,6 +135,11 @@ releasing the engine underneath it.
   is not.
 - `test/e2e` holds the milestone exit criteria, measured against the shipped
   binaries rather than the packages behind them.
+- `make test-integration` runs packages one at a time (`-p 1`). They spawn
+  processes and measure throughput, so running them concurrently makes each
+  one's numbers a function of what the others happen to be doing — and a
+  scaling measurement taken while three other packages fuzz is not a
+  measurement.
 
 ### Added — M4 Storage, triage, and safety (2026-08-28)
 

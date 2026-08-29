@@ -111,3 +111,36 @@ func TestHandleReportsTheSameResultToEveryCaller(t *testing.T) {
 		t.Errorf("a killed process reported no signal: %+v", first)
 	}
 }
+
+// Killing a handle whose process has already been reaped signals nothing.
+//
+// A process group is killed with kill(-pid), and once the leader is reaped the
+// kernel is free to hand that pid to something else. A fuzzer creates processes
+// by the million, so "something else" is not a remote possibility — and a Close
+// that runs after Wait is the ordinary shutdown, not an edge case. What this
+// pins is that the second call is a no-op rather than a signal aimed at
+// whatever now holds the number.
+func TestHandleDoesNotSignalAfterItHasBeenReaped(t *testing.T) {
+	h := sleeper(t, context.Background())
+	if err := h.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Wait(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reaped. From here the pid is not ours, so Kill must decline rather than
+	// send a signal to it.
+	hh, ok := h.(*handle)
+	if !ok {
+		t.Fatalf("Start returned %T, not *handle", h)
+	}
+	select {
+	case <-hh.exited:
+	default:
+		t.Fatal("Wait returned before the process was reaped")
+	}
+	if err := hh.Kill(); err != nil {
+		t.Errorf("Kill after reaping returned %v; it should decline quietly", err)
+	}
+}

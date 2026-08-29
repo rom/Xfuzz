@@ -56,8 +56,12 @@ test: ## Layers 1-2: unit, property, and round-trip tests
 	$(GO) test -race ./...
 
 .PHONY: test-integration
-test-integration: ## Layers 3, 4, 5, 8: planted bugs, determinism, differential, fault injection
-	$(GO) test -race -tags integration -timeout 30m ./...
+test-integration: ## Layers 3, 4, 5, 8, and the milestone exit criteria
+	# -p 1: these packages spawn processes and measure throughput. Running them
+	# concurrently makes each one's numbers a function of what the others happen
+	# to be doing, and a scaling measurement taken while three other packages
+	# fuzz is not a measurement.
+	$(GO) test -race -p 1 -tags integration -timeout 40m ./...
 
 .PHONY: test-security
 test-security: ## Layer 12: sandbox escape, scope guard, audit integrity

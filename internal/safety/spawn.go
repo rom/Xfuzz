@@ -311,6 +311,25 @@ func (h *handle) Kill() error {
 	if h.cmd.Process == nil {
 		return nil
 	}
+	// Not if it has already been reaped. Killing a process group is
+	// kill(-pid), and once the leader is reaped that pid can be handed to
+	// something else — which for a fuzzer is not a remote possibility but a
+	// routine one, since a campaign creates processes by the million and walks
+	// the pid space several times an hour. Signalling a reaped handle would
+	// then kill an unrelated process group, and the symptom is a daemon or a
+	// worker vanishing for no reason anybody can trace.
+	//
+	// A window remains between this check and the kill, and it cannot be closed
+	// with kill(2) — only a pidfd would, and there is no pidfd for a group. It
+	// is the difference between a race that needs the process to die in the
+	// microseconds after the check and one that fires every time Close runs
+	// after Wait.
+	select {
+	case <-h.exited:
+		return nil
+	default:
+	}
+
 	err := platform.KillGroup(h.cmd.Process.Pid)
 
 	timer := time.NewTimer(ReapTimeout)

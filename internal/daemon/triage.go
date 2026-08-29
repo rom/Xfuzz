@@ -37,6 +37,14 @@ type Triage struct {
 	mu   sync.Mutex
 	exec *executor.Subprocess
 	out  *feedback.OutputObserver
+
+	// lastFailure is what the target printed on the most recent run that
+	// failed. Kept because verification does not return it and it is usually
+	// the most useful line in a report — an assertion message names the bug,
+	// where a signal number only says the program died — and because the
+	// alternative, one more execution afterwards purely to capture output, both
+	// costs a run and reports a run that nobody verified.
+	lastFailure string
 }
 
 // NewTriage prepares on-demand triage for a campaign.
@@ -86,11 +94,23 @@ func (t *Triage) Run(ctx context.Context, input []byte) (triage.Outcome, error) 
 	if err != nil {
 		return triage.Outcome{}, err
 	}
-	return triage.Outcome{
+	out := triage.Outcome{
 		Exit:   kind,
 		Signal: t.out.Signal(),
 		Output: t.out.Combined(),
-	}, nil
+	}
+	if out.Crashed() {
+		t.lastFailure = out.Output
+	}
+	return out, nil
+}
+
+// LastFailure returns what the target printed on the most recent run that
+// failed.
+func (t *Triage) LastFailure() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.lastFailure
 }
 
 // deliveryFor maps the campaign's input mode onto the executor's.
@@ -152,16 +172,11 @@ func (c *Campaign) Replay(ctx context.Context, id int64, trials int) (*ReplayRep
 	if err != nil {
 		return nil, err
 	}
-	// What the target said, which is usually the most useful line in the whole
-	// report: an assertion message names the bug where a signal number only
-	// says it died.
-	last, _ := tr.Run(ctx, payload)
-
 	out := &ReplayReport{
 		Trials: rep.Trials, Reproduced: rep.Reproduced, Rate: rep.Rate(),
 		Divergent: len(rep.Divergent) > 0, State: stateFor(rep),
 		Kind: rep.Class.Kind, Signal: rep.Class.Signal, Marker: rep.Class.Marker,
-		Output: last.Output,
+		Output: tr.LastFailure(),
 	}
 
 	err = st.UpdateTriage(ctx, f.ID, out.State, rep.Trials, rep.Rate(),
