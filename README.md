@@ -5,16 +5,17 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M5 complete — it is a tool now.** A campaign is a file,
-> `xfuzz run campaign.yaml` runs it, and a daemon owns it from there: multiple
-> worker processes sharing a corpus, live metrics and findings over an
-> HTTP/JSON API, findings verified and minimised as they arrive, and a run that
-> survives losing the daemon. Multi-worker campaigns scale at 94%
-> efficiency; behind them are a structured IR, 24 mutation operators, the
-> `.xfg` grammar language, a fork server, a C coverage runtime, a composable
-> feedback pipeline, a content-addressed store, and a Linux sandbox that
-> reports what is actually in force rather than what was asked for. M6
-> (stateful protocol fuzzing) is next. See
+> **Status: M6 complete — it fuzzes conversations.** A campaign can now be a
+> protocol session rather than a file: Xfuzz starts a server, holds a
+> conversation with it, labels each reply with the protocol state it reveals,
+> and treats a new state or a new transition between states as interesting
+> alongside code coverage. Reaching a bug that needs a valid handshake means
+> keeping the handshake valid while changing what comes after it, which is what
+> the state-then-message scheduler is for. Behind it are a structured IR, 24
+> mutation operators, the `.xfg` grammar language, a fork server, a C coverage
+> runtime, a composable feedback pipeline, a content-addressed store, a daemon
+> with an HTTP/JSON API, and a Linux sandbox that reports what is actually in
+> force. M7 (the web console) is next. See
 > [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
 
 ## The idea
@@ -39,7 +40,9 @@ Xfuzz factors delivery and observation out, so one engine serves all of them.
   so the validation code is fuzzable too.
 - **State as a signal.** For stateful targets, new protocol states and transitions
   are as interesting as new code edges — and the state model can be inferred from
-  responses, so it works black-box.
+  responses, so it works black-box. Protocol coverage is reported beside code
+  coverage rather than folded into it: a campaign can hold code coverage flat
+  while discovering a new state, and that is the case worth seeing.
 - **Composable guidance.** Coverage-guided, directed, feedback-driven, and hybrid
   are not modes to pick between; they compose. "Cover broadly, weight toward this
   patch, and treat any 500 as interesting" is one campaign.
@@ -85,6 +88,23 @@ xfuzz validate campaign.yaml     # schema and semantics, without running it
 xfuzz explain campaign.yaml      # every setting that will apply, defaults marked
 xfuzz run campaign.yaml          # starts a private daemon if none is running
 ```
+
+A stateful campaign differs by one block. Add a `session:` saying where the
+target listens and Xfuzz fuzzes conversations instead of inputs — the corpus,
+the mutators, the scheduler and the triage pipeline are the same machinery,
+because statefulness is an axis rather than a second tool:
+
+```yaml
+session:
+  address: unix:/tmp/target-{worker}.sock
+  framing: line
+state:
+  fn: status          # a reply's leading status code is the protocol state
+```
+
+`xfuzz states` then shows the state machine the campaign has explored, with the
+response that produced each label — because a state label is a hash, and a hash
+explains nothing.
 
 Fuzzing behaviour lives in the file, never in flags: what ran should be a
 reviewable artefact rather than a shell history entry (ADR-0016). `xfuzz doctor`
