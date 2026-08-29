@@ -599,3 +599,29 @@ func BenchmarkMapFeedbackScan(b *testing.B) {
 		f.Discard()
 	}
 }
+
+// A feedback stack is a tree, and the values a report needs are at its leaves.
+//
+// The map feedback holds the coverage counts. Once a campaign composes state
+// guidance alongside it the stack root is a combinator, and code that reached
+// for the coverage with a type assertion on the root found nothing — reporting
+// zero coverage for a campaign that was being guided by it, with no error
+// anywhere.
+func TestFindFeedbackReachesIntoAStack(t *testing.T) {
+	inner := Always()
+	stack := Any(Never(), All(inner, Not(Never())))
+
+	if _, ok := FindFeedback(stack, inner.Name()); !ok {
+		t.Errorf("%q was not found inside the stack", inner.Name())
+	}
+	if _, ok := FindFeedback(stack, "not-there"); ok {
+		t.Error("a feedback that is not in the stack was found")
+	}
+	// The root itself counts, so a stack of one is not a special case.
+	if _, ok := FindFeedback(inner, inner.Name()); !ok {
+		t.Error("a lone feedback could not find itself")
+	}
+	if _, ok := FindFeedback(nil, "anything"); ok {
+		t.Error("an empty stack produced a feedback")
+	}
+}

@@ -16,6 +16,7 @@ import (
 	"github.com/rom/Xfuzz/pkg/ir"
 	"github.com/rom/Xfuzz/pkg/mutate"
 	"github.com/rom/Xfuzz/pkg/rng"
+	"github.com/rom/Xfuzz/pkg/state"
 )
 
 // Config assembles one worker's fuzz loop.
@@ -55,6 +56,12 @@ type Config struct {
 	// stalling a comparison ladder two steps from the end, with the fuzzer
 	// spending its budget on bytes that did not matter.
 	TrimBudget int
+
+	// State, when set, makes this a stateful campaign: the engine records the
+	// protocol states each session traverses and lets them steer which message
+	// it mutates (ADR-0006). Nil is a stateless campaign and costs the loop one
+	// nil check.
+	State *state.Guidance
 
 	// Trace, when set, receives one line per execution. It is what makes the
 	// determinism requirement checkable rather than merely asserted: two runs of
@@ -98,6 +105,17 @@ type Stats struct {
 	TrimExecs    uint64
 	TrimSaved    uint64
 	StopReason   string
+
+	// States and Transitions are protocol coverage, reported separately from
+	// code coverage because they answer a different question (ASR-0002). A
+	// campaign can hold code coverage flat while discovering a new state, and
+	// that is the case worth seeing rather than averaging away.
+	States      int
+	Transitions int
+
+	// IllegalMoves counts transitions outside a declared model: the target
+	// accepting a move its own protocol forbids.
+	IllegalMoves int
 }
 
 // ExecsPerSecond returns the achieved rate.
@@ -228,8 +246,16 @@ func (e *Engine) Stats() Stats {
 	s.CorpusSize = e.cfg.Corpus.Len()
 	s.Findings = len(e.findings)
 	s.Buckets = len(e.buckets)
-	if mf, ok := e.cfg.Feedback.(*feedback.MapFeedback); ok {
-		s.Coverage, s.MapDensity = mf.Covered(), mf.Density()
+	// Searched rather than asserted: once a campaign composes state guidance
+	// alongside coverage the stack root is a combinator, and an assertion on it
+	// reports no coverage at all for a campaign that is being guided by it.
+	if f, ok := feedback.FindFeedback(e.cfg.Feedback, "coverage"); ok {
+		if mf, ok := f.(*feedback.MapFeedback); ok {
+			s.Coverage, s.MapDensity = mf.Covered(), mf.Density()
+		}
+	}
+	if cov := e.cfg.State.Coverage(); cov.States > 0 || cov.Transitions > 0 {
+		s.States, s.Transitions, s.IllegalMoves = cov.States, cov.Transitions, cov.Illegal
 	}
 	return s
 }
@@ -342,7 +368,17 @@ func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy in
 		e.mctx.Root = tree
 		e.mctx.Donor = e.pickDonor(parent)
 
-		ops := e.cfg.Mutators.Mutate(e.mctx, tree)
+		// Which part of the input to change. For a stateless campaign that is
+		// the whole thing; for a session it is one message, chosen by aiming at
+		// a state worth exploring past (ADR-0006). The mutation scheduler
+		// restricts itself to the root it is given, so this is the whole of the
+		// state-then-message split.
+		target, aimed := tree, state.Label("")
+		if e.cfg.State != nil {
+			target, aimed = e.cfg.State.Target(parent.ID, tree, e.mctx.Nodes)
+		}
+
+		ops := e.cfg.Mutators.Mutate(e.mctx, target)
 		if len(ops) == 0 {
 			continue
 		}
@@ -386,14 +422,26 @@ func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy in
 
 		e.trace(encoded, ek, interesting, isFinding)
 
+		// The trace belongs to the input that produced it, so it is recorded
+		// against the child when the child is kept and against the parent
+		// otherwise: an entry's trace is the scheduler's evidence about where
+		// that entry gets to, and evidence from a session nobody kept is
+		// evidence about nothing.
+		if e.cfg.State != nil && !interesting {
+			e.cfg.State.Record(parent.ID)
+		}
+
 		if isFinding {
 			e.record(finding, encoded)
 		}
 		if interesting {
 			e.cfg.Feedback.Append()
-			if e.admit(parent, tree, encoded, score, elapsed, ops) {
+			if id, ok := e.admit(parent, tree, encoded, score, elapsed, ops, aimed); ok {
 				admitted++
 				e.sinceNew = 0
+				if e.cfg.State != nil {
+					e.cfg.State.Record(id)
+				}
 			}
 			if score.NewSignal > best.NewSignal {
 				best = score
@@ -412,7 +460,7 @@ func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy in
 
 // admit copies an interesting input out of the arena and into the corpus.
 func (e *Engine) admit(parent *corpus.Testcase, tree *ir.Node, encoded []byte,
-	score feedback.Score, elapsed time.Duration, ops []mutate.Op) bool {
+	score feedback.Score, elapsed time.Duration, ops []mutate.Op, aimed state.Label) (corpus.Digest, bool) {
 
 	trimmed := e.trim(encoded)
 
@@ -425,7 +473,7 @@ func (e *Engine) admit(parent *corpus.Testcase, tree *ir.Node, encoded []byte,
 		}
 	}
 	if e.cfg.Corpus.Contains(tc.ID) {
-		return false
+		return tc.ID, false
 	}
 	tc.Meta.Score = score
 	tc.Meta.ExecTime = elapsed
@@ -435,8 +483,9 @@ func (e *Engine) admit(parent *corpus.Testcase, tree *ir.Node, encoded []byte,
 		Parent: parent.ID,
 		Worker: e.cfg.WorkerID,
 		Ops:    convertOps(ops),
+		State:  string(aimed),
 	}
-	return e.cfg.Corpus.Add(tc)
+	return tc.ID, e.cfg.Corpus.Add(tc)
 }
 
 // trim shrinks a newly interesting input while it still reaches the same places.

@@ -143,7 +143,7 @@ func (r *Resolved) validateTarget(add addFunc) {
 func (r *Resolved) validateFormat(add addFunc) {
 	f := r.Format
 	switch f.Codec {
-	case "raw", "png":
+	case "raw", "png", "session":
 	default:
 		add("format.codec", fmt.Sprintf("%q is not a built-in codec", f.Codec), "one of raw, png")
 	}

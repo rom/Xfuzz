@@ -209,3 +209,70 @@ seeds:
 		t.Errorf("declare = %v", r.State.Declare)
 	}
 }
+
+// The resolved form of a campaign must itself be a valid campaign.
+//
+// This is not a tidiness property. The daemon writes the resolved configuration
+// into the run's directory and points every worker at that copy, so a
+// configuration that resolves and then fails its own validation is a campaign
+// that starts and whose workers all die — which is exactly what happened when
+// defaulting filled in state.normalise for a campaign using the status function
+// and validation then rejected it as irrelevant.
+func TestResolvedCampaignsReloadAsThemselves(t *testing.T) {
+	for _, body := range []string{
+		"session:\n  address: unix:/tmp/t.sock\nstate:\n  fn: status\nseeds:\n  inline: [\"a\"]\n",
+		"session:\n  address: unix:/tmp/t.sock\nstate:\n  fn: fingerprint\nseeds:\n  inline: [\"a\"]\n",
+		"session:\n  address: tcp:127.0.0.1:9000\n  framing: none\nstate:\n  guide: false\nseeds:\n  inline: [\"a\"]\n",
+		"session:\n  address: unix:/tmp/t.sock\n  reset: none\nstate:\n  declare: [\"start->220\"]\nseeds:\n  inline: [\"a\"]\n",
+		"seeds:\n  inline: [\"a\"]\n",
+		"format:\n  codec: png\nseeds:\n  inline: [\"a\"]\n",
+	} {
+		t.Run(body, func(t *testing.T) {
+			first, err := loadSession(t, body)
+			if err != nil {
+				t.Fatalf("the campaign did not resolve: %v", err)
+			}
+			rendered, err := first.YAML()
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := Parse(rendered, "resolved.yaml")
+			if err != nil {
+				t.Fatalf("the resolved form was refused:\n%v\n---\n%s", err, rendered)
+			}
+			// And it means the same thing, or the worker runs a different
+			// campaign from the one that was reviewed.
+			if second.Format.Codec != first.Format.Codec {
+				t.Errorf("codec changed on the round trip: %q then %q",
+					first.Format.Codec, second.Format.Codec)
+			}
+			if (first.Session == nil) != (second.Session == nil) {
+				t.Errorf("the session block did not survive: %v then %v",
+					first.Session, second.Session)
+			}
+			if first.Session != nil && second.Session.Reset != first.Session.Reset {
+				t.Errorf("reset changed on the round trip: %q then %q",
+					first.Session.Reset, second.Session.Reset)
+			}
+		})
+	}
+}
+
+// A session campaign reads its seeds as conversations without being told to.
+func TestSessionCampaignsDefaultToTheSessionCodec(t *testing.T) {
+	r, err := loadSession(t, "session:\n  address: unix:/tmp/t.sock\nseeds:\n  inline: [\"a\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Format.Codec != "session" {
+		t.Errorf("codec = %q, want session", r.Format.Codec)
+	}
+	// And a campaign that chose one keeps it.
+	r, err = loadSession(t, "session:\n  address: unix:/tmp/t.sock\nformat:\n  codec: raw\nseeds:\n  inline: [\"a\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Format.Codec != "raw" {
+		t.Errorf("codec = %q; the file said raw", r.Format.Codec)
+	}
+}

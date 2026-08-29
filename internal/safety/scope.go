@@ -231,6 +231,16 @@ func (s *Scope) Check(ctx context.Context, addr netip.AddrPort) error {
 // the disallowed one, and accepting it because the first address matched is the
 // hole that makes a scope guard decorative.
 func (s *Scope) CheckAddr(ctx context.Context, network, address string) error {
+	// A Unix socket is not a network destination. There is no remote host to be
+	// in or out of scope, and no packet leaves the machine; what governs reach
+	// is the filesystem, which the sandbox confines. Refusing it here for
+	// failing to parse as host:port would block the one transport that cannot
+	// carry a connection off the host at all.
+	if isLocalNetwork(network) {
+		s.record(ctx, true, netip.AddrPort{}, "local socket "+address)
+		return nil
+	}
+
 	host, portStr, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("safety: %q is not a host:port destination: %w", address, err)
@@ -402,4 +412,58 @@ func lastAddr(p netip.Prefix) netip.Addr {
 		}
 		return netip.AddrFrom16(b)
 	}
+}
+
+// ScopeSpec is a campaign file's network scope, in the terms the guard needs.
+//
+// Declared here rather than taking a campaign type, because internal/safety
+// must not depend on the configuration format: the guard is the security
+// boundary and the campaign file is one of several things that could describe
+// one.
+type ScopeSpec struct {
+	// Loopback permits connections to the local host. Nil keeps the default,
+	// which permits it.
+	Loopback *bool
+
+	// AcknowledgePublic is the separate, explicit acknowledgement that public
+	// address space is in scope.
+	AcknowledgePublic bool
+
+	// Allow lists destinations, each already split into a host and its ports.
+	Allow []AllowEntry
+}
+
+// AllowEntry is one allowed destination.
+type AllowEntry struct {
+	Host  string
+	Ports []PortRange
+}
+
+// NewScopeFrom builds a guard from a specification.
+//
+// One constructor for every caller, because a second place that assembles a
+// scope is a second place that can get the default wrong — and the default here
+// is deny, which is the one that must not drift.
+func NewScopeFrom(spec ScopeSpec, auditor Auditor) (*Scope, error) {
+	s := NewScope()
+	s.Auditor = auditor
+	if spec.Loopback != nil {
+		s.AllowLoopback = *spec.Loopback
+	}
+	s.AcknowledgePublic = spec.AcknowledgePublic
+	for _, e := range spec.Allow {
+		if err := s.Allow(e.Host, e.Ports...); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+// isLocalNetwork reports whether a network reaches only this machine.
+func isLocalNetwork(network string) bool {
+	switch network {
+	case "unix", "unixgram", "unixpacket":
+		return true
+	}
+	return false
 }

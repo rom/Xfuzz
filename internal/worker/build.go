@@ -11,6 +11,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -24,6 +26,7 @@ import (
 	"github.com/rom/Xfuzz/pkg/feedback"
 	"github.com/rom/Xfuzz/pkg/ir"
 	"github.com/rom/Xfuzz/pkg/mutate"
+	"github.com/rom/Xfuzz/pkg/state"
 )
 
 // built is everything a worker needs to fuzz, and everything it must release.
@@ -35,8 +38,24 @@ type built struct {
 	output   *feedback.OutputObserver
 	shm      executor.SharedMemory
 	sandbox  *safety.Sandbox
-	closers  []func()
-	closed   sync.Once
+
+	// sessionAddr is the resolved per-worker address, empty on a file campaign.
+	// Resolved before the sandbox because the sandbox has to know about it: a
+	// server binding a Unix socket needs the directory holding it to be
+	// writable, and a read-only root that the fuzzer itself imposed is a
+	// confusing way for a campaign to fail.
+	sessionAddr string
+
+	// scope is the network boundary. It is the dialer a session executor uses,
+	// so on a stateful campaign it is not merely a policy object but the thing
+	// every connection goes through (ADR-0012).
+	scope *safety.Scope
+
+	// state is the protocol guidance, nil on a stateless campaign.
+	state *state.Guidance
+
+	closers []func()
+	closed  sync.Once
 
 	// tier is which executor was actually used, which may not be the one asked
 	// for, and fallbackReason says why when they differ. Reported to the daemon
@@ -71,13 +90,29 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		}
 	}()
 
+	if cfg.Session != nil {
+		addr, aerr := sessionAddress(cfg, workerID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		b.sessionAddr = addr
+	}
+
 	if err := b.buildSafety(ctx, cfg); err != nil {
 		return nil, err
 	}
 	if err := b.buildFeedback(cfg); err != nil {
 		return nil, err
 	}
-	if err := b.buildExecutor(ctx, cfg); err != nil {
+	// A session block is what makes a campaign stateful, so it is what chooses
+	// the tier. Everything after this point is the same for both kinds, which
+	// is the point of ASR-0002 treating statefulness as an axis rather than as
+	// a separate tool.
+	if cfg.Session != nil {
+		if err := b.buildSession(ctx, cfg); err != nil {
+			return nil, err
+		}
+	} else if err := b.buildExecutor(ctx, cfg); err != nil {
 		return nil, err
 	}
 
@@ -108,8 +143,9 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		Dict:          dict,
 		Suppress:      suppressFor(cfg),
 		MaxInputBytes: cfg.Format.MaxInputBytes,
-		MaxChildren:   defaultMaxChildren,
+		MaxChildren:   maxChildrenFor(cfg),
 		TrimBudget:    cfg.Mutation.TrimBudget,
+		State:         b.state,
 	}
 	eng, err := engine.New(ecfg)
 	if err != nil {
@@ -123,6 +159,19 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 // defaultMaxChildren bounds how far a structural mutation may inflate a repeat.
 const defaultMaxChildren = 64
 
+// maxChildrenFor bounds sequence growth.
+//
+// For a session campaign the bound is the campaign's own message limit, because
+// a session *is* the repeat: without it the sequence operators converge on
+// sessions of thousands of messages that each take a second and explore
+// nothing.
+func maxChildrenFor(cfg *campaign.Resolved) int {
+	if cfg.Session != nil && cfg.Session.MaxMessages > 0 {
+		return cfg.Session.MaxMessages
+	}
+	return defaultMaxChildren
+}
+
 // buildSafety prepares the confinement the target will run under.
 //
 // Each worker builds its own rather than sharing the daemon's, because
@@ -134,12 +183,26 @@ func (b *built) buildSafety(ctx context.Context, cfg *campaign.Resolved) error {
 	if err != nil {
 		return err
 	}
+	writable := cfg.Safety.Writable
+	var creates []string
+	if dir := socketDir(b.sessionAddr); dir != "" {
+		// The target creates its socket here, so the read-only root must not
+		// cover it. Added by the fuzzer rather than demanded of the campaign
+		// file: the path is one the fuzzer resolved per worker, and asking
+		// somebody to list a directory they did not name is asking them to
+		// debug our arrangement rather than their campaign.
+		writable = append(append([]string(nil), writable...), dir)
+		_, path, _ := campaign.SplitAddress(b.sessionAddr)
+		creates = append(creates, path)
+	}
+
 	b.sandbox = &safety.Sandbox{
 		Require:  level,
 		Name:     cfg.Name,
 		Target:   cfg.Target.Path,
 		Network:  cfg.Safety.Network,
-		Writable: cfg.Safety.Writable,
+		Writable: writable,
+		Creates:  creates,
 		Workdir:  cfg.Target.Dir,
 		Limits: platform.Limits{
 			AddressSpaceBytes: uint64(cfg.Safety.MemoryLimit),
@@ -150,7 +213,57 @@ func (b *built) buildSafety(ctx context.Context, cfg *campaign.Resolved) error {
 		},
 	}
 	b.closers = append(b.closers, func() { b.sandbox.Close() })
+
+	// The scope guard, which on a session campaign is the dialer itself. Built
+	// even for a file campaign: a target that reaches out is refused by the
+	// same rules whether or not the campaign is about connections.
+	spec := safety.ScopeSpec{}
+	if sc := cfg.Safety.Scope; sc != nil {
+		spec.Loopback = sc.Loopback
+		spec.AcknowledgePublic = sc.AcknowledgePublic
+		for _, entry := range sc.Allow {
+			host, ports, perr := campaign.ParseAllow(entry)
+			if perr != nil {
+				return perr
+			}
+			ranges := make([]safety.PortRange, 0, len(ports))
+			for _, p := range ports {
+				lo, hi, rerr := parsePortRange(p)
+				if rerr != nil {
+					return rerr
+				}
+				ranges = append(ranges, safety.PortRange{Lo: lo, Hi: hi})
+			}
+			spec.Allow = append(spec.Allow, safety.AllowEntry{Host: host, Ports: ranges})
+		}
+	}
+	scope, err := safety.NewScopeFrom(spec, nil)
+	if err != nil {
+		return err
+	}
+	if err := scope.Validate(cfg.Safety.Network); err != nil {
+		return err
+	}
+	b.scope = scope
+
 	return b.sandbox.Check(ctx)
+}
+
+// parsePortRange reads "80" or "8000-8100".
+func parsePortRange(s string) (lo, hi uint16, err error) {
+	a, bb, ok := strings.Cut(s, "-")
+	n, err := strconv.ParseUint(strings.TrimSpace(a), 10, 16)
+	if err != nil {
+		return 0, 0, fmt.Errorf("worker: %q is not a port", a)
+	}
+	if !ok {
+		return uint16(n), uint16(n), nil
+	}
+	m, err := strconv.ParseUint(strings.TrimSpace(bb), 10, 16)
+	if err != nil {
+		return 0, 0, fmt.Errorf("worker: %q is not a port", bb)
+	}
+	return uint16(n), uint16(m), nil
 }
 
 // buildFeedback prepares the coverage map and the observers.
@@ -188,6 +301,14 @@ func (b *built) observers() []feedback.Observer {
 	if b.coverage != nil {
 		obs = append([]feedback.Observer{b.coverage}, obs...)
 	}
+	if b.state != nil {
+		// The session executor feeds this one during the session rather than
+		// after it, because that is the only time the replies exist. It still
+		// belongs in the observer list: Pre is what returns the trace to the
+		// start state, and an observer left out of the list is one whose trace
+		// accumulates across every session the worker ever runs.
+		obs = append(obs, b.state.Observer)
+	}
 	return obs
 }
 
@@ -199,6 +320,13 @@ func (b *built) feedbackStack(cfg *campaign.Resolved) feedback.Feedback {
 	}
 	if cfg.Feedback.Novelty {
 		stack = append(stack, feedback.NewNoveltyFeedback("output-novelty", b.output))
+	}
+	if b.state != nil {
+		// The reason ADR-0006 exists. Two sessions can execute identical lines
+		// and leave the target in different places, so a stack with only
+		// coverage in it throws away the handshake that unlocked a new region
+		// of the protocol — the code was already covered.
+		stack = append(stack, state.NewFeedback("state", b.state.Observer, b.state.Model))
 	}
 	switch len(stack) {
 	case 0:
@@ -319,6 +447,8 @@ func codecFor(cfg *campaign.Resolved) (codec.Codec, error) {
 		return codec.Raw{}, nil
 	case "png":
 		return codec.PNG{}, nil
+	case "session":
+		return codec.Session{}, nil
 	default:
 		return nil, fmt.Errorf("worker: unknown codec %q", cfg.Format.Codec)
 	}
@@ -475,4 +605,25 @@ func (b *built) describe() string {
 	}
 	reason := strings.SplitN(b.fallbackReason, "\n", 2)[0]
 	return fmt.Sprintf("%s (fell back: %s)", b.tier, reason)
+}
+
+// sessionAddress resolves the campaign's session address for one worker.
+func sessionAddress(cfg *campaign.Resolved, workerID int) (string, error) {
+	addr := campaign.ResolveAddress(cfg.Session.Address, workerID)
+	if _, _, err := campaign.SplitAddress(addr); err != nil {
+		return "", fmt.Errorf("worker: session address: %w", err)
+	}
+	return addr, nil
+}
+
+// socketDir returns the directory a Unix socket address lives in, or "".
+func socketDir(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	network, path, err := campaign.SplitAddress(addr)
+	if err != nil || network != "unix" {
+		return ""
+	}
+	return filepath.Dir(path)
 }

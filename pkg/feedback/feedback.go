@@ -231,6 +231,9 @@ func (c *combinator) IsInteresting(obs []Observer, ek ExitKind) (bool, Score, er
 	return result, total, nil
 }
 
+// Children implements Composite.
+func (c *combinator) Children() []Feedback { return c.fs }
+
 func (c *combinator) Append() {
 	for i, f := range c.fs {
 		if i < len(c.fired) && c.fired[i] {
@@ -247,6 +250,41 @@ func (c *combinator) Discard() {
 	}
 }
 
+// Composite is a feedback built from others. Implemented by the combinators, so
+// that a caller can reach a specific feedback inside a stack.
+type Composite interface {
+	// Children returns the feedbacks this one is built from.
+	Children() []Feedback
+}
+
+// FindFeedback returns the feedback with the given name from within a stack.
+//
+// Necessary because a feedback stack is a tree and the members a report needs
+// are at its leaves: the map feedback holds the coverage counts, and once state
+// guidance is composed alongside it the stack root is a combinator rather than
+// the map feedback itself. A type assertion on the root then quietly fails, and
+// the campaign reports zero coverage while being guided by it — which is
+// exactly what happened, and is the kind of defect that survives a long time
+// because nothing errors.
+func FindFeedback(f Feedback, name string) (Feedback, bool) {
+	if f == nil {
+		return nil, false
+	}
+	if f.Name() == name {
+		return f, true
+	}
+	c, ok := f.(Composite)
+	if !ok {
+		return nil, false
+	}
+	for _, kid := range c.Children() {
+		if found, ok := FindFeedback(kid, name); ok {
+			return found, true
+		}
+	}
+	return nil, false
+}
+
 // Not inverts a feedback. The inner feedback's novelty state is still
 // maintained, so "not covered before" stays meaningful across executions.
 func Not(f Feedback) Feedback { return &negate{f: f} }
@@ -259,6 +297,9 @@ func (n *negate) IsInteresting(obs []Observer, ek ExitKind) (bool, Score, error)
 	ok, s, err := n.f.IsInteresting(obs, ek)
 	return !ok, s, err
 }
+
+// Children implements Composite.
+func (n *negate) Children() []Feedback { return []Feedback{n.f} }
 
 func (n *negate) Append()  { n.f.Append() }
 func (n *negate) Discard() { n.f.Discard() }

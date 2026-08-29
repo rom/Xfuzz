@@ -402,6 +402,16 @@ func printStatus(s daemon.Status) {
 	m := s.Metrics
 	fmt.Printf("\nexecs     %d (%.0f/s)\n", m.Execs, m.ExecsPerS)
 	fmt.Printf("coverage  %d edges (%.1f%% of the map)\n", m.Coverage, 100*m.MapDensity)
+	if m.States > 0 || m.Transitions > 0 {
+		fmt.Printf("protocol  %d states, %d transitions", m.States, m.Transitions)
+		if m.IllegalMoves > 0 {
+			// Worth its own clause rather than a number in a row: the target
+			// accepted a move its own declared protocol forbids, which is a
+			// result in itself.
+			fmt.Printf(" (%d outside the declared model)", m.IllegalMoves)
+		}
+		fmt.Println()
+	}
 	fmt.Printf("corpus    %d entries\n", m.CorpusSize)
 	fmt.Printf("findings  %d in %d bucket(s)\n", m.Findings, m.Buckets)
 	if m.Workers > 0 {
@@ -434,16 +444,24 @@ func printEvent(kind string, data []byte) bool {
 		// which looks exactly like a campaign that is not running.
 		var e struct {
 			Data struct {
-				Execs      uint64  `json:"execs"`
-				ExecsPerS  float64 `json:"execs_per_second"`
-				Coverage   int     `json:"coverage"`
-				CorpusSize int     `json:"corpus_size"`
-				Buckets    int     `json:"buckets"`
+				Execs       uint64  `json:"execs"`
+				ExecsPerS   float64 `json:"execs_per_second"`
+				Coverage    int     `json:"coverage"`
+				CorpusSize  int     `json:"corpus_size"`
+				Buckets     int     `json:"buckets"`
+				States      int     `json:"states"`
+				Transitions int     `json:"transitions"`
 			} `json:"data"`
 		}
 		if json.Unmarshal(data, &e) == nil {
-			progress("%10d execs  %7.0f/s  %6d edges  %4d corpus  %3d buckets",
+			line := fmt.Sprintf("%10d execs  %7.0f/s  %6d edges  %4d corpus  %3d buckets",
 				e.Data.Execs, e.Data.ExecsPerS, e.Data.Coverage, e.Data.CorpusSize, e.Data.Buckets)
+			// Only on a stateful campaign. Two zeroes on every line of a file
+			// campaign would be columns that never mean anything.
+			if e.Data.States > 0 || e.Data.Transitions > 0 {
+				line += fmt.Sprintf("  %3d states  %4d moves", e.Data.States, e.Data.Transitions)
+			}
+			progress("%s", line)
 		}
 	case "finding":
 		var e struct {

@@ -40,7 +40,7 @@ const (
 	// campaign's throughput more than anything else in this file.
 	defaultQuietPeriod    = 5 * time.Millisecond
 	defaultConnectTimeout = 2 * time.Second
-	defaultReadTimeout    = 2 * time.Second
+	defaultReadTimeout    = 250 * time.Millisecond
 	defaultSessionTimeout = 10 * time.Second
 	defaultReadLimit      = 1 << 20
 

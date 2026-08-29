@@ -31,6 +31,18 @@ type Snapshot struct {
 	Coverage   int     `json:"coverage"`
 	MapDensity float64 `json:"map_density"`
 
+	// States and Transitions are protocol coverage on a stateful campaign,
+	// reported separately from code coverage because they answer a different
+	// question (ASR-0002). A campaign can hold code coverage flat while
+	// discovering a new state, and that is exactly the case worth seeing rather
+	// than folding into one number.
+	States      int `json:"states,omitempty"`
+	Transitions int `json:"transitions,omitempty"`
+
+	// IllegalMoves counts transitions outside a declared model: the target
+	// accepting a move its own protocol forbids.
+	IllegalMoves int `json:"illegal_moves,omitempty"`
+
 	CorpusSize  int   `json:"corpus_size"`
 	CorpusBytes int64 `json:"corpus_bytes"`
 
@@ -152,6 +164,15 @@ func (c *Collector) recompute() {
 		// coverage by its worker count.
 		total.Coverage = max(total.Coverage, s.Coverage)
 		total.MapDensity = max(total.MapDensity, s.MapDensity)
+
+		// Like coverage and unlike findings: every worker fuzzes the same
+		// protocol, so the campaign has seen a state when any worker has. The
+		// maximum under-counts when workers explore disjoint regions, which is
+		// the honest floor — the alternative, summing, would report a
+		// four-worker campaign as having found four times the protocol.
+		total.States = max(total.States, s.States)
+		total.Transitions = max(total.Transitions, s.Transitions)
+		total.IllegalMoves = max(total.IllegalMoves, s.IllegalMoves)
 		total.CorpusSize = max(total.CorpusSize, s.CorpusSize)
 		total.CorpusBytes = max(total.CorpusBytes, s.CorpusBytes)
 

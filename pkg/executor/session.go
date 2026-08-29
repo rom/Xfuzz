@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/rom/Xfuzz/pkg/feedback"
@@ -129,7 +131,13 @@ type SessionOptions struct {
 const (
 	DefaultQuietPeriod    = 5 * time.Millisecond
 	DefaultConnectTimeout = 2 * time.Second
-	DefaultReadTimeout    = 2 * time.Second
+
+	// A reply that has not arrived in this long is not coming, on a target
+	// reachable in microseconds. It is deliberately loopback-scale: the tier's
+	// throughput is the message count times this number, and a campaign against
+	// something further away should say so rather than have every campaign pay
+	// for the possibility.
+	DefaultReadTimeout    = 250 * time.Millisecond
 	DefaultSessionTimeout = 10 * time.Second
 	DefaultReadLimit      = 1 << 20
 	DefaultReadyTimeout   = 10 * time.Second
@@ -186,8 +194,24 @@ type Session struct {
 	States ResponseObserver
 	Output *feedback.OutputObserver
 
+	// Shm is the coverage region the server writes into, and Backend names the
+	// instrumentation for reports. A server is long-lived, so the region is
+	// attached once at startup rather than per execution — which also means the
+	// map accumulates across the sessions of one server's life, and the reset
+	// policy is what bounds that.
+	Shm     SharedMemory
+	Backend string
+
 	handle Handle
 	conn   net.Conn
+
+	// exited is set by the reaper goroutine when the managed server ends, and
+	// result holds how. A flag rather than a Wait with a short timeout on every
+	// session: that cost fifty milliseconds per execution, which on a tier
+	// whose whole budget is a few milliseconds per message was most of the
+	// execution.
+	exited atomic.Bool
+	result ProcResult
 
 	execs uint64
 	buf   []byte
@@ -213,10 +237,17 @@ func (e *Session) Executions() uint64 { return e.execs }
 
 // Capabilities implements Executor.
 func (e *Session) Capabilities() Caps {
+	backend, granularity := e.Backend, GranularityNone
+	if backend == "" {
+		backend = "blackbox"
+	}
+	if e.Shm != nil {
+		granularity = GranularityEdge
+	}
 	return Caps{
 		Tier:        TierSession,
-		Backend:     "blackbox",
-		Granularity: GranularityNone,
+		Backend:     backend,
+		Granularity: granularity,
 		Platform:    runtime.GOOS + "/" + runtime.GOARCH,
 		// A protocol server is not deterministic in the way a file parser is:
 		// it has timers, sequence numbers and a scheduler. Claiming otherwise
@@ -239,11 +270,24 @@ func (e *Session) Start(ctx context.Context) error {
 
 // startServer launches the managed target and waits for it to listen.
 func (e *Session) startServer(ctx context.Context) error {
-	h, err := e.spawner.Start(ctx, e.spec)
+	spec := e.spec
+	if e.Shm != nil {
+		spec.Env = append(append([]string(nil), spec.Env...), ShmEnvVar+"="+e.Shm.ID())
+	}
+	h, err := e.spawner.Start(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("executor %s: starting the target: %w", e.name, err)
 	}
 	e.handle = h
+	e.exited.Store(false)
+	go func() {
+		res, _ := h.Wait()
+		// Written before the flag, and read after it: the flag is the
+		// happens-before edge, so no lock is needed for a value only ever
+		// written once.
+		e.result = res
+		e.exited.Store(true)
+	}()
 	if err := e.waitReady(ctx); err != nil {
 		h.Kill()
 		e.handle = nil
@@ -327,6 +371,19 @@ func (e *Session) deliver(ctx context.Context, msgs [][]byte) (feedback.ExitKind
 		return feedback.ExitError, err
 	}
 
+	// Once one message has gone unanswered, later ones wait only a quiet period
+	// rather than the full read timeout.
+	//
+	// Silence nearly always means the target is mid-message: mutation strips
+	// the terminator from a line, the target sits in its read waiting for the
+	// rest, and the fuzzer sits waiting for a reply. Charging the full timeout
+	// for that on every remaining message is what turns one bad byte into a
+	// whole session's budget — measured here as a single session consuming its
+	// entire ten seconds and the worker reporting nothing at all. Waiting a
+	// little rather than not at all keeps a pipelined protocol's late replies,
+	// which do arrive once a later message completes the line.
+	silent := false
+
 	for _, m := range msgs {
 		if err := ctx.Err(); err != nil {
 			// The session's own budget ran out. That is a hang: the target is
@@ -344,7 +401,7 @@ func (e *Session) deliver(ctx context.Context, msgs [][]byte) (feedback.ExitKind
 		if e.opts.Framing == FrameNone {
 			continue
 		}
-		resp, rerr := e.read(conn)
+		resp, rerr := e.read(conn, e.readBudget(ctx, silent))
 		if len(resp) > 0 && e.States != nil {
 			e.States.Response(resp)
 		}
@@ -361,6 +418,15 @@ func (e *Session) deliver(ctx context.Context, msgs [][]byte) (feedback.ExitKind
 			if e.States != nil && len(resp) == 0 {
 				e.States.Response(nil)
 			}
+			// Unless the target has died, which is what silence usually means
+			// on the tier where the target is a server: it aborted before it
+			// could reply. Continuing would spend the read timeout again on
+			// every remaining message, and on a target with a shallow bug that
+			// is most of the campaign's wall-clock time.
+			silent = true
+			if e.exited.Load() {
+				return e.afterHangup(), nil
+			}
 		case rerr != nil:
 			return e.afterHangup(), nil
 		}
@@ -371,12 +437,40 @@ func (e *Session) deliver(ctx context.Context, msgs [][]byte) (feedback.ExitKind
 }
 
 // afterHangup records the close and reports how the target ended.
+//
+// This is the one path that waits for the reaper, and it has to. A crash and an
+// orderly disconnect look identical from the socket: both are a connection that
+// stopped. Only the process status separates them, and the process has just
+// died — so its exit is in flight rather than already recorded, and checking
+// without waiting reports every crash as a clean session. Measured: a campaign
+// that hit its planted bug thousands of times reported no findings at all. The
+// wait is short and only on this path, so a campaign that never crashes never
+// pays it.
 func (e *Session) afterHangup() feedback.ExitKind {
 	if e.States != nil {
 		e.States.Hangup()
 	}
 	e.dropConnection()
+	e.awaitExit(HangupGrace)
 	return e.liveness()
+}
+
+// HangupGrace is how long a dropped connection waits for the target's exit
+// status before concluding the target is still alive.
+const HangupGrace = 100 * time.Millisecond
+
+// awaitExit waits briefly for the reaper to observe the managed target's exit.
+func (e *Session) awaitExit(d time.Duration) {
+	if e.handle == nil || e.exited.Load() {
+		return
+	}
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+		if e.exited.Load() {
+			return
+		}
+	}
 }
 
 // liveness asks the managed process whether the target is still alive.
@@ -387,13 +481,10 @@ func (e *Session) afterHangup() feedback.ExitKind {
 // unmanaged target's crash is reported as an ordinary end, and the campaign is
 // told at startup that this is what it is getting.
 func (e *Session) liveness() feedback.ExitKind {
-	if e.handle == nil {
+	if e.handle == nil || !e.exited.Load() {
 		return feedback.ExitOK
 	}
-	res, alive := e.serverStatus()
-	if alive {
-		return feedback.ExitOK
-	}
+	res := e.result
 	switch {
 	case res.OOM:
 		return feedback.ExitOOM
@@ -408,26 +499,20 @@ func (e *Session) liveness() feedback.ExitKind {
 	return feedback.ExitOK
 }
 
-// serverStatus reports the managed process's result, and whether it is running.
-func (e *Session) serverStatus() (ProcResult, bool) {
-	done := make(chan ProcResult, 1)
-	go func() {
-		res, _ := e.handle.Wait()
-		done <- res
-	}()
-	select {
-	case res := <-done:
-		return res, false
-	case <-time.After(50 * time.Millisecond):
-		// Still running. The goroutine stays parked on Wait, which is what we
-		// want: it is the reaper, and it will deliver into a buffered channel
-		// nobody reads.
-		return ProcResult{}, true
-	}
-}
-
 // session returns the connection to use, honouring the reset policy.
 func (e *Session) session(ctx context.Context) (net.Conn, error) {
+	// A dead server is restarted whatever the policy says. The policy describes
+	// what happens between sessions in the ordinary case; it is not a licence
+	// to keep dialling a process that is gone. Without this a campaign using
+	// reconnect stops fuzzing at its first finding, which is the moment it
+	// starts being useful.
+	if e.handle != nil && e.exited.Load() && e.opts.Reset != ResetRestart {
+		if err := e.restartServer(ctx); err != nil {
+			return nil, err
+		}
+		return e.newConnection(ctx)
+	}
+
 	switch e.opts.Reset {
 	case ResetRestart:
 		if err := e.restartServer(ctx); err != nil {
@@ -500,20 +585,42 @@ func (e *Session) write(c net.Conn, m []byte) error {
 	return err
 }
 
+// readBudget is how long to wait for one reply.
+//
+// Bounded by what the session has left as well as by the per-message timeout: a
+// read that could outlast the session would make the session timeout advisory,
+// and a target that answers nothing would hold a worker for the read timeout
+// times the message count rather than for the session's own budget.
+func (e *Session) readBudget(ctx context.Context, silent bool) time.Duration {
+	d := e.opts.ReadTimeout
+	if silent {
+		d = e.opts.QuietPeriod
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl); left < d {
+			d = left
+		}
+	}
+	return d
+}
+
 // read collects one reply according to the framing.
-func (e *Session) read(c net.Conn) ([]byte, error) {
+func (e *Session) read(c net.Conn, budget time.Duration) ([]byte, error) {
+	if budget <= 0 {
+		return nil, os.ErrDeadlineExceeded
+	}
 	switch e.opts.Framing {
 	case FrameLine:
-		return e.readLine(c)
+		return e.readLine(c, budget)
 	default:
-		return e.readIdle(c)
+		return e.readIdle(c, budget)
 	}
 }
 
 // readIdle reads until the target goes quiet.
-func (e *Session) readIdle(c net.Conn) ([]byte, error) {
+func (e *Session) readIdle(c net.Conn, budget time.Duration) ([]byte, error) {
 	var out []byte
-	deadline := time.Now().Add(e.opts.ReadTimeout)
+	deadline := time.Now().Add(budget)
 	first := true
 	for {
 		// The first read waits for the reply to begin; later ones wait only for
@@ -521,7 +628,7 @@ func (e *Session) readIdle(c net.Conn) ([]byte, error) {
 		// more of the same reply rather than whether there is a reply at all.
 		wait := e.opts.QuietPeriod
 		if first {
-			wait = e.opts.ReadTimeout
+			wait = budget
 		}
 		if d := time.Until(deadline); d < wait {
 			wait = d
@@ -552,9 +659,9 @@ func (e *Session) readIdle(c net.Conn) ([]byte, error) {
 }
 
 // readLine reads to the next newline.
-func (e *Session) readLine(c net.Conn) ([]byte, error) {
+func (e *Session) readLine(c net.Conn, budget time.Duration) ([]byte, error) {
 	var out []byte
-	if err := c.SetReadDeadline(time.Now().Add(e.opts.ReadTimeout)); err != nil {
+	if err := c.SetReadDeadline(time.Now().Add(budget)); err != nil {
 		return nil, err
 	}
 	for {

@@ -258,7 +258,16 @@ func defaults(f *File, set KeySet) {
 		f.Format = &Format{}
 	}
 	if f.Format.Codec == "" {
-		f.Format.Codec = "raw"
+		// A session campaign reads its seeds as conversations: one file is one
+		// exchange, one line is one message. Decided during resolution rather
+		// than in the worker so that the resolved configuration records it —
+		// the daemon hands workers that file, and a decision made downstream of
+		// it would not survive the trip.
+		if f.Session != nil {
+			f.Format.Codec = "session"
+		} else {
+			f.Format.Codec = "raw"
+		}
 	}
 	if f.Format.MaxInputBytes == 0 && unset("format.max_input_bytes") {
 		f.Format.MaxInputBytes = defaultMaxInputBytes
@@ -331,7 +340,12 @@ func defaults(f *File, set KeySet) {
 			guide := true
 			f.State.Guide = &guide
 		}
-		if len(f.State.Normalise) == 0 && unset("state.normalise") {
+		// Only for the function that uses it. Filling it in regardless put a
+		// setting into the resolved configuration that its own validation then
+		// rejected as irrelevant — and since the daemon hands workers the
+		// resolved file, a campaign that validated when it was submitted could
+		// not be loaded by the worker meant to run it.
+		if len(f.State.Normalise) == 0 && f.State.Fn == "fingerprint" && unset("state.normalise") {
 			f.State.Normalise = []string{"digits", "quoted", "space"}
 		}
 		if f.State.Explore == 0 && unset("state.explore") {

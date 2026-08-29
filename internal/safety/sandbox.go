@@ -92,6 +92,11 @@ type Sandbox struct {
 	// Workdir is the directory the target runs in. Empty means the caller's.
 	Workdir string
 
+	// Creates lists paths the target itself must be able to create, such as a
+	// Unix socket a server binds. Checked before anything starts, because the
+	// failure is otherwise reported as a target that would not talk.
+	Creates []string
+
 	// Target is the executable the confined process will run. It is checked
 	// against the identity the target is given, because giving a target a
 	// separate uid also takes away its ability to execute a binary the fuzzer
@@ -276,6 +281,9 @@ func (s *Sandbox) Check(ctx context.Context) error {
 		return err
 	}
 	if err := s.checkTarget(); err != nil {
+		return err
+	}
+	if err := s.checkCreates(); err != nil {
 		return err
 	}
 	if s.Auditor != nil {
@@ -700,6 +708,44 @@ func (s *Sandbox) Close() error {
 		err := s.cgroup.Close()
 		s.cgroup = nil
 		return err
+	}
+	return nil
+}
+
+// ErrCannotCreate is returned when the target's identity cannot create a file
+// the campaign requires it to.
+var ErrCannotCreate = errors.New("safety: the target cannot create a file it needs")
+
+// checkCreates verifies the target can create each path in Creates.
+//
+// A server told to bind a Unix socket has to be able to make one, and the
+// identity that will try is not the fuzzer's. Missed, this is a target that
+// exits immediately with a permission error the fuzzer reports as "did not
+// accept a connection" — a symptom three layers away from the cause. Caught
+// here it is one sentence naming the directory and the identity.
+func (s *Sandbox) checkCreates() error {
+	uid, gid := s.dropTo()
+	if uid == 0 || len(s.Creates) == 0 {
+		return nil
+	}
+	for _, p := range s.Creates {
+		if p == "" {
+			continue
+		}
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return err
+		}
+		dir := filepath.Dir(abs)
+		fi, err := os.Stat(dir)
+		if err != nil {
+			return fmt.Errorf("%w: %s: %w", ErrCannotCreate, dir, err)
+		}
+		if !permitted(fi, uid, gid, 0o2) {
+			return fmt.Errorf("%w: %s is mode %v and owned by %s, so uid %d cannot create %s there; "+
+				"put it somewhere the target can write, such as under /tmp",
+				ErrCannotCreate, dir, fi.Mode().Perm(), ownerOf(fi), uid, filepath.Base(abs))
+		}
 	}
 	return nil
 }
