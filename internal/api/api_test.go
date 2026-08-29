@@ -576,3 +576,51 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func TestASecondDaemonCannotTakeTheSameSocket(t *testing.T) {
+	// A connect probe cannot tell "a daemon is starting" from "a daemon
+	// crashed and left its socket", and gives two daemons starting at once no
+	// way to notice each other. A lock answers both.
+	h := newHarness(t)
+	sock := DefaultSocket(h.dir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go Serve(ctx, h.server, Listener{Socket: sock})
+	defer cancel()
+	waitForJSON(t, func() bool { _, err := os.Stat(sock); return err == nil }, "the socket never appeared")
+
+	second := newHarness(t)
+	err := Serve(context.Background(), second.server, Listener{Socket: sock})
+	if err == nil {
+		t.Fatal("a second daemon took a socket another one was serving")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAStaleSocketIsReclaimed(t *testing.T) {
+	// A daemon killed rather than stopped leaves its socket behind, and that is
+	// the commonest reason a restart fails.
+	h := newHarness(t)
+	sock := DefaultSocket(h.dir)
+	if err := os.WriteFile(sock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() { errc <- Serve(ctx, h.server, Listener{Socket: sock}) }()
+
+	waitForJSON(t, func() bool {
+		fi, err := os.Stat(sock)
+		return err == nil && fi.Mode()&os.ModeSocket != 0
+	}, "the stale socket was never replaced with a live one")
+
+	select {
+	case err := <-errc:
+		t.Fatalf("Serve returned early: %v", err)
+	default:
+	}
+}

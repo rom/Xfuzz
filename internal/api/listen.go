@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rom/Xfuzz/internal/platform"
 )
 
 // Listener describes where the daemon serves.
@@ -25,6 +27,9 @@ type Listener struct {
 	// Token is required on every request when serving over TCP.
 	Token string
 }
+
+// ErrAlreadyRunning is returned when another daemon holds the socket's lock.
+var ErrAlreadyRunning = errors.New("api: a daemon is already running on this socket")
 
 // ErrTCPNeedsToken is returned for a TCP listener with no token.
 var ErrTCPNeedsToken = errors.New(
@@ -83,15 +88,27 @@ func listen(l Listener) (net.Listener, func(), error) {
 		if err := os.MkdirAll(filepath.Dir(l.Socket), 0o700); err != nil {
 			return nil, nil, err
 		}
-		// A stale socket from a daemon that was killed rather than stopped is
-		// the commonest reason a restart fails. Removing it is safe because a
-		// live daemon holds a lock file, not the socket, and connecting to a
-		// dead socket fails immediately.
-		if err := removeStaleSocket(l.Socket); err != nil {
+		// A daemon that was killed rather than stopped leaves its socket
+		// behind, and that stale socket is the commonest reason a restart
+		// fails. Whether it is stale is decided by a lock, not by connecting to
+		// it: a connect probe cannot tell "a daemon is starting" from "a daemon
+		// crashed", and gives two daemons starting at once no way to notice
+		// each other.
+		lock, ok, err := platform.TryLockFile(LockPath(l.Socket))
+		if err != nil {
+			return nil, nil, err
+		}
+		if !ok {
+			return nil, nil, fmt.Errorf("%w: %s", ErrAlreadyRunning, l.Socket)
+		}
+		// The lock is held, so nothing else owns this socket.
+		if err := os.Remove(l.Socket); err != nil && !os.IsNotExist(err) {
+			lock.Release()
 			return nil, nil, err
 		}
 		ln, err := net.Listen("unix", l.Socket)
 		if err != nil {
+			lock.Release()
 			return nil, nil, err
 		}
 		// Owner-only. This is the access control on the default transport, so
@@ -99,27 +116,18 @@ func listen(l Listener) (net.Listener, func(), error) {
 		// have set to anything.
 		if err := os.Chmod(l.Socket, 0o600); err != nil {
 			ln.Close()
+			lock.Release()
 			return nil, nil, err
 		}
-		return ln, func() { os.Remove(l.Socket) }, nil
+		return ln, func() { os.Remove(l.Socket); lock.Release() }, nil
 
 	default:
 		return nil, nil, errors.New("api: no listener configured")
 	}
 }
 
-// removeStaleSocket removes a socket nothing is listening on.
-func removeStaleSocket(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		return nil
-	}
-	conn, err := net.DialTimeout("unix", path, 250*time.Millisecond)
-	if err == nil {
-		conn.Close()
-		return fmt.Errorf("api: a daemon is already listening on %s", path)
-	}
-	return os.Remove(path)
-}
-
 // DefaultSocket returns the daemon's socket path within a data directory.
 func DefaultSocket(dataDir string) string { return filepath.Join(dataDir, "xfuzzd.sock") }
+
+// LockPath returns the lock file guarding a socket.
+func LockPath(socket string) string { return socket + ".lock" }
