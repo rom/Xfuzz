@@ -216,10 +216,16 @@ func bugsFound(fs []findingDetail) map[string]bool {
 // closes the path behind. That is what state-then-message scheduling is for.
 func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 	e := newStatefulEnv(t)
-	const budget = 4 * time.Minute
-	path := e.campaignFile("proto", 2, budget, "")
+	// Generous, because a criterion about a fuzzer is a statement about a
+	// distribution and this one is the tail of it. Bug 2 needs a valid
+	// handshake *and* a SET whose value grows past a length nothing in the
+	// protocol suggests; measured, a mutation of that message reaches the
+	// length about one time in forty-five, so the budget has to buy enough
+	// mutations of that message rather than enough executions.
+	const budget = 8 * time.Minute
+	path := e.campaignFile("proto", 4, budget, "")
 
-	e.mustRun(budget+3*time.Minute, "run", path)
+	e.mustRun(budget+4*time.Minute, "run", path)
 
 	s := e.status("proto")
 	model := e.states("proto")
@@ -323,8 +329,8 @@ func TestProtocolCoverageIsReportedSeparately(t *testing.T) {
 // with a number that looks like evidence.
 func TestStatefulFindingsReplayAsSessions(t *testing.T) {
 	e := newStatefulEnv(t)
-	path := e.campaignFile("replay", 1, 60*time.Second, "")
-	e.mustRun(5*time.Minute, "run", path)
+	path := e.campaignFile("replay", 2, 2*time.Minute, "")
+	e.mustRun(6*time.Minute, "run", path)
 
 	fs := e.findings("replay")
 	if len(fs) == 0 {

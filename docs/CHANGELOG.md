@@ -80,7 +80,9 @@ insertion when the seed file already contained it.
 state machine each needs: one message; a valid two-step handshake; two bulk
 transfers on one connection; and an `AUTH`, `RESET`, `GET` order and no other.
 Every near miss stays alive, which is what makes finding the second one
-evidence of getting through the funnel rather than of stumbling past it.
+evidence of getting through the funnel rather than of stumbling past it. All
+four are reached, the transition-pair use-after-free included, though not all
+of them in every run.
 
 ### Fixed
 

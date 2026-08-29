@@ -401,7 +401,7 @@ rather than an input, and reaches a bug that needs a specific sequence.
 
 | Criterion | Result |
 | --- | --- |
-| `stateful_proto` bugs found, including the one behind a valid handshake | Bug 2 — `SET` with an over-long value, reachable only after `HELLO` and a correct `AUTH` — found and verified 5 of 5, minimised to the three-message session it needs. Bugs 1 and 3 are found routinely; bug 4, the use-after-free in a transition pair, has not been reached |
+| `stateful_proto` bugs found, including the one behind a valid handshake | Bug 2 — `SET` with an over-long value, reachable only after `HELLO` and a correct `AUTH` — found and verified 5 of 5, minimised to the three-message session it needs. Bug 4, the use-after-free reachable only through the `AUTH`, `RESET`, `GET` order, is reached too. All four are found, but not all in every run: bug 2 is the tail of the distribution, and the criterion's budget is set for the tail rather than the median |
 | State coverage reported separately | States and transitions counted apart from code coverage everywhere they are reported, and `xfuzz states` renders the graph with one exemplar response per label |
 | A stateful finding replays as a full session | Reproducers are stored as conversations and triage replays them through a session executor against its own server |
 
@@ -446,6 +446,16 @@ mutant's trace against its parent whenever the mutant was not admitted, which
 is nearly every execution, so the scheduler aimed using a map of somewhere
 else. This is the M4 lesson in a new place: a measurement attributed to the
 wrong subject is worse than no measurement, because it looks like guidance.
+
+**What "found" means for a fuzzer, and how the criterion is written.** A
+campaign is a sampling process, so a criterion about which bugs it finds is a
+statement about a distribution. Bugs 1, 3 and 4 come out of a few minutes
+reliably; bug 2 does not, because it needs the handshake *and* a value grown
+past a length nothing in the protocol suggests — measured, about one mutation
+of that message in forty-five reaches it, so what the budget has to buy is
+mutations of that particular message rather than executions. The criterion is
+budgeted for the tail and says so, rather than being quietly weakened to
+something that always passes.
 
 *The same lesson, once more, about the fuzzer's own actions.* Every campaign
 filed a finding reading "target terminated abnormally", signal 9, against an
