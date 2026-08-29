@@ -257,39 +257,65 @@ func (s *subscription) flush() {
 	}
 }
 
+// How long an undroppable event keeps trying, and how often. A subscriber that
+// has not read for five seconds is not going to, and the event is in the store
+// regardless.
+const (
+	undroppableWait  = 5 * time.Second
+	undroppableRetry = time.Millisecond
+)
+
+// send hands an event to one subscriber, or gives up.
+//
+// Every send is made under the subscription's lock, which is also what Close
+// takes before closing the channel. That is the whole of the correctness here:
+// a send on a closed channel is a panic, not a lost event, and it would happen
+// in the daemon's publish path, which every worker report goes through.
+//
+// Holding the lock costs nothing for an ordinary event, because that send is
+// non-blocking by construction. An undroppable one retries instead of blocking,
+// so it never holds the lock while waiting — a Close that had to wait out a
+// slow subscriber would be a shutdown that hangs on a browser tab.
 func (s *subscription) send(e Event) {
 	if undroppable[e.Kind] {
-		// Blocking here blocks this delivery goroutine, not the publisher: an
-		// undroppable event is handed to a goroutine of its own precisely so
-		// that "must arrive" never becomes "the campaign waits".
-		go func() {
-			defer func() {
-				// A subscription closed underneath us leaves a closed channel.
-				// Recovering is correct here: the subscriber is gone, and its
-				// delivery is moot.
-				_ = recover()
-			}()
-			s.mu.Lock()
-			closed := s.closed
-			s.mu.Unlock()
-			if closed {
-				return
-			}
-			select {
-			case s.ch <- e:
-			case <-time.After(5 * time.Second):
-				// Even an undroppable event gives up eventually. A subscriber
-				// that has not read for five seconds is not going to, and the
-				// event is in the store regardless.
-				s.dropped.Add(1)
-			}
-		}()
+		// In a goroutine of its own, so that "must arrive" never becomes "the
+		// campaign waits": the publisher is a worker's reporting path.
+		go s.sendUndroppable(e)
 		return
 	}
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	select {
 	case s.ch <- e:
 	default:
 		s.dropped.Add(1)
+	}
+}
+
+func (s *subscription) sendUndroppable(e Event) {
+	deadline := time.Now().Add(undroppableWait)
+	for {
+		s.mu.Lock()
+		if s.closed {
+			s.mu.Unlock()
+			return
+		}
+		select {
+		case s.ch <- e:
+			s.mu.Unlock()
+			return
+		default:
+		}
+		s.mu.Unlock()
+
+		if time.Now().After(deadline) {
+			s.dropped.Add(1)
+			return
+		}
+		time.Sleep(undroppableRetry)
 	}
 }
