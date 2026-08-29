@@ -358,12 +358,23 @@ func TestProtocolCoverageIsReportedSeparately(t *testing.T) {
 // with a number that looks like evidence.
 func TestStatefulFindingsReplayAsSessions(t *testing.T) {
 	e := newStatefulEnv(t)
-	path := e.campaignFile("replay", 2, 2*time.Minute, "")
-	e.mustRun(6*time.Minute, "run", path)
+	// Long enough that having something to replay is not itself the gamble.
+	// This criterion is about what a finding *is*, not about how quickly one
+	// turns up, so a budget that sometimes ends with an empty finding list
+	// tests the wrong thing — measured twice in four runs at two minutes.
+	const budget = 4 * time.Minute
+	path := e.campaignFile("replay", 2, budget, "")
+	e.mustRun(budget+4*time.Minute, "run", path)
 
 	fs := e.findings("replay")
 	if len(fs) == 0 {
-		t.Fatal("the campaign reported no findings to replay")
+		// Said with the campaign's own numbers, so that "no findings" can be
+		// told from "no executions": one is a budget too short for the bug and
+		// the other is a campaign that never ran.
+		s := e.status("replay")
+		t.Fatalf("the campaign reported no findings to replay after %s: "+
+			"%d sessions, %d edges, %d states, %d corpus entries",
+			budget, s.Metrics.Execs, s.Metrics.Coverage, s.Metrics.States, s.Metrics.CorpusSize)
 	}
 
 	// Only the sequence-gated bugs prove anything about sessions. Bug 1 needs
