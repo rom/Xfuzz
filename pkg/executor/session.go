@@ -194,6 +194,17 @@ type Session struct {
 	States ResponseObserver
 	Output *feedback.OutputObserver
 
+	// stderr is where the managed server's own output is collected.
+	//
+	// A file rather than a pipe, for the reason the fork server needs one: the
+	// server is long-lived and its children inherit its descriptors, so there
+	// is no per-execution pipe to read. Truncating before a session and reading
+	// after gives that session's output for two cheap syscalls — and without it
+	// a crash arrives as "target terminated abnormally" with the target's own
+	// account of which assertion failed thrown away, which is the difference
+	// between a finding somebody can act on and a byte sequence.
+	stderr *os.File
+
 	// Shm is the coverage region the server writes into, and Backend names the
 	// instrumentation for reports. A server is long-lived, so the region is
 	// attached once at startup rather than per execution — which also means the
@@ -274,6 +285,12 @@ func (e *Session) startServer(ctx context.Context) error {
 	if e.Shm != nil {
 		spec.Env = append(append([]string(nil), spec.Env...), ShmEnvVar+"="+e.Shm.ID())
 	}
+	if e.Output != nil {
+		if err := e.openStderr(); err != nil {
+			return err
+		}
+		spec.StderrFile = e.stderr
+	}
 	h, err := e.spawner.Start(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("executor %s: starting the target: %w", e.name, err)
@@ -348,6 +365,8 @@ func (e *Session) Run(ctx context.Context, in Input, obs []feedback.Observer) (f
 	sctx, cancel := context.WithTimeout(ctx, e.opts.SessionTimeout)
 	defer cancel()
 
+	e.truncateStderr()
+
 	start := time.Now()
 	ek, err := e.deliver(sctx, msgs)
 	if err != nil {
@@ -355,6 +374,8 @@ func (e *Session) Run(ctx context.Context, in Input, obs []feedback.Observer) (f
 	}
 
 	e.execs++
+	e.harvestStderr()
+
 	for _, o := range obs {
 		if perr := o.Post(ek); perr != nil {
 			return feedback.ExitError, fmt.Errorf("harvesting %s: %w", o.Name(), perr)
@@ -692,8 +713,54 @@ func (e *Session) Reset(p ResetPolicy) error {
 	return nil
 }
 
+// openStderr creates the file the managed server writes its output to.
+func (e *Session) openStderr() error {
+	if e.stderr != nil {
+		return nil
+	}
+	f, err := os.CreateTemp("", "xfuzz-session-*.err")
+	if err != nil {
+		return fmt.Errorf("executor %s: creating the output file: %w", e.name, err)
+	}
+	// Unlinked immediately: the descriptor keeps it alive, and a campaign that
+	// restarts its target thousands of times must not leave thousands of files
+	// behind when it is killed.
+	os.Remove(f.Name())
+	// Readable by the target's identity, which is not the fuzzer's.
+	_ = f.Chmod(0o666)
+	e.stderr = f
+	return nil
+}
+
+func (e *Session) truncateStderr() {
+	if e.stderr == nil {
+		return
+	}
+	_ = e.stderr.Truncate(0)
+	_, _ = e.stderr.Seek(0, io.SeekStart)
+}
+
+// harvestStderr hands the session's output to the observer.
+func (e *Session) harvestStderr() {
+	if e.stderr == nil || e.Output == nil {
+		return
+	}
+	if _, err := e.stderr.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+	buf, err := io.ReadAll(io.LimitReader(e.stderr, int64(e.opts.ReadLimit)))
+	if err != nil || len(buf) == 0 {
+		return
+	}
+	e.Output.Record(nil, buf, 0, 0)
+}
+
 // Close implements Executor.
 func (e *Session) Close() error {
+	if e.stderr != nil {
+		e.stderr.Close()
+		e.stderr = nil
+	}
 	e.dropConnection()
 	if e.handle != nil {
 		err := e.handle.Kill()

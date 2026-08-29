@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -82,6 +83,12 @@ type Campaign struct {
 	// itself. They disagree by design, and a set would then hold two entries
 	// for one bug — so the campaign tracks where each finding *is*, and counts
 	// the distinct answers.
+	// stateReports holds each worker's latest state graph. Kept per worker and
+	// merged on demand rather than merged as they arrive: a worker restarting
+	// replaces its own contribution, where a running merge would leave the
+	// dead worker's states in the campaign's graph forever.
+	stateReports map[int]*StateReport
+
 	bucketOf  map[int64]string
 	findings  int
 	seen      map[string]bool
@@ -143,18 +150,19 @@ func NewCampaign(ctx context.Context, cfg *campaign.Resolved, opts CampaignOptio
 	}
 
 	c := &Campaign{
-		Config:      cfg,
-		Seed:        seed,
-		store:       opts.Store,
-		bus:         opts.Bus,
-		metrics:     metrics.NewCollector(opts.Retention),
-		binary:      opts.WorkerBinary,
-		workDir:     opts.WorkDir,
-		state:       StateCreated,
-		bucketOf:    map[int64]string{},
-		seen:        map[string]bool{},
-		pendingSync: map[int][]CorpusEntry{},
-		done:        make(chan struct{}),
+		Config:       cfg,
+		Seed:         seed,
+		store:        opts.Store,
+		bus:          opts.Bus,
+		metrics:      metrics.NewCollector(opts.Retention),
+		binary:       opts.WorkerBinary,
+		workDir:      opts.WorkDir,
+		state:        StateCreated,
+		bucketOf:     map[int64]string{},
+		stateReports: map[int]*StateReport{},
+		seen:         map[string]bool{},
+		pendingSync:  map[int][]CorpusEntry{},
+		done:         make(chan struct{}),
 	}
 
 	if err := c.prepareSafety(ctx); err != nil {
@@ -706,6 +714,9 @@ func (c *Campaign) onMessage(worker int, m *Message) {
 	case MsgCheckpoint:
 		c.onCheckpoint(ctx, worker, m.Checkpoint)
 
+	case MsgStates:
+		c.onStates(worker, m.States)
+
 	case MsgStopped:
 		c.publish(EventWorker, map[string]any{"worker": worker, "state": "stopped", "reason": m.Reason})
 
@@ -1033,3 +1044,94 @@ func parsePortRange(s string) (lo, hi uint16, err error) {
 
 // Store returns the store this campaign writes to.
 func (c *Campaign) Store() *store.Store { return c.store }
+
+// onStates records a worker's view of the protocol state machine.
+func (c *Campaign) onStates(worker int, rep *StateReport) {
+	if rep == nil {
+		return
+	}
+	c.mu.Lock()
+	c.stateReports[worker] = rep
+	c.mu.Unlock()
+}
+
+// StateModel returns the campaign's protocol state machine.
+//
+// Merged across workers, because each fuzzes the same protocol and the campaign
+// has explored a state when any worker has. Counts are summed and exemplars
+// taken from whichever worker saw the state first, so the graph reads as one
+// campaign's rather than as N overlapping ones.
+func (c *Campaign) StateModel() *StateReport {
+	c.mu.Lock()
+	reports := make([]*StateReport, 0, len(c.stateReports))
+	for _, r := range c.stateReports {
+		reports = append(reports, r)
+	}
+	c.mu.Unlock()
+
+	out := &StateReport{}
+	states := map[string]*StateCount{}
+	moves := map[[2]string]*TransitionCount{}
+	illegal := map[[2]string]*TransitionCount{}
+
+	for _, r := range reports {
+		if out.Fn == "" {
+			out.Fn = r.Fn
+		}
+		for _, s := range r.States {
+			if e, ok := states[s.Label]; ok {
+				e.Count += s.Count
+				if e.Exemplar == "" {
+					e.Exemplar = s.Exemplar
+				}
+				continue
+			}
+			cp := s
+			states[s.Label] = &cp
+		}
+		mergeMoves(moves, r.Transitions)
+		mergeMoves(illegal, r.Illegal)
+	}
+
+	out.States = sortedStateCounts(states)
+	out.Transitions = sortedTransitionCounts(moves)
+	out.Illegal = sortedTransitionCounts(illegal)
+	return out
+}
+
+func mergeMoves(into map[[2]string]*TransitionCount, from []TransitionCount) {
+	for _, t := range from {
+		k := [2]string{t.From, t.To}
+		if e, ok := into[k]; ok {
+			e.Count += t.Count
+			continue
+		}
+		cp := t
+		into[k] = &cp
+	}
+}
+
+// sortedStateCounts orders states by label, so two reads of one campaign agree
+// and two campaigns can be diffed.
+func sortedStateCounts(m map[string]*StateCount) []StateCount {
+	out := make([]StateCount, 0, len(m))
+	for _, v := range m {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+func sortedTransitionCounts(m map[[2]string]*TransitionCount) []TransitionCount {
+	out := make([]TransitionCount, 0, len(m))
+	for _, v := range m {
+		out = append(out, *v)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From != out[j].From {
+			return out[i].From < out[j].From
+		}
+		return out[i].To < out[j].To
+	})
+	return out
+}

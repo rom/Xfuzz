@@ -1,0 +1,29 @@
+# stateful_proto's protocol keywords.
+#
+# A stateful campaign has a harder token problem than a file-format one. The
+# handshake has to stay *valid* for anything past it to be reachable at all, and
+# byte-level mutation destroys a literal like LETMEIN far faster than it
+# discovers it — so without these the campaign spends its budget rediscovering
+# the entrance rather than exploring past it. The commands are here for the same
+# reason: a mutated verb is a 500, and a session of five 500s explores nothing.
+
+command_hello="HELLO"
+command_auth="AUTH"
+command_set="SET"
+command_get="GET"
+command_bulk="BULK"
+command_reset="RESET"
+command_quit="QUIT"
+
+# The one literal the protocol checks for equality. Without it the authenticated
+# half of the state machine is unreachable in practice, and with it the campaign
+# still has to assemble HELLO before AUTH before SET.
+token_auth="LETMEIN"
+
+# Line framing. A message that loses its terminator leaves the target waiting
+# for the rest of a line, which costs the session its budget and teaches the
+# campaign nothing.
+crlf="\x0d\x0a"
+
+# The end-of-transfer marker, which is what makes a bulk transfer end early.
+bulk_end=".\x0d\x0a"

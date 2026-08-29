@@ -57,6 +57,9 @@ func (s *Server) register() {
 		Name: "metrics.get", Summary: "Current counters", handler: s.metricsGet})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/metrics/history", Service: ServiceMetrics,
 		Name: "metrics.history", Summary: "Downsampled historical series", handler: s.metricsHistory})
+	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/states", Service: ServiceMetrics,
+		Name: "metrics.states", Summary: "The protocol state machine the campaign has explored",
+		handler: s.metricsStates})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/health", Service: ServiceMetrics,
 		Name: "metrics.health", Summary: "Named health diagnostics", handler: s.metricsHealth})
 
@@ -781,4 +784,21 @@ func foundTool(name, purpose string) Capability {
 			Detail: purpose + "; not found beside the running binary or on PATH"}
 	}
 	return Capability{Name: name, Available: true, Detail: purpose + "; " + path}
+}
+
+// metricsStates serves the campaign's protocol state machine.
+func (s *Server) metricsStates(w http.ResponseWriter, r *http.Request) {
+	c, err := s.campaign(r)
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return
+	}
+	m := c.StateModel()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"fn":          m.Fn,
+		"states":      m.States,
+		"transitions": m.Transitions,
+		"illegal":     m.Illegal,
+		"count":       len(m.States),
+	})
 }

@@ -46,6 +46,15 @@ const (
 	// MsgCheckpoint carries the worker's resume state.
 	MsgCheckpoint MessageType = "checkpoint"
 
+	// MsgStates carries the protocol state machine a worker has inferred.
+	//
+	// Its own message rather than a field on the metrics one: metrics are sent
+	// several times a second and coalesced, and a state graph is neither small
+	// nor changing that fast. Sent on the checkpoint cadence instead, which is
+	// the rate at which it actually changes once a campaign has been running
+	// for a minute.
+	MsgStates MessageType = "states"
+
 	// MsgStopped is sent when the worker's own budget ended, with the reason.
 	MsgStopped MessageType = "stopped"
 
@@ -90,6 +99,9 @@ type Message struct {
 
 	// Checkpoint
 	Checkpoint *CheckpointState `json:"checkpoint,omitempty"`
+
+	// States
+	States *StateReport `json:"states,omitempty"`
 
 	// Stopped
 	Reason string `json:"reason,omitempty"`
@@ -246,4 +258,39 @@ func truncate(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[:n]) + "…"
+}
+
+// StateReport is the protocol state machine one worker has inferred.
+//
+// Exemplars are carried with it because a state label is a hash and a hash
+// explains nothing: seeing what the target actually said is how somebody
+// decides whether the clustering is right, which is what ADR-0006 means by
+// inference being inspectable. Without it a campaign reporting four hundred
+// states is a number nobody can act on.
+type StateReport struct {
+	States      []StateCount      `json:"states"`
+	Transitions []TransitionCount `json:"transitions"`
+
+	// Illegal lists moves outside a declared model: the target accepting a
+	// transition its own protocol forbids.
+	Illegal []TransitionCount `json:"illegal,omitempty"`
+
+	// Fn names the state function that produced the labels.
+	Fn string `json:"fn,omitempty"`
+}
+
+// StateCount is one state and how often it was reached.
+type StateCount struct {
+	Label string `json:"label"`
+	Count int    `json:"count"`
+
+	// Exemplar is the first response that produced this label, truncated.
+	Exemplar string `json:"exemplar,omitempty"`
+}
+
+// TransitionCount is one move and how often it was made.
+type TransitionCount struct {
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Count int    `json:"count"`
 }

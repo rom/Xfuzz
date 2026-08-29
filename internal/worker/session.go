@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/rom/Xfuzz/internal/daemon"
 	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/executor"
@@ -99,7 +100,7 @@ func serverSpecFor(cfg *campaign.Resolved, addr string) executor.ProcSpec {
 
 	substituted := false
 	for i, a := range argv {
-		if replaced := strings.ReplaceAll(a, AddressPlaceholder, addr); replaced != a {
+		if replaced := strings.ReplaceAll(a, daemon.AddressPlaceholder, addr); replaced != a {
 			argv[i] = replaced
 			substituted = true
 		}
@@ -123,10 +124,6 @@ func serverSpecFor(cfg *campaign.Resolved, addr string) executor.ProcSpec {
 		CaptureOutput: true,
 	}
 }
-
-// AddressPlaceholder is replaced with the session address in a target's
-// arguments.
-const AddressPlaceholder = "{address}"
 
 // guidanceFor assembles the state model, observer and scheduler.
 func guidanceFor(cfg *campaign.Resolved) (*state.Guidance, error) {

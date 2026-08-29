@@ -16,6 +16,7 @@ import (
 	"github.com/rom/Xfuzz/internal/store"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpus"
+	"github.com/rom/Xfuzz/pkg/state"
 )
 
 // Options configure one worker.
@@ -481,7 +482,49 @@ func (w *Worker) sendCheckpoint() {
 		CorpusSize: snap.CorpusSize,
 		RNG:        snap.RNG,
 	}})
+	w.sendStates()
 }
+
+// sendStates reports the protocol state machine this worker has inferred.
+//
+// On the checkpoint cadence rather than the metrics one. A state graph is not
+// small and does not change several times a second, and the metrics kind is
+// coalesced — a subscriber that fell behind would see one worker's graph and
+// call it the campaign's.
+func (w *Worker) sendStates() {
+	if w.built == nil || w.built.state == nil {
+		return
+	}
+	g := w.built.state
+	labels, counts := g.Model.States()
+	moves, moveCounts := g.Model.Transitions()
+	illegal, illegalCounts := g.Model.Illegal()
+
+	rep := &daemon.StateReport{Fn: g.Observer.Fn().Name()}
+	for _, l := range labels {
+		sc := daemon.StateCount{Label: string(l), Count: counts[l]}
+		if ex, ok := g.Model.Exemplar(l); ok {
+			sc.Exemplar = state.Excerpt(ex, stateExemplarBytes)
+		}
+		rep.States = append(rep.States, sc)
+	}
+	for _, t := range moves {
+		rep.Transitions = append(rep.Transitions, daemon.TransitionCount{
+			From: string(t.From), To: string(t.To), Count: moveCounts[t],
+		})
+	}
+	for _, t := range illegal {
+		rep.Illegal = append(rep.Illegal, daemon.TransitionCount{
+			From: string(t.From), To: string(t.To), Count: illegalCounts[t],
+		})
+	}
+	w.send(&daemon.Message{Type: daemon.MsgStates, States: rep})
+}
+
+// stateExemplarBytes is how much of a response accompanies a state label. Long
+// enough to recognise a protocol reply, short enough that a graph of hundreds
+// of states is still readable.
+const stateExemplarBytes = 96
 
 func (w *Worker) setPaused(v bool) {
 	w.mu.Lock()

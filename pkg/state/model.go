@@ -283,6 +283,14 @@ func (m *Model) Explain(maxExemplar int) string {
 	return b.String()
 }
 
+// Excerpt renders a response for a human, printably and briefly.
+//
+// Exported because a state label is meaningless without one: the daemon and the
+// console both show what the target actually said beside the label it produced,
+// and both need the same rendering or the same state reads differently in two
+// places.
+func Excerpt(b []byte, n int) string { return excerpt(b, n) }
+
 // excerpt renders a response for a human, printably and briefly.
 //
 // Line endings and tabs are left as themselves: the caller quotes the result

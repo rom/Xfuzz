@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/internal/store"
 	"github.com/rom/Xfuzz/internal/triage"
 	"github.com/rom/Xfuzz/pkg/campaign"
+	"github.com/rom/Xfuzz/pkg/codec"
 	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/feedback"
 )
@@ -35,8 +37,15 @@ type Triage struct {
 	// two concurrent minimisations of the same target would compete for the
 	// same working directory.
 	mu   sync.Mutex
-	exec *executor.Subprocess
+	exec executor.Executor
 	out  *feedback.OutputObserver
+
+	// codec lifts a stored reproducer back into the structure the executor
+	// needs. It matters only for the session tier, where an input is a
+	// conversation and delivering it as one blob would send the whole exchange
+	// as a single message — which for most protocols means the target sees one
+	// malformed line and the finding does not reproduce.
+	codec codec.Codec
 
 	// lastFailure is what the target printed on the most recent run that
 	// failed. Kept because verification does not return it and it is usually
@@ -45,6 +54,11 @@ type Triage struct {
 	// alternative, one more execution afterwards purely to capture output, both
 	// costs a run and reports a run that nobody verified.
 	lastFailure string
+
+	// started records whether a session executor's server has been brought up.
+	// Lazily, because a campaign that never produces a finding should never pay
+	// for a second copy of its target.
+	started bool
 }
 
 // NewTriage prepares on-demand triage for a campaign.
@@ -56,6 +70,15 @@ func NewTriage(cfg *campaign.Resolved, sandbox *safety.Sandbox) *Triage {
 	out := feedback.NewOutputObserver("triage")
 	spawner := safety.NewSpawner()
 	spawner.Sandbox = sandbox
+
+	// A stateful campaign's findings are conversations, and a conversation
+	// replayed as a blob on standard input is not the same execution. The tier
+	// has to match the one that found it or every finding reads as
+	// unreproducible — which is worse than not triaging at all, because it
+	// dismisses real bugs with a number that looks like evidence.
+	if cfg.Session != nil {
+		return newSessionTriage(cfg, sandbox, spawner, out)
+	}
 
 	spec := executor.ProcSpec{
 		Path:          cfg.Target.Path,
@@ -71,7 +94,94 @@ func NewTriage(cfg *campaign.Resolved, sandbox *safety.Sandbox) *Triage {
 	sub := executor.NewSubprocess("triage", spawner, spec)
 	sub.Output = out
 	sub.Delivery = deliveryFor(cfg.Target.Input)
-	return &Triage{cfg: cfg, sandbox: sandbox, exec: sub, out: out}
+	return &Triage{cfg: cfg, sandbox: sandbox, exec: sub, out: out, codec: codec.Raw{}}
+}
+
+// newSessionTriage builds triage for a stateful campaign.
+//
+// Its own server on its own address, started lazily and separate from the
+// workers': triage runs while the campaign does, and a reproducer replayed
+// against a worker's target would perturb the campaign it is meant to be
+// explaining.
+func newSessionTriage(cfg *campaign.Resolved, sandbox *safety.Sandbox,
+	spawner *safety.Spawner, out *feedback.OutputObserver) *Triage {
+
+	addr := campaign.ResolveAddress(cfg.Session.Address, triageWorkerID)
+	network, address, err := campaign.SplitAddress(addr)
+	if err != nil {
+		// Validation refused this shape long before now, so reaching it means
+		// something upstream changed. Triage without a runner is refused by
+		// name at the entry points rather than panicking here.
+		return &Triage{cfg: cfg, sandbox: sandbox, out: out}
+	}
+	framing, _ := executor.FramingNamed(cfg.Session.Framing)
+
+	sess := executor.NewSession("triage", scopeFor(cfg), executor.SessionOptions{
+		Network: network,
+		Address: address,
+		// Always a restart, whatever the campaign runs with. Triage asks
+		// whether an input reproduces, and an answer that depended on what the
+		// previous trial left behind would not be one.
+		Reset:          executor.ResetRestart,
+		Framing:        framing,
+		QuietPeriod:    cfg.Session.QuietPeriod.Std(),
+		ConnectTimeout: cfg.Session.ConnectTimeout.Std(),
+		ReadTimeout:    cfg.Session.ReadTimeout.Std(),
+		SessionTimeout: cfg.Session.SessionTimeout.Std(),
+		ReadLimit:      cfg.Session.ReadLimit,
+	})
+	sess.Output = out
+	if cfg.Session.Managed != nil && *cfg.Session.Managed {
+		sess.Manage(spawner, sessionSpecFor(cfg, addr))
+	}
+	return &Triage{cfg: cfg, sandbox: sandbox, exec: sess, out: out, codec: codec.Session{}}
+}
+
+// triageWorkerID is the worker index triage's own server binds under.
+//
+// Deliberately far from any real worker's, so that triage and the campaign
+// never contend for one address however many workers a campaign runs.
+const triageWorkerID = 9000
+
+// sessionSpecFor describes triage's own copy of the server.
+func sessionSpecFor(cfg *campaign.Resolved, addr string) executor.ProcSpec {
+	argv := append([]string{cfg.Target.Path}, cfg.Target.Args...)
+	substituted := false
+	for i, a := range argv {
+		if replaced := strings.ReplaceAll(a, AddressPlaceholder, addr); replaced != a {
+			argv[i] = replaced
+			substituted = true
+		}
+	}
+	if !substituted {
+		argv = append(argv, "--listen", addr)
+	}
+	env := make([]string, 0, len(cfg.Target.Env))
+	for k, v := range cfg.Target.Env {
+		env = append(env, k+"="+v)
+	}
+	return executor.ProcSpec{
+		Path: cfg.Target.Path, Args: argv, Env: env, Dir: cfg.Target.Dir,
+		CaptureOutput: true,
+	}
+}
+
+// AddressPlaceholder is replaced with the session address in a target's
+// arguments.
+const AddressPlaceholder = "{address}"
+
+// scopeFor builds the dialer triage connects through.
+func scopeFor(cfg *campaign.Resolved) *safety.Scope {
+	spec := safety.ScopeSpec{}
+	if sc := cfg.Safety.Scope; sc != nil {
+		spec.Loopback = sc.Loopback
+		spec.AcknowledgePublic = sc.AcknowledgePublic
+	}
+	s, err := safety.NewScopeFrom(spec, nil)
+	if err != nil {
+		return safety.NewScope()
+	}
+	return s
 }
 
 // Close releases the executor.
@@ -81,6 +191,9 @@ func (t *Triage) Close() error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.exec == nil {
+		return nil
+	}
 	return t.exec.Close()
 }
 
@@ -89,8 +202,27 @@ func (t *Triage) Run(ctx context.Context, input []byte) (triage.Outcome, error) 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if t.exec == nil {
+		return triage.Outcome{}, ErrNoTriage
+	}
+	if s, ok := t.exec.(*executor.Session); ok && !t.started {
+		if err := s.Start(ctx); err != nil {
+			return triage.Outcome{}, err
+		}
+		t.started = true
+	}
+
+	// Through the codec, so a session reproducer is delivered as the
+	// conversation it is rather than as one long message.
+	in := executor.Input{Bytes: input}
+	if t.codec != nil {
+		if node, err := t.codec.Decode(nil, input); err == nil {
+			in.Node = node
+		}
+	}
+
 	obs := []feedback.Observer{t.out}
-	kind, err := t.exec.Run(ctx, executor.Input{Bytes: input}, obs)
+	kind, err := t.exec.Run(ctx, in, obs)
 	if err != nil {
 		return triage.Outcome{}, err
 	}

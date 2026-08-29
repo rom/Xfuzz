@@ -24,6 +24,13 @@ func init() {
 		Run:   runMinimize,
 	})
 	register(&Command{
+		Name: "states", Group: "inspection",
+		Short: "Show the protocol state machine a stateful campaign has explored",
+		Usage: "states NAME [--transitions]",
+		API:   []string{"metrics.states"},
+		Run:   runStates,
+	})
+	register(&Command{
 		Name: "doctor", Group: "daemon",
 		Short: "Report what this host can do, and why anything is missing",
 		Usage: "doctor",
@@ -186,4 +193,83 @@ func nameAndID(args []string) (string, int64, error) {
 			args[1], args[0])
 	}
 	return args[0], id, nil
+}
+
+// runStates renders the protocol state machine.
+//
+// With the exemplars, because a state label is a hash of a normalised response
+// and a hash explains nothing. Seeing what the target actually said beside the
+// label it produced is how somebody decides whether the clustering is right —
+// which is the difference between a campaign reporting four hundred states and
+// a person being able to do anything about it (ADR-0006).
+func runStates(ctx context.Context, args []string) error {
+	fs, opts := flags(commands["states"])
+	showMoves := fs.Bool("transitions", false, "list every transition as well as every state")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	target, err := oneName(fs.Args())
+	if err != nil {
+		return err
+	}
+	c, err := opts.connect(ctx)
+	if err != nil {
+		return err
+	}
+
+	var rep struct {
+		Fn     string `json:"fn"`
+		States []struct {
+			Label    string `json:"label"`
+			Count    int    `json:"count"`
+			Exemplar string `json:"exemplar"`
+		} `json:"states"`
+		Transitions []struct {
+			From  string `json:"from"`
+			To    string `json:"to"`
+			Count int    `json:"count"`
+		} `json:"transitions"`
+		Illegal []struct {
+			From  string `json:"from"`
+			To    string `json:"to"`
+			Count int    `json:"count"`
+		} `json:"illegal"`
+	}
+	if err := c.Do(ctx, "GET", "/v1/campaigns/"+target+"/states", nil, &rep); err != nil {
+		return err
+	}
+	if opts.jsonOut {
+		return printJSON(rep)
+	}
+
+	if len(rep.States) == 0 {
+		fmt.Println("no protocol states recorded; this is not a stateful campaign, " +
+			"or it has not run long enough to see a reply")
+		return nil
+	}
+
+	fmt.Printf("state function  %s\n", rep.Fn)
+	fmt.Printf("states          %d\n", len(rep.States))
+	fmt.Printf("transitions     %d\n\n", len(rep.Transitions))
+
+	fmt.Printf("%-14s %9s  %s\n", "STATE", "VISITS", "WHAT THE TARGET SAID")
+	for _, st := range rep.States {
+		fmt.Printf("%-14s %9d  %s\n", st.Label, st.Count, st.Exemplar)
+	}
+
+	if *showMoves {
+		fmt.Printf("\n%-30s %9s\n", "TRANSITION", "COUNT")
+		for _, t := range rep.Transitions {
+			fmt.Printf("%-30s %9d\n", t.From+" -> "+t.To, t.Count)
+		}
+	}
+	if len(rep.Illegal) > 0 {
+		// Its own section: the target accepted a move its own declared protocol
+		// forbids, which is a result rather than a statistic.
+		fmt.Printf("\noutside the declared model\n")
+		for _, t := range rep.Illegal {
+			fmt.Printf("  %-28s %9d\n", t.From+" -> "+t.To, t.Count)
+		}
+	}
+	return nil
 }
