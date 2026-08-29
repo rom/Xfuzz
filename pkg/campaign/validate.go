@@ -74,6 +74,7 @@ func (r *Resolved) Validate() error {
 	r.validateTriage(add)
 	r.validateStop(add)
 	r.validateSeeds(add)
+	r.validateSession(add)
 
 	if len(ps) == 0 {
 		return nil
@@ -451,4 +452,130 @@ func checkPort(s string) error {
 		return fmt.Errorf("%q is not a port", s)
 	}
 	return nil
+}
+
+// validateSession checks a stateful campaign's session and state blocks.
+func (r *Resolved) validateSession(add addFunc) {
+	if r.Session == nil {
+		// Not a session campaign. A state block without one is a mistake worth
+		// naming, though: it configures machinery nothing will run.
+		if r.State != nil {
+			add("state", "is set but there is no session block",
+				"state guidance applies to protocol sessions; add session.address or remove the state block")
+		}
+		return
+	}
+	s := r.Session
+
+	switch {
+	case strings.TrimSpace(s.Address) == "":
+		add("session.address", "is required for a session campaign",
+			"where the target listens: tcp:127.0.0.1:9000 or unix:/run/target.sock")
+	default:
+		if _, _, err := SplitAddress(s.Address); err != nil {
+			add("session.address", err.Error(),
+				"tcp:HOST:PORT or unix:PATH, with {worker} for the worker index")
+		}
+	}
+
+	// Every worker runs its own copy of the target, so an address without
+	// {worker} means the second worker binds what the first already holds. The
+	// campaign starts, one worker dies on every session, and the throughput is
+	// quietly a fraction of what was asked for.
+	if r.Workers != nil && r.Workers.Count > 1 &&
+		s.Managed != nil && *s.Managed && !strings.Contains(s.Address, "{worker}") {
+		add("session.address", "is the same for every worker",
+			"put {worker} in it, or workers will contend for one address and one server")
+	}
+
+	switch s.Framing {
+	case "idle", "line", "none":
+	default:
+		add("session.framing", fmt.Sprintf("%q is not a framing mode", s.Framing),
+			"one of idle, line, none")
+	}
+
+	switch s.Reset {
+	case "none", "reconnect", "restart":
+	case "snapshot":
+		add("session.reset", "snapshot is not implemented",
+			"it needs KVM-based checkpointing, which ADR-0006 defers past v1; "+
+				"use restart for correctness or reconnect for speed")
+	default:
+		add("session.reset", fmt.Sprintf("%q is not a reset policy", s.Reset),
+			"one of none, reconnect, restart")
+	}
+
+	// A restart replaces the target process, which needs there to be one.
+	if s.Reset == "restart" && (s.Managed == nil || !*s.Managed) {
+		add("session.reset", "is restart but the target is not managed",
+			"set session.managed and target.path, or use reconnect")
+	}
+	if s.Managed != nil && *s.Managed && (r.Target == nil || r.Target.Path == "") {
+		add("session.managed", "is set but target.path is empty",
+			"name the server to start, or unset it to fuzz one that is already running")
+	}
+
+	if s.MaxMessages < 0 {
+		add("session.max_messages", "cannot be negative", "")
+	}
+	if r.WasSet("session.read_limit") && s.ReadLimit <= 0 {
+		add("session.read_limit", "must be positive",
+			"a target that answers one byte with a gigabyte is a finding, not a reason to run out of memory")
+	}
+	if s.QuietPeriod < 0 || s.ConnectTimeout < 0 || s.ReadTimeout < 0 || s.SessionTimeout < 0 {
+		add("session", "has a negative timeout", "")
+	}
+	if s.SessionTimeout > 0 && s.ReadTimeout > 0 && s.SessionTimeout < s.ReadTimeout {
+		add("session.session_timeout", "is shorter than session.read_timeout",
+			"a session that cannot outlast one reply can never send a second message")
+	}
+
+	r.validateState(add)
+}
+
+// validateState checks the state block of a session campaign.
+func (r *Resolved) validateState(add addFunc) {
+	if r.State == nil {
+		return
+	}
+	st := r.State
+
+	switch st.Fn {
+	case "status", "http", "fingerprint", "constant", "none":
+	default:
+		add("state.fn", fmt.Sprintf("%q is not a state function", st.Fn),
+			"one of status, http, fingerprint, constant")
+	}
+	for _, n := range st.Normalise {
+		switch n {
+		case "digits", "quoted", "space":
+		default:
+			add("state.normalise", fmt.Sprintf("%q is not a normalisation step", n),
+				"one of digits, quoted, space")
+		}
+	}
+	// Normalisation is what fingerprinting does; naming steps for any other
+	// state function configures nothing, and a setting that does nothing is
+	// worse than a missing one because it reads as if it works.
+	if len(st.Normalise) > 0 && st.Fn != "fingerprint" && r.WasSet("state.normalise") {
+		add("state.normalise", fmt.Sprintf("is set but state.fn is %q", st.Fn),
+			"normalisation applies to the fingerprint function only")
+	}
+	if r.Session != nil && r.Session.Framing == "none" && st.Guide != nil && *st.Guide {
+		add("state.guide", "is on but session.framing is none",
+			"nothing reads a reply, so there is no response to label; "+
+				"use idle or line framing, or turn state guidance off")
+	}
+	if st.Explore < 0 || st.Explore > 1 {
+		add("state.explore", fmt.Sprintf("%v is outside 0..1", st.Explore), "it is a probability")
+	}
+	if st.TailBias < 0 || st.TailBias > 1 {
+		add("state.tail_bias", fmt.Sprintf("%v is outside 0..1", st.TailBias), "it is a probability")
+	}
+	for _, d := range st.Declare {
+		if _, _, err := ParseTransition(d); err != nil {
+			add("state.declare", err.Error(), `each entry is "from->to"`)
+		}
+	}
 }

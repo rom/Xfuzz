@@ -48,6 +48,8 @@ type File struct {
 	Format   *Format   `yaml:"format,omitempty" json:"format,omitempty" doc:"How bytes are interpreted as structure."`
 	Mutation *Mutation `yaml:"mutation,omitempty" json:"mutation,omitempty" doc:"Which operators run and how they are weighted."`
 	Feedback *Feedback `yaml:"feedback,omitempty" json:"feedback,omitempty" doc:"What counts as interesting."`
+	Session  *Session  `yaml:"session,omitempty" json:"session,omitempty" doc:"Protocol sessions: where the target listens, how replies are framed, and what resets between sessions."`
+	State    *State    `yaml:"state,omitempty" json:"state,omitempty" doc:"The protocol state machine, declared or inferred, and how it guides the campaign."`
 	Workers  *Workers  `yaml:"workers,omitempty" json:"workers,omitempty" doc:"How many workers and what strategies they run."`
 	Safety   *Safety   `yaml:"safety,omitempty" json:"safety,omitempty" doc:"Isolation, resource limits, network scope, authorization."`
 	Storage  *Storage  `yaml:"storage,omitempty" json:"storage,omitempty" doc:"Where the corpus and findings live, and their budgets."`
@@ -156,6 +158,95 @@ type Feedback struct {
 
 	// Objectives selects what counts as a finding.
 	Objectives []string `yaml:"objectives,omitempty" json:"objectives,omitempty" doc:"What counts as a finding: crash, hang, oom, sanitizer."`
+}
+
+// Session turns a campaign into a stateful one.
+//
+// Its presence is what selects the session tier: a campaign with a session block
+// fuzzes conversations, and one without fuzzes inputs. That is deliberate — a
+// separate "mode" switch would let a file ask for sessions and give no address,
+// or give an address and fuzz files, and both are configurations that look valid
+// and cannot work (ADR-0016).
+type Session struct {
+	// Address is where the target listens: "tcp:127.0.0.1:9000" or
+	// "unix:/run/target.sock".
+	//
+	// {worker} is replaced with the worker's index. Workers each run their own
+	// copy of the target, so without a per-worker address the second worker
+	// binds a port the first already holds and the campaign silently runs at
+	// one worker's throughput — or worse, both fuzz one server and no finding
+	// is attributable to the session that caused it.
+	Address string `yaml:"address" json:"address" doc:"Where the target listens: tcp:HOST:PORT or unix:PATH. {worker} is replaced with the worker index."`
+
+	// Managed says whether Xfuzz starts the target itself.
+	//
+	// True by default when the campaign names a target.path. A campaign against
+	// a server somebody else is running sets it false, and then a crash cannot
+	// be detected from a process status — only from the connection dropping —
+	// which the isolation report says out loud.
+	Managed *bool `yaml:"managed,omitempty" json:"managed,omitempty" doc:"Start the target process. Defaults to true when target.path is set."`
+
+	// Framing decides when a reply is complete: idle, line, or none.
+	Framing string `yaml:"framing,omitempty" json:"framing,omitempty" doc:"When a reply is complete: idle, line, or none."`
+
+	// QuietPeriod is how long idle framing waits for more data before calling a
+	// reply finished. It is the ceiling on a stateful campaign's throughput.
+	QuietPeriod Duration `yaml:"quiet_period,omitempty" json:"quiet_period,omitempty" doc:"How long idle framing waits before a reply is complete."`
+
+	// Reset is what happens between sessions: none, reconnect, restart, or
+	// snapshot. It is an explicit contract because the fuzzer's correctness
+	// assumptions depend on which one holds (ASR-0002, ADR-0006).
+	Reset string `yaml:"reset,omitempty" json:"reset,omitempty" doc:"Between sessions: none, reconnect, restart, or snapshot."`
+
+	// ConnectTimeout, ReadTimeout and SessionTimeout bound establishing a
+	// connection, one reply, and a whole session. All three are needed: a
+	// target can refuse to accept, accept and never answer, or answer every
+	// message slowly enough that the session never ends.
+	ConnectTimeout Duration `yaml:"connect_timeout,omitempty" json:"connect_timeout,omitempty" doc:"Bound on establishing a connection."`
+	ReadTimeout    Duration `yaml:"read_timeout,omitempty" json:"read_timeout,omitempty" doc:"Bound on one reply."`
+	SessionTimeout Duration `yaml:"session_timeout,omitempty" json:"session_timeout,omitempty" doc:"Bound on a whole session."`
+
+	// ReadLimit bounds one reply in bytes.
+	ReadLimit int `yaml:"read_limit,omitempty" json:"read_limit,omitempty" doc:"Maximum bytes retained from one reply."`
+
+	// MaxMessages bounds how long a session may grow. Sequence mutators
+	// duplicate and insert, so without a bound a campaign converges on sessions
+	// of ten thousand messages that take a second each and explore nothing.
+	MaxMessages int `yaml:"max_messages,omitempty" json:"max_messages,omitempty" doc:"Maximum messages in one session."`
+}
+
+// State configures the protocol state machine (ADR-0006).
+type State struct {
+	// Fn labels a response: status, http, fingerprint, or constant.
+	Fn string `yaml:"fn,omitempty" json:"fn,omitempty" doc:"How a response becomes a state label: status, http, fingerprint, or constant."`
+
+	// Normalise lists what the fingerprint function removes before hashing:
+	// digits, quoted, space.
+	//
+	// The tuning knob for inference quality, and the one that matters. Too
+	// little and every nonce is a state; too much and distinct states merge
+	// (ADR-0006).
+	Normalise []string `yaml:"normalise,omitempty" json:"normalise,omitempty" doc:"What fingerprinting removes before hashing: digits, quoted, space."`
+
+	// Guide adds state and transition novelty to the feedback stack. On by
+	// default for a session campaign: it is the reason ADR-0006 exists.
+	Guide *bool `yaml:"guide,omitempty" json:"guide,omitempty" doc:"Treat new states and transitions as interesting. Defaults to true."`
+
+	// Declare is the protocol's own state machine, as "from->to" transitions.
+	//
+	// Optional, and additive rather than a replacement: inference still runs,
+	// and what a declaration adds is an expectation. A transition outside it is
+	// the target accepting a move its own protocol forbids, which is reported
+	// rather than treated as ordinary exploration.
+	Declare []string `yaml:"declare,omitempty" json:"declare,omitempty" doc:"Declared transitions as \"from->to\". Moves outside them are reported."`
+
+	// Explore is how often the scheduler aims for a rarely-visited state rather
+	// than mutating wherever the session allows.
+	Explore float64 `yaml:"explore,omitempty" json:"explore,omitempty" doc:"How often to aim for a rare state, 0..1."`
+
+	// TailBias is how often an aimed mutation lands at or after the targeted
+	// state rather than before it.
+	TailBias float64 `yaml:"tail_bias,omitempty" json:"tail_bias,omitempty" doc:"How often an aimed mutation lands at or after the target state, 0..1."`
 }
 
 // Workers is how the campaign is parallelised.

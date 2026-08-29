@@ -229,6 +229,97 @@
       },
       "type": "object"
     },
+    "session": {
+      "additionalProperties": false,
+      "description": "Protocol sessions: where the target listens, how replies are framed, and what resets between sessions.",
+      "properties": {
+        "address": {
+          "description": "Where the target listens: tcp:HOST:PORT or unix:PATH. {worker} is replaced with the worker index.",
+          "type": "string"
+        },
+        "connect_timeout": {
+          "description": "Bound on establishing a connection.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "framing": {
+          "description": "When a reply is complete: idle, line, or none.",
+          "type": "string"
+        },
+        "managed": {
+          "description": "Start the target process. Defaults to true when target.path is set.",
+          "type": "boolean"
+        },
+        "max_messages": {
+          "description": "Maximum messages in one session.",
+          "type": "integer"
+        },
+        "quiet_period": {
+          "description": "How long idle framing waits before a reply is complete.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "read_limit": {
+          "description": "Maximum bytes retained from one reply.",
+          "type": "integer"
+        },
+        "read_timeout": {
+          "description": "Bound on one reply.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "reset": {
+          "description": "Between sessions: none, reconnect, restart, or snapshot.",
+          "type": "string"
+        },
+        "session_timeout": {
+          "description": "Bound on a whole session.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
+    "state": {
+      "additionalProperties": false,
+      "description": "The protocol state machine, declared or inferred, and how it guides the campaign.",
+      "properties": {
+        "declare": {
+          "description": "Declared transitions as \"from-\u003eto\". Moves outside them are reported.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "explore": {
+          "description": "How often to aim for a rare state, 0..1.",
+          "type": "number"
+        },
+        "fn": {
+          "description": "How a response becomes a state label: status, http, fingerprint, or constant.",
+          "type": "string"
+        },
+        "guide": {
+          "description": "Treat new states and transitions as interesting. Defaults to true.",
+          "type": "boolean"
+        },
+        "normalise": {
+          "description": "What fingerprinting removes before hashing: digits, quoted, space.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "tail_bias": {
+          "description": "How often an aimed mutation lands at or after the target state, 0..1.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "stop": {
       "additionalProperties": false,
       "description": "Termination conditions. A campaign must be able to end.",

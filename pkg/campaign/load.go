@@ -287,11 +287,73 @@ func defaults(f *File, set KeySet) {
 		f.Feedback.Objectives = []string{"crash", "hang", "oom", "sanitizer"}
 	}
 
+	// Session and state defaults apply only to a campaign that asked for
+	// sessions. Filling them in for a file-fuzzing campaign would put an
+	// address and a reset policy into every `explain` output, where they mean
+	// nothing and read as settings somebody forgot to remove.
+	if f.Session != nil {
+		if f.Session.Framing == "" {
+			f.Session.Framing = "idle"
+		}
+		if f.Session.Reset == "" {
+			f.Session.Reset = "reconnect"
+		}
+		if f.Session.Managed == nil {
+			managed := f.Target != nil && f.Target.Path != ""
+			f.Session.Managed = &managed
+		}
+		if f.Session.QuietPeriod == 0 && unset("session.quiet_period") {
+			f.Session.QuietPeriod = Duration(defaultQuietPeriod)
+		}
+		if f.Session.ConnectTimeout == 0 && unset("session.connect_timeout") {
+			f.Session.ConnectTimeout = Duration(defaultConnectTimeout)
+		}
+		if f.Session.ReadTimeout == 0 && unset("session.read_timeout") {
+			f.Session.ReadTimeout = Duration(defaultReadTimeout)
+		}
+		if f.Session.SessionTimeout == 0 && unset("session.session_timeout") {
+			f.Session.SessionTimeout = Duration(defaultSessionTimeout)
+		}
+		if f.Session.ReadLimit == 0 && unset("session.read_limit") {
+			f.Session.ReadLimit = defaultReadLimit
+		}
+		if f.Session.MaxMessages == 0 && unset("session.max_messages") {
+			f.Session.MaxMessages = defaultMaxMessages
+		}
+
+		if f.State == nil {
+			f.State = &State{}
+		}
+		if f.State.Fn == "" {
+			f.State.Fn = "fingerprint"
+		}
+		if f.State.Guide == nil {
+			guide := true
+			f.State.Guide = &guide
+		}
+		if len(f.State.Normalise) == 0 && unset("state.normalise") {
+			f.State.Normalise = []string{"digits", "quoted", "space"}
+		}
+		if f.State.Explore == 0 && unset("state.explore") {
+			f.State.Explore = defaultExplore
+		}
+		if f.State.TailBias == 0 && unset("state.tail_bias") {
+			f.State.TailBias = defaultTailBias
+		}
+	}
+
 	if f.Workers == nil {
 		f.Workers = &Workers{}
 	}
 	if f.Workers.Count == 0 && unset("workers.count") {
 		f.Workers.Count = runtime.NumCPU()
+		// One worker for a session campaign whose address is fixed. Every
+		// worker runs its own copy of the target, so a fixed address admits
+		// exactly one — defaulting to a core count and then refusing the file
+		// would be telling somebody off for a number they never wrote.
+		if f.Session != nil && !strings.Contains(f.Session.Address, WorkerPlaceholder) {
+			f.Workers.Count = 1
+		}
 	}
 	if f.Workers.SyncInterval == 0 && unset("workers.sync_interval") {
 		f.Workers.SyncInterval = Duration(defaultSyncInterval)

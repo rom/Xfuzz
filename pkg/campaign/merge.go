@@ -34,6 +34,23 @@ const (
 	defaultCheckpointInterval = 30 * time.Second
 	defaultTrials             = 5
 	defaultMinimizeBudget     = 4000
+
+	// Session defaults. The quiet period is the one that matters: idle framing
+	// waits it out once per message, so it sets the ceiling on a stateful
+	// campaign's throughput more than anything else in this file.
+	defaultQuietPeriod    = 5 * time.Millisecond
+	defaultConnectTimeout = 2 * time.Second
+	defaultReadTimeout    = 2 * time.Second
+	defaultSessionTimeout = 10 * time.Second
+	defaultReadLimit      = 1 << 20
+
+	// A session that grows without bound explores nothing: the sequence
+	// operators insert and duplicate, and a campaign left to itself converges
+	// on sessions of thousands of messages that each take a second.
+	defaultMaxMessages = 64
+
+	defaultExplore  = 0.7
+	defaultTailBias = 0.8
 )
 
 // merge overlays src onto dst, field by field.

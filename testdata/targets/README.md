@@ -31,6 +31,7 @@ objective as well; the fuzzer's job of getting there is identical.
 | `simple_parser.c` | 3 | shallow | Basic mutation, crash detection, coverage guidance |
 | `magic_parser.c` | 4 | magic values | Dictionaries, and later cmplog and value profile |
 | `chunked_format.c` | 5 | checksum-gated | Structured mutation with derived fields; crash bucketing and minimisation |
+| `stateful_proto.c` | 4 | sequence-gated | Sessions, protocol state feedback, state-then-message scheduling |
 | `hang.c` | 0 | — | Timeout enforcement; a hang is a finding, not a crash |
 | `nop.c` | 0 | — | The measurement floor: everything a benchmark reports is protocol, not target |
 
@@ -63,6 +64,41 @@ SIGSEGV. That is deliberate. A bucketing strategy that groups on the fatal signa
 alone must produce three buckets here and one that groups on the crashing path
 must produce five, which makes the difference between them a measurement rather
 than an assertion (docs/TESTS.md § 4).
+
+### `stateful_proto`
+
+The stateful counterpart to `chunked_format`. Where that one hides its bugs
+behind checksums that only structured mutation can satisfy, this one hides them
+behind a *sequence* that only a fuzzer reasoning about protocol state can
+assemble. It is a line protocol, so both line framing and status-code state
+labelling apply and the target exercises the ordinary configuration rather than
+a special one.
+
+The four bugs are graded by how much of the state machine each one needs:
+
+| Bug | Needs | What it measures |
+| --- | --- | --- |
+| 1 | one message | The session tier works at all: connection, framing, mutation of message zero. Finding it says nothing about state guidance |
+| 2 | `HELLO`, then a correct `AUTH` | The exit criterion: a bug reachable only past a valid two-step handshake |
+| 3 | two `BULK` transfers on one connection | A counter that is per connection where the array is per transfer — a bug in the *repetition* of a state, not in the state |
+| 4 | `AUTH`, `RESET`, `GET`, in that order and no other | A bug in a state *pair* nobody plans for, which is why transitions are counted separately from states |
+
+Each near miss stays alive, and that is the point of the grading: `AUTH` with
+the wrong token, a single `BULK` transfer, `RESET` before authenticating, and
+re-authenticating after a reset all behave correctly. A campaign that reports
+bug 2 has genuinely got through the funnel rather than stumbled past it.
+
+Bug 4 is a null dereference rather than the use-after-free it naturally wants to
+be. Leaving the pointer dangling made the fault whatever the allocator happened
+to leave behind — on this host glibc's own double-free detector fired at the end
+of the session, several messages after the mistake, attributing the crash to the
+wrong place. Clearing the pointer keeps the sequence exactly as hard and makes
+the fault the target's own, which is what the rest of this file argues for.
+
+The server handles one connection at a time in one process. Serving them
+concurrently would make a crash unattributable to the session that caused it,
+which is the one thing a fuzzing target must never do.
+
 
 ## Building
 
