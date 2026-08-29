@@ -54,8 +54,42 @@ func newEnvFor(t *testing.T, target string) *env {
 		dataDir: testenv.ReachableDir(t),
 		target:  testenv.BuildTarget(t, target),
 	}
+	// Registered so that the daemon goes first: cleanups run last-registered
+	// first, and reaping targets while the daemon still supervises workers only
+	// gives the workers something to restart.
+	t.Cleanup(e.reapTargets)
 	t.Cleanup(e.stopDaemon)
 	return e
+}
+
+// reapTargets kills anything still running this test's target binary.
+//
+// A test that leaves processes behind poisons the one after it. On the session
+// tier that is not hypothetical: a managed server outlives its worker (see the
+// changelog's known issues), and the next test's campaign then spends its
+// budget on a host busy with the last one's targets — measured as a
+// forty-five-second campaign reaching its time budget having executed nothing.
+//
+// By the target's own path, so this reaps what this test started and nothing
+// else: each test builds its target into a directory of its own.
+func (e *env) reapTargets() {
+	if runtime.GOOS == "windows" {
+		return
+	}
+	out, err := exec.Command("ps", "-eo", "pid,args").Output()
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if !strings.Contains(line, e.target) {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscan(strings.TrimSpace(line), &pid); err != nil || pid <= 0 {
+			continue
+		}
+		_ = kill(pid)
+	}
 }
 
 // xfuzz runs a client command and returns its combined output.

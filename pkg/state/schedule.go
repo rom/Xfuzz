@@ -198,7 +198,7 @@ func (s *Scheduler) Pick(trace *Trace, messages int, aim Label, r *rng.Rand) Cho
 
 // pickState chooses a state to aim for, biased toward the rarely visited.
 func (s *Scheduler) pickState(r *rng.Rand) Label {
-	rare := s.model.Rarest(s.RareStates)
+	rare := s.model.Rarest(s.rareCount())
 	if len(rare) == 0 {
 		return ""
 	}
@@ -208,6 +208,38 @@ func (s *Scheduler) pickState(r *rng.Rand) Label {
 	// nowhere. Being in the tail is the signal; the ordering within it is noise.
 	return rare[r.Intn(len(rare))]
 }
+
+// rareCount is how many states count as the tail of *this* model.
+//
+// A fixed count is a bias only on a model large enough to have a tail. Measured
+// on stateful_proto: eleven states, of which "the eight rarest" is nearly all
+// of them, so aiming at a rare state was very close to aiming at a uniformly
+// random one and the whole bias was inert exactly where the model is small
+// enough to explore. A fraction keeps the tail a tail at every size; the
+// configured count remains the ceiling, because on a large model the tail is
+// long and mostly noise.
+func (s *Scheduler) rareCount() int {
+	n := s.model.Size()
+	if n <= 0 {
+		return s.RareStates
+	}
+	tail := (n + rareDivisor - 1) / rareDivisor
+	if tail < minRareStates {
+		tail = minRareStates
+	}
+	if s.RareStates > 0 && tail > s.RareStates {
+		tail = s.RareStates
+	}
+	return tail
+}
+
+// The tail is a third of the model, and never narrower than two states: one
+// would make the choice a fixed point rather than a bias, and a campaign would
+// aim at the same state until its count caught up with the next.
+const (
+	rareDivisor   = 3
+	minRareStates = 2
+)
 
 // Messages returns how many messages a session input holds.
 //

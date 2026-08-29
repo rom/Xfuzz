@@ -94,7 +94,7 @@ of them in every run.
 
 ### Fixed
 
-Twelve defects, all of which produced a campaign that looked healthy:
+Thirteen defects, all of which produced a campaign that looked healthy:
 
 - **The event bus could panic instead of dropping an event.** A subscriber's
   channel was closed by `Close` while a publisher was selecting on it, which is
@@ -104,6 +104,11 @@ Twelve defects, all of which produced a campaign that looked healthy:
   non-blocking by construction; an undroppable one retries rather than blocks,
   so it never holds the lock while waiting and a shutdown never hangs on a slow
   subscriber.
+- **The scheduler's bias toward rare states was inert on a small model.** "The
+  eight rarest" is nearly every state of an eleven-state protocol, so aiming at
+  a rare state was close to aiming at a uniformly random one — exactly where the
+  model is small enough to be worth exploring. The tail is a fraction of the
+  model now, with the configured count as its ceiling.
 - **Seed selection was not state-aware**, which left the state choice inert.
   The entry came from the coverage scheduler, so an entry that never reached
   the state being aimed at gave the message choice nothing to work with and it

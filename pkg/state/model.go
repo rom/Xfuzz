@@ -291,6 +291,13 @@ func (m *Model) Rarest(n int) []Label {
 	return labels
 }
 
+// Size is how many distinct states the model holds.
+func (m *Model) Size() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.states)
+}
+
 // Explain renders the model as a person reads it.
 //
 // The state graph in text, for the CLI and for a finding report. The exemplars
