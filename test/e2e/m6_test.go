@@ -287,8 +287,15 @@ func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 // to be visible rather than guessed at.
 func TestProtocolCoverageIsReportedSeparately(t *testing.T) {
 	e := newStatefulEnv(t)
-	path := e.campaignFile("cover", 1, 45*time.Second, "")
-	e.mustRun(4*time.Minute, "run", path)
+	// Two minutes rather than forty-five seconds. The criterion is about what
+	// is reported, not about how fast, and a campaign's budget has to exceed
+	// its own startup — building a corpus, spawning a sandboxed target,
+	// waiting for a server to listen. Measured four times: forty-five seconds
+	// passes on an idle host and reaches its budget having executed nothing on
+	// a host that has just run another campaign, which makes it a measurement
+	// of the host rather than of the tool.
+	path := e.campaignFile("cover", 1, 2*time.Minute, "")
+	e.mustRun(5*time.Minute, "run", path)
 
 	s := e.status("cover")
 	if s.Metrics.States == 0 || s.Metrics.Transitions == 0 {

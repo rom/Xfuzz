@@ -94,7 +94,7 @@ of them in every run.
 
 ### Fixed
 
-Thirteen defects, all of which produced a campaign that looked healthy:
+Fourteen defects, all of which produced a campaign that looked healthy:
 
 - **The event bus could panic instead of dropping an event.** A subscriber's
   channel was closed by `Close` while a publisher was selecting on it, which is
@@ -104,6 +104,12 @@ Thirteen defects, all of which produced a campaign that looked healthy:
   non-blocking by construction; an undroppable one retries rather than blocks,
   so it never holds the lock while waiting and a shutdown never hangs on a slow
   subscriber.
+- **A campaign that executed nothing was told its target was broken.** There
+  are two causes and naming the wrong one sends the reader to the wrong place:
+  a target that will not start, or a budget shorter than the campaign's own
+  startup — building a corpus, spawning a sandboxed target, waiting for a
+  server to listen. The health check now distinguishes them by how long the
+  campaign lived.
 - **The scheduler's bias toward rare states was inert on a small model.** "The
   eight rarest" is nearly every state of an eleven-state protocol, so aiming at
   a rare state was close to aiming at a uniformly random one — exactly where the

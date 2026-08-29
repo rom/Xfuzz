@@ -93,6 +93,12 @@ type Thresholds struct {
 	// Grace is how long a campaign is left alone before it is judged. Every
 	// check is meaningless in the first seconds of a run.
 	Grace time.Duration
+
+	// StartupGrace is how long a campaign that has executed nothing is given
+	// the benefit of the doubt about its own startup rather than its target.
+	// Longer than Grace, because a campaign is judged well before it takes
+	// this long to build a corpus and get a sandboxed target listening.
+	StartupGrace time.Duration
 }
 
 // DefaultThresholds are the boundaries used when a campaign does not set its own.
@@ -105,6 +111,7 @@ func DefaultThresholds() Thresholds {
 		CoverageStall:       30 * time.Minute,
 		MinExecsPerSecond:   10,
 		Grace:               30 * time.Second,
+		StartupGrace:        90 * time.Second,
 	}
 }
 
@@ -147,9 +154,20 @@ func Health(s Snapshot, elapsed time.Duration, t Thresholds, phase Phase) []Diag
 	// from the outside — a busy process and a rising execution count — and each
 	// has a different cause.
 	if s.Execs == 0 {
-		add("no-executions", SeverityBroken,
-			"no executions have completed",
-			"the target is failing to start; check the isolation report and the target's own output")
+		// Two causes, and blaming the wrong one sends the reader to the wrong
+		// place. A campaign that has been up for a while and executed nothing
+		// has a target that will not start. A campaign whose whole life was
+		// shorter than a campaign's startup — building the corpus, spawning a
+		// sandboxed target, waiting for a server to listen — never got as far
+		// as trying. Measured on a loaded host: a forty-five-second stateful
+		// campaign reached its time budget having executed nothing, and was
+		// told its target was broken when it was not.
+		remedy := "the target is failing to start; check the isolation report and the target's own output"
+		if elapsed < t.StartupGrace {
+			remedy = "the campaign's budget may be shorter than its own startup; " +
+				"give it longer, or check the isolation report if it still executes nothing"
+		}
+		add("no-executions", SeverityBroken, "no executions have completed", remedy)
 		return out
 	}
 	if s.Coverage == 0 {

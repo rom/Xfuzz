@@ -414,6 +414,14 @@ that entry's own trace, and mutates at or after that point — usually, because
 breaking the path is how a campaign discovers that the target accepts a message
 out of order.
 
+**A criterion has to measure the tool rather than the host it ran on.** M6's
+reporting criterion asked for protocol coverage from a forty-five-second
+campaign, which passes on an idle machine and, on one that has just finished
+another campaign, reaches its time budget having executed nothing — four times
+out of four. A campaign's budget has to exceed its own startup before anything
+it reports means anything, and a criterion whose budget does not is measuring
+the machine.
+
 **Three choices, not two, and the middle one was missing for a while.** Aiming
 at a state without choosing an entry that can reach it leaves the aim inert:
 the entry comes from the coverage scheduler, an entry that never got there has
