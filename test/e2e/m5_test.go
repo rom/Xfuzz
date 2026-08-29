@@ -36,7 +36,10 @@ type env struct {
 	target  string
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvFor(t, "simple_parser") }
+
+// newEnvFor builds the binaries, a data directory, and one planted-bug target.
+func newEnvFor(t *testing.T, target string) *env {
 	t.Helper()
 	// One reachable directory for everything: the binaries are found through
 	// PATH, and the target has to be enterable by the unprivileged identity the
@@ -49,7 +52,7 @@ func newEnv(t *testing.T) *env {
 		t:       t,
 		binDir:  bin,
 		dataDir: testenv.ReachableDir(t),
-		target:  testenv.BuildTarget(t, "simple_parser"),
+		target:  testenv.BuildTarget(t, target),
 	}
 	t.Cleanup(e.stopDaemon)
 	return e
@@ -106,12 +109,14 @@ type campaignStatus struct {
 	State   string `json:"state"`
 	Seed    uint64 `json:"seed"`
 	Metrics struct {
-		Execs      uint64  `json:"execs"`
-		ExecsPerS  float64 `json:"execs_per_second"`
-		Coverage   int     `json:"coverage"`
-		CorpusSize int     `json:"corpus_size"`
-		Findings   int     `json:"findings"`
-		Buckets    int     `json:"buckets"`
+		Execs       uint64  `json:"execs"`
+		ExecsPerS   float64 `json:"execs_per_second"`
+		Coverage    int     `json:"coverage"`
+		CorpusSize  int     `json:"corpus_size"`
+		Findings    int     `json:"findings"`
+		Buckets     int     `json:"buckets"`
+		States      int     `json:"states"`
+		Transitions int     `json:"transitions"`
 	} `json:"metrics"`
 }
 

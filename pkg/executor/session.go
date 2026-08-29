@@ -534,7 +534,7 @@ func (e *Session) session(ctx context.Context) (net.Conn, error) {
 		return e.newConnection(ctx)
 	}
 
-	switch e.opts.Reset {
+	switch e.opts.Reset { //nolint:exhaustive // the remaining policy is the default
 	case ResetRestart:
 		if err := e.restartServer(ctx); err != nil {
 			return nil, err
@@ -559,8 +559,30 @@ func (e *Session) session(ctx context.Context) (net.Conn, error) {
 
 func (e *Session) newConnection(ctx context.Context) (net.Conn, error) {
 	c, err := e.connect(ctx)
-	if err != nil {
+	if err == nil {
+		e.conn = c
+		return c, nil
+	}
+
+	// A refused connection to a target we manage is the target being down, not
+	// a harness failure. It happens constantly on a target with a reachable
+	// bug: the server dies, its socket file outlives it, and the next session
+	// dials something nothing is listening on. The exit is often still in
+	// flight at this point, which is why the check above cannot catch it — so
+	// the recovery is here, where the evidence is unambiguous.
+	//
+	// Without this a campaign ends at its first crash with "connection
+	// refused", which reads as a configuration error and is not one.
+	if e.spawner == nil {
 		return nil, fmt.Errorf("executor %s: connecting to %s: %w", e.name, e.opts.Address, err)
+	}
+	if rerr := e.restartServer(ctx); rerr != nil {
+		return nil, rerr
+	}
+	c, err = e.connect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("executor %s: connecting to %s after restarting it: %w",
+			e.name, e.opts.Address, err)
 	}
 	e.conn = c
 	return c, nil

@@ -294,6 +294,15 @@ func (e *Engine) AddSeed(ctx context.Context, data []byte, origin string) error 
 	tc.Meta.Coverage = e.currentCoverage()
 	_ = interesting
 
+	// The trace this seed produced, recorded against the seed. A trace is
+	// evidence about where one input gets to, so it belongs to the input that
+	// produced it and to no other — recording a mutant's trace against its
+	// parent, which an earlier version did, leaves the scheduler aiming with a
+	// map of somewhere else and quietly undoes the state-then-message split.
+	if e.cfg.State != nil {
+		e.cfg.State.Record(tc.ID)
+	}
+
 	e.cfg.Corpus.Add(tc)
 	return nil
 }
@@ -421,15 +430,6 @@ func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, energy in
 		}
 
 		e.trace(encoded, ek, interesting, isFinding)
-
-		// The trace belongs to the input that produced it, so it is recorded
-		// against the child when the child is kept and against the parent
-		// otherwise: an entry's trace is the scheduler's evidence about where
-		// that entry gets to, and evidence from a session nobody kept is
-		// evidence about nothing.
-		if e.cfg.State != nil && !interesting {
-			e.cfg.State.Record(parent.ID)
-		}
 
 		if isFinding {
 			e.record(finding, encoded)
