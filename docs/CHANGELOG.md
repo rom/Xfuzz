@@ -158,7 +158,10 @@ threaded through verification as well as bucketing because divergence is also a
 question about class. And a corpus loaded from the store is traced before
 fuzzing starts: `LoadCorpus` deliberately admits without executing, which for a
 stateful campaign means every entry is scheduled without a trace and the
-state-then-message split never engages.
+state-then-message split never engages. Only the entries that need it — that
+path is also how a worker takes in what its siblings found, every few seconds
+for the length of a campaign, and re-running the whole corpus each time would
+cost more executions than the campaign spends fuzzing.
 
 ### Known issues
 

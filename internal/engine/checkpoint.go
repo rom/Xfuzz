@@ -177,7 +177,14 @@ func (e *Engine) LoadCorpus(entries []*corpus.Testcase) (loaded, skipped int, er
 	return loaded, skipped, nil
 }
 
-// traceCorpus runs each entry once so that it has a trace to be scheduled by.
+// traceCorpus runs the entries that have no trace, so that they have one to be
+// scheduled by.
+//
+// Only the ones that need it. LoadCorpus is also how a worker takes in the
+// entries its siblings found, which arrives every few seconds for the length of
+// a campaign — re-running the whole corpus each time would cost more executions
+// than the campaign spends fuzzing, and would grow with the corpus rather than
+// with what arrived.
 //
 // Best effort: an entry that fails to run keeps no trace and is scheduled
 // without one, which is the same position it was in before. A failure here must
@@ -186,6 +193,9 @@ func (e *Engine) LoadCorpus(entries []*corpus.Testcase) (loaded, skipped int, er
 func (e *Engine) traceCorpus(ctx context.Context) {
 	for i := 0; i < e.cfg.Corpus.Len(); i++ {
 		tc := e.cfg.Corpus.At(i)
+		if e.cfg.State.HasTrace(tc.ID) {
+			continue
+		}
 		_, err := e.cfg.Executor.Run(ctx,
 			executor.Input{Bytes: tc.Bytes, Node: tc.Input}, e.cfg.Observers)
 		if err != nil {

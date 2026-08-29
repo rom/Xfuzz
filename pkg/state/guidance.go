@@ -105,6 +105,11 @@ func (g *Guidance) Record(id corpus.Digest) {
 	g.Traces.Put(id, g.Observer.Trace())
 }
 
+// HasTrace reports whether an entry's trace is already known.
+func (g *Guidance) HasTrace(id corpus.Digest) bool {
+	return g != nil && g.Traces.Get(id) != nil
+}
+
 // Coverage returns how much of the protocol the campaign has explored.
 func (g *Guidance) Coverage() Coverage {
 	if g == nil {
