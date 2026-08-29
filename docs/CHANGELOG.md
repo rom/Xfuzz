@@ -11,6 +11,126 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M5 Daemon, API, and CLI (2026-08-29)
+
+The tool becomes a tool. A campaign is a file, a daemon runs it, and the command
+line is a client of the same API the console will use.
+
+**`pkg/campaign` — the campaign file is the only interface (ADR-0016)**
+
+- YAML schema with includes and profiles, a generated JSON Schema published by
+  the daemon, semantic validation separate from schema validation, and
+  termination conditions so a campaign in CI ends deterministically (ASR-0015).
+- Which keys the file actually contained is recorded, so "unset" and "set to
+  zero" are distinguishable. Without it `triage.trials: 0` read as unset and
+  silently became five, which is the opposite of what was asked for.
+- `explain` renders the fully resolved configuration with every default marked
+  as one, and its YAML form is a file that runs the same campaign — which is how
+  a run gets pinned to an artefact after the fact.
+
+**`internal/daemon` — campaigns outlive their clients (ADR-0003)**
+
+- Campaign lifecycle, worker supervision with restart budgets, corpus sync
+  batched so a burst of discoveries is one broadcast rather than one per entry,
+  and ensemble strategies.
+- The event bus is lossy by design for high-rate kinds and says so: subscribers
+  are coalescing or lossy, and every drop is counted rather than hidden. Metrics
+  events carry the campaign's aggregate, not one worker's counters, because a
+  coalescing subscriber keeps only the newest and the newest worker is not the
+  campaign.
+- Triage runs here, on a bounded queue off the message loop: every new finding
+  is verified and minimised, and `replay` and `minimize` ask the same runner on
+  demand. The subprocess tier rather than the fork server — for the question "is
+  this crash real", a fresh process per run is the answer that can be trusted.
+- The resolved configuration is written into each run's working directory and
+  workers are pointed at that copy, so a worker runs what was submitted rather
+  than re-resolving a file whose relative paths mean something else from where
+  it stands.
+
+**`internal/api` — six services over HTTP/JSON (ADR-0024)**
+
+- Campaign, metrics, corpus, finding, event and admin services, with a generated
+  OpenAPI description and a drift test, over a Unix socket by default.
+- Events as server-sent events: a close fit for a stream that is
+  server-to-client and droppable, and one that reconnects without client code.
+- The route table is data, which is what makes the CLI/API parity test possible
+  at all (ASR-0005).
+
+**`internal/worker` and `internal/metrics`**
+
+- A worker builds an engine from a resolved campaign file and speaks the
+  protocol over its descriptor pair. Its loop runs in slices bounded by time as
+  well as by count: bounded only by a count, a slow target makes one slice last
+  as long as it likes, and since commands are handled between slices the worker
+  would look alive and silent for the whole of it.
+- Counters, a thinned historical series, and named health diagnostics that say
+  what to do about each finding rather than only that something is wrong.
+
+**`cmd/xfuzz`, `cmd/xfuzzd`, `cmd/xfuzz-worker`**
+
+- The full command set, including `replay`, `minimize` and `doctor`, with daemon
+  auto-start for the single-binary case — which is still the daemon, not an
+  in-process bypass.
+- No flag alters fuzzing semantics: those live in the campaign file, so what ran
+  is a reviewable artefact rather than a shell history entry.
+
+### Measured — M5 exit criteria
+
+| Criterion | Result |
+| --- | --- |
+| Multi-worker campaigns scale ≥ 0.85 × N | 2.69–2.72× on 3 workers (90–91% efficiency), measured as executions completed in a fixed window rather than as a reported rate |
+| `xfuzz explain` renders the fully resolved config | Settings the file never mentions are shown and marked `(default)`; the YAML form validates as a campaign file |
+| Killing the daemon mid-campaign resumes cleanly | SIGKILL at 13 corpus entries / 19 edges; a new daemon took over on the same data directory and finished at 40 entries / 29 edges with the finding intact, and no worker outlived the daemon |
+| CLI/API parity test passes | Both directions, as a unit test over the route table |
+
+### Fixed
+
+Four defects, three of which produced no error at all:
+
+- **A PID namespace changes the semantics of the program inside it.** The first
+  process in one is PID 1, and the kernel discards signals sent to PID 1 from
+  inside its own namespace unless a handler is installed. `abort(3)` raises
+  SIGABRT at itself, so a target executed directly inside a PID namespace never
+  aborts: glibc falls back to dereferencing a null pointer and the campaign
+  records a segmentation fault where an assertion failed — filed under the wrong
+  bucket, and minimised to preserve the wrong failure class. The namespace is
+  now used for fork-server targets, whose executions are children, and left out
+  for one-shot ones.
+- **A campaign file's relative paths were resolved against whichever process
+  read the file.** Resolution now always produces absolute paths, the client
+  sends an absolute name, and the daemon hands workers the resolved copy it
+  wrote itself.
+- **A process's exit was published as a single value on a channel**, and three
+  parties race for it — `Wait`, `Kill`, and the context watcher. The first took
+  it and the others blocked forever on a process that had already died, which
+  looks exactly like a target that will not die. It is now a closed channel, and
+  the wait after a kill is bounded: a descendant that escapes its process group
+  should leak a process, not wedge the fuzzer.
+- **A worker's output went to `/dev/null`**, so a worker that died before it
+  could speak the protocol left "exited with status 1" as the whole diagnosis.
+
+Also: shared memory was created owned by the fuzzer while the target runs under
+an unprivileged uid, so coverage was always empty — the region is chowned to the
+target's identity rather than opened up; a sandboxed target cannot enter a 0700
+directory, which is what `t.TempDir` returns and what most build directories
+are, so campaigns refuse to start with the blocking component named; health
+diagnostics no longer report "2 of 2 workers are not reporting" about a campaign
+that finished on its budget; and `Worker.Close` waits for `Run` rather than
+releasing the engine underneath it.
+
+### Changed
+
+- `internal/testenv` replaces three drifting copies of the same integration-test
+  fixtures. It is allowlisted for `spawn-confinement` in `tools/archlint`, for
+  the same reason `tools/` is: it exists to invoke the toolchain.
+- `version.Info` carries JSON tags, so the API is snake_case throughout rather
+  than snake_case except for one object.
+- The engine's 10% overhead budget is not asserted under `-race`, where the
+  fuzzer's own code is instrumented and the native target it is measured against
+  is not.
+- `test/e2e` holds the milestone exit criteria, measured against the shipped
+  binaries rather than the packages behind them.
+
 ### Added — M4 Storage, triage, and safety (2026-08-28)
 
 Crashes become findings, and the tool becomes safe to run.

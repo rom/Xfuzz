@@ -10,7 +10,7 @@
 ┌──────────────┐        ┌──────────────────┐
 │  xfuzz (CLI) │        │  Web console     │   embedded SPA, embed.FS
 └──────┬───────┘        └────────┬─────────┘
-       │ gRPC                    │ REST + WebSocket
+       │ HTTP/JSON               │ HTTP/JSON + SSE
        └───────────┬─────────────┘
                    ▼
         ┌────────────────────────┐
@@ -470,6 +470,19 @@ seed file ──► codec.Decode ──► ir.Node ──► Corpus (store: SQL 
                                                                 ▼
                                                         console / CLI / export
 ```
+
+The two halves of that fork run in different processes. Everything down to
+`Objective` is the worker's, in its hot loop; triage is the daemon's, on a
+bounded queue. A worker that waited for a reproducer to be re-run a hundred
+times would be a worker that had stopped fuzzing, and the queue is bounded
+because a campaign that has found an easy bug produces findings faster than they
+can be triaged — the overflow is dropped and counted rather than allowed to
+stall the loop.
+
+Triage stays available after the campaign has finished, which is the point of
+the daemon owning findings rather than the workers: `xfuzz replay` and
+`xfuzz minimize` re-run a reproducer through the same runner, days later, on a
+campaign whose workers are long gone (ADR-0003).
 
 ## 6. Storage model
 

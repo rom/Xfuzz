@@ -87,6 +87,9 @@ Linux host frequently reports `moderate` rather than `strong`, and it should:
 - **No sandbox helper.** Resource limits and the seccomp filter can only be
   installed by the process that will become the target (§ 3.1a), so without
   `xfuzz-sandbox` on the path neither is in force.
+- **No PID namespace for a one-shot target.** A PID namespace changes the
+  behaviour of the program inside it (§ 3.1b), so it is applied only where it
+  does not: to a fork server, whose executions are its children.
 
 Each of these appears in `xfuzz`'s isolation report with the sentence explaining
 it, because a campaign refused for insufficient isolation has to be told what is
@@ -114,6 +117,31 @@ Two details of that ordering are load-bearing:
   every file owned by anyone outside its namespace — the corpus included — as
   owned by itself, and may write all of it. Targets run as 65533, checked
   against the kernel's own `overflowuid` rather than assumed.
+
+### 3.1b Why a one-shot target gets no PID namespace
+
+A PID namespace makes the first process in it PID 1, and the kernel treats PID 1
+specially: it discards signals sent to it from inside its own namespace unless a
+handler is installed. `abort(3)` is implemented by raising SIGABRT at oneself, so
+a target that *is* PID 1 cannot abort. glibc's fallback is to dereference a null
+pointer, and the campaign records a segmentation fault where an assertion failed.
+
+That is not a cosmetic difference. Bucketing separates findings by their failure
+class and minimisation preserves it, so every `assert()`, every Rust panic under
+`panic=abort`, and every sanitizer report would be filed under the wrong bug —
+with nothing anywhere reporting an error. A sandbox that changes what the program
+under test *does* is not a sandbox, it is a second bug.
+
+A fork server is unaffected: the process it forks for each execution is PID 2 and
+upwards, with ordinary signal semantics. So the namespace is used for fork-server
+targets and left out for one-shot ones, and the isolation report says so. The
+remaining gap is a fork server whose target aborts during startup, before its
+first fork; that surfaces as a handshake failure rather than as a finding.
+
+Making it work for one-shot targets too would need the helper to fork rather than
+exec and to carry the child's wait status back out of band, because PID 1 cannot
+re-raise the signal its child died from either. That is a worthwhile change and
+it is not this one.
 
 The seccomp policy is a **denylist**, not an allowlist, and that is a deliberate
 weakening. The targets are arbitrary programs in arbitrary languages; an

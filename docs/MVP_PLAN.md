@@ -298,19 +298,69 @@ session minimisation needs no second delta debugger.
 
 ---
 
-### M5 — Daemon, API, and CLI *(3–4 weeks)*
+### M5 — Daemon, API, and CLI ✅ *delivered*
 
-- `pkg/campaign`: YAML schema, JSON Schema publication, resolution, validation,
-  includes and profiles, termination conditions.
-- `internal/api`: gRPC services and REST gateway per ARCHITECTURE.md § 9.
-- `internal/daemon`: campaign manager, worker supervision, event bus with
-  downsampling, corpus sync between workers, ensemble strategies.
-- `cmd/xfuzz`: the full command set, with daemon auto-start.
-- `internal/metrics`: counters, historical series, named health diagnostics.
+The tool becomes a tool: a campaign is a file, a daemon runs it, and the
+command line is a client of the same API the console will use.
 
-**Exit:** Multi-worker campaigns scale ≥ 0.85 × N; `xfuzz explain` renders the
-fully resolved config; killing the daemon mid-campaign resumes cleanly; CLI/API
-parity test passes.
+- `pkg/campaign`: YAML schema, generated JSON Schema, resolution, validation,
+  includes and profiles, termination conditions, `explain`.
+- `internal/api`: six services over HTTP/JSON with a generated OpenAPI
+  description, and events over SSE (ADR-0024, which supersedes ADR-0003's gRPC
+  transport while keeping its service decomposition).
+- `internal/daemon`: campaign manager, worker supervision with restart budgets,
+  event bus with coalescing and honest drop counts, corpus sync between
+  workers, ensemble strategies, on-demand and automatic triage.
+- `internal/worker`: builds an engine from a resolved campaign file and speaks
+  the worker protocol.
+- `cmd/xfuzz`, `cmd/xfuzzd`, `cmd/xfuzz-worker`: the full command set, with
+  daemon auto-start.
+- `internal/metrics`: counters, thinned historical series, named health
+  diagnostics.
+
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| Multi-worker campaigns scale ≥ 0.85 × N | **2.69–2.72× on 3 workers, 90–91% efficiency**, measured as executions completed in a fixed window rather than as a reported rate |
+| `xfuzz explain` renders the fully resolved config | Every setting the file never mentions is shown and marked `(default)`, and the YAML form validates as a campaign file |
+| Killing the daemon mid-campaign resumes cleanly | SIGKILL at 13 corpus entries / 19 edges; a new daemon took over on the same data directory and finished at **40 entries / 29 edges with the finding intact**, and no worker outlived the daemon that started it |
+| CLI/API parity test passes | Every route reachable from a command and every command mapped to routes, both directions, as a unit test over the route table |
+
+**Scaling is measured in executions, not in the reported rate.** The rate is
+part of what is under test: a campaign that aggregates its workers' counters
+wrongly passes a rate check while doing nothing of the sort — which is exactly
+the defect this milestone had. Executions completed in a fixed wall-clock
+window is the number a person would count by hand.
+
+**Three capabilities the plan did not list, and one it did.** `xfuzz replay`,
+`xfuzz minimize` and `xfuzz doctor` are named in DESIGN.md § 7 and were missing
+from "the full command set". Adding the first two meant connecting
+`internal/triage` — built in M4, and until now resolved, validated, rendered by
+`explain`, and doing nothing at all. The daemon owns it, because a finding is
+re-examined after every worker has exited.
+
+**A PID namespace changes the semantics of the program inside it.** The first
+process in one is PID 1, and the kernel discards signals sent to PID 1 from
+inside its own namespace unless a handler is installed. `abort(3)` raises
+SIGABRT at itself, so a target executed directly inside a PID namespace never
+aborts — glibc falls back to dereferencing a null pointer, and the campaign
+records a segmentation fault where an assertion failed. Every `assert()`, every
+Rust panic under `panic=abort`, and every sanitizer report would be filed under
+the wrong bucket and minimised to preserve the wrong failure class, with
+nothing anywhere reporting an error. The namespace is now used for fork-server
+targets, whose executions are children and therefore unaffected, and left out
+for one-shot ones. It was invisible until the milestone's own triage re-ran a
+finding the fork server had already classified and disagreed with it.
+
+**Relative paths belong to whoever typed them.** A campaign file names its
+target relative to itself; the client, the daemon and each worker have three
+different working directories, and only the client knows what the user meant.
+Resolution now always produces absolute paths, and the daemon writes the
+resolved configuration into the run's own directory and points workers at that
+copy — so a worker runs what was submitted rather than re-resolving a file it
+may not be able to see, and the directory ends up holding the record of what
+ran.
 
 ---
 

@@ -180,7 +180,7 @@ classic silent failures: "stability is 40 %", "0 % of inputs reach the harness",
 | **Guidance** | coverage-guided, directed, feedback-driven, hybrid — combinable |
 | **Input generation** | corpus mutation, grammar generation, or both interleaved |
 | **Instrumentation** | sancov, Go native, fork server, Frida, QEMU, Intel PT, ptrace, runtime agents, black-box |
-| **Interfaces** | CLI, web console, gRPC/REST API |
+| **Interfaces** | CLI, web console, HTTP/JSON API |
 | **Platforms** | Linux (full), macOS, Windows |
 | **Extensibility** | native Go, out-of-process plugins, Starlark scripting |
 
@@ -244,7 +244,7 @@ xfuzz init <target>          scaffold a campaign file
 xfuzz validate <file>        schema + semantic validation
 xfuzz explain <file>         fully resolved effective config, defaults included
 xfuzz run <file>             launch (auto-starts a private daemon if needed)
-xfuzz stat <campaign>        live metrics
+xfuzz status <campaign>      live metrics
 xfuzz findings <campaign>    list, filter, export
 xfuzz replay <finding>       deterministic re-execution
 xfuzz minimize <finding>     re-run minimisation
@@ -256,8 +256,10 @@ xfuzz doctor                 platform capabilities and why anything is missing
 view, findings triage, corpus browser (IR tree and hex), config editor, grammar
 workbench, safety and audit. Embedded in the binary; no CDN, no external assets.
 
-**API** — gRPC with a REST/JSON gateway; the single source of truth both clients
-speak to (ADR-0003).
+**API** — HTTP/JSON with a generated OpenAPI description, and events as
+server-sent events; the single source of truth both clients speak to (ADR-0003
+for the daemon architecture and the service decomposition, ADR-0024 for the
+transport, which supersedes ADR-0003's choice of gRPC).
 
 ## 8. Non-goals
 

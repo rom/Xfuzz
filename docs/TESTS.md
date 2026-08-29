@@ -316,6 +316,26 @@ Also gated: **vulnerability scanning** (`govulncheck`) on every build, and once
 the campaign schema exists, a **config schema check** that every example
 campaign file in the docs validates against it.
 
+## 11a. Milestone exit criteria
+
+Each milestone in `MVP_PLAN.md` ends with criteria that are *measurements*, not
+assertions: a bucket count, a reduction percentage, a scaling factor. From M5
+they live in `test/e2e` as ordinary Go tests behind the `integration` tag, and
+they run against the **shipped binaries** rather than the packages behind them.
+
+That is the point of them being separate. A criterion about how a campaign
+scales across worker processes, or about what survives losing the daemon, cannot
+be answered from inside one package — and answering it in-process would skip
+exactly the parts it is about: process launch, the descriptor protocol, the
+store on disk, the client's working directory.
+
+They also measure the thing rather than what the system reports about it. M5's
+scaling criterion counts executions completed in a fixed window rather than
+reading the reported rate, because the reported rate is part of what is under
+test: a campaign that aggregates its workers' counters wrongly passes a rate
+check while doing nothing of the sort. That defect was real, and a rate check
+would have passed over it.
+
 ## 12. Security tests
 
 Security properties from [SECURITY.md](SECURITY.md) are executable tests, not
@@ -360,7 +380,7 @@ the configuration.
 
 ```
 make test              # layers 1, 2 — fast, pre-commit
-make test-integration  # layers 3, 4, 5, 8
+make test-integration  # layers 3, 4, 5, 8, and the milestone exit criteria
 make test-security     # layer 12
 make bench             # layer 6 — measure, writing bench/current.txt
 make bench-check       # layer 6 — measure and gate against the baseline

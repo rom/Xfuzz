@@ -5,14 +5,17 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M3 complete — it is a fuzzer now.** Coverage-guided campaigns run
-> end to end against instrumented native targets and find every planted bug in
-> the test corpus (3/3 and 4/4), with 3.7% engine overhead and byte-identical
-> traces between runs of the same seed. The structured IR, 24 mutation
-> operators, the `.xfg` grammar language, a fork server, a C coverage runtime,
-> and a composable feedback pipeline are all in. M4 (storage, triage and the
-> sandbox) is next. See [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to
-> v0.1.
+> **Status: M5 complete — it is a tool now.** A campaign is a file,
+> `xfuzz run campaign.yaml` runs it, and a daemon owns it from there: multiple
+> worker processes sharing a corpus, live metrics and findings over an
+> HTTP/JSON API, findings verified and minimised as they arrive, and a run that
+> survives losing the daemon. Multi-worker campaigns reach 90% scaling
+> efficiency; behind them are a structured IR, 24 mutation operators, the
+> `.xfg` grammar language, a fork server, a C coverage runtime, a composable
+> feedback pipeline, a content-addressed store, and a Linux sandbox that
+> reports what is actually in force rather than what was asked for. M6
+> (stateful protocol fuzzing) is next. See
+> [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
 
 ## The idea
 
@@ -73,6 +76,20 @@ make lint       # gofmt, vet, architecture, docs, and licence checks
 make ci         # everything CI runs
 make help       # every target
 ```
+
+## A first campaign
+
+```
+xfuzz init --target ./parser > campaign.yaml
+xfuzz validate campaign.yaml     # schema and semantics, without running it
+xfuzz explain campaign.yaml      # every setting that will apply, defaults marked
+xfuzz run campaign.yaml          # starts a private daemon if none is running
+```
+
+Fuzzing behaviour lives in the file, never in flags: what ran should be a
+reviewable artefact rather than a shell history entry (ADR-0016). `xfuzz doctor`
+reports what the host can enforce and why anything is missing, before a campaign
+depends on it.
 
 The architecture is enforced, not merely documented: `tools/archlint` fails the
 build when a layering rule in
