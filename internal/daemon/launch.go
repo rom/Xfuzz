@@ -49,8 +49,12 @@ func (c *Campaign) workerArgs(id int) []string {
 	for _, p := range c.Config.Profiles {
 		args = append(args, "--profile", p)
 	}
-	if dir := c.Config.Storage.Dir; dir != "" {
-		args = append(args, "--store", dir)
+	// The store the daemon actually opened, not the one the file asked for. A
+	// campaign that names no directory still has a store — the daemon's default
+	// — and a worker told only what the file said looks for one that does not
+	// exist and reports that it has nothing to fuzz from.
+	if c.store != nil {
+		args = append(args, "--store", c.store.Dir())
 	}
 	return args
 }

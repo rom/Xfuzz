@@ -148,20 +148,25 @@ func (s *Spawner) Run(ctx context.Context, spec executor.ProcSpec) (executor.Pro
 
 	res := executor.ProcResult{}
 	var waitErr error
+	reaped := true
 	select {
 	case waitErr = <-done:
 	case <-timer.C:
 		res.TimedOut = true
 		s.terminate(cmd)
-		waitErr = <-done
+		reaped, waitErr = reap(done)
 	case <-ctx.Done():
 		s.terminate(cmd)
-		<-done
+		reap(done)
 		return executor.ProcResult{}, ctx.Err()
 	}
 
 	res.Duration = time.Since(start)
-	if stdout != nil {
+	// Only once the child has been reaped. Capturing output means Wait also
+	// waits for the goroutines copying it, so until Wait returns those
+	// goroutines may still be appending to these buffers and reading them here
+	// would be a race against a process we have already given up on.
+	if stdout != nil && reaped {
 		res.Stdout, res.Stderr = stdout.buf, stderr.buf
 	}
 	fillStatus(&res, cmd, waitErr)
@@ -235,31 +240,62 @@ func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
 	_ = cg.Add(cmd.Process.Pid)
 }
 
+// ReapTimeout bounds how long a caller waits for a killed process to be
+// reaped.
+//
+// SIGKILL cannot be refused, so a process group that does not disappear is one
+// that is no longer entirely in the group: a descendant that called setsid, or
+// one wedged in an uninterruptible kernel call. Either keeps the pipes open,
+// and exec.Cmd.Wait does not return until they close. Waiting forever for that
+// would trade a leaked process for a wedged fuzzer, which is the worse of the
+// two — a leak is visible in ps and bounded by the campaign, whereas a wedge
+// stops everything and looks like a hang with no cause.
+const ReapTimeout = 5 * time.Second
+
 // handle is a running process an executor talks to over its lifetime.
+//
+// Several parties race for its end: the executor calling Wait, a Close calling
+// Kill, and the goroutine watching the context. That is why the exit is
+// published by closing a channel rather than by sending on one. A value can be
+// taken only once, so with a one-shot channel the first waiter wins and every
+// other one blocks forever on a process that has already gone — a deadlock that
+// looks exactly like a target that will not die.
 type handle struct {
 	cmd     *exec.Cmd
 	control *os.File
 	status  *os.File
-	done    chan error
-	result  executor.ProcResult
 	start   time.Time
-	waited  bool
+
+	// exited is closed once the child is reaped; result and waitErr are final
+	// from that moment and are only read after a receive on it, which is what
+	// makes them safe to publish without a lock.
+	exited  chan struct{}
+	result  executor.ProcResult
+	waitErr error
 }
 
 func (h *handle) Pid() int          { return h.cmd.Process.Pid }
 func (h *handle) Control() *os.File { return h.control }
 func (h *handle) Status() *os.File  { return h.status }
 
+// reap waits for the child and publishes its result.
+func (h *handle) reap() {
+	h.waitErr = h.cmd.Wait()
+	h.result.Duration = time.Since(h.start)
+	fillStatus(&h.result, h.cmd, h.waitErr)
+	close(h.exited)
+}
+
 func (h *handle) Wait() (executor.ProcResult, error) {
-	if !h.waited {
-		err := <-h.done
-		h.waited = true
-		h.result.Duration = time.Since(h.start)
-		fillStatus(&h.result, h.cmd, err)
-	}
+	<-h.exited
 	return h.result, nil
 }
 
+// Kill ends the process group and reaps it.
+//
+// Safe to call more than once and from more than one goroutine: closing an
+// already-closed file and killing an already-dead group are both harmless, and
+// the wait is a broadcast.
 func (h *handle) Kill() error {
 	if h.control != nil {
 		h.control.Close()
@@ -271,9 +307,14 @@ func (h *handle) Kill() error {
 		return nil
 	}
 	err := platform.KillGroup(h.cmd.Process.Pid)
-	if !h.waited {
-		<-h.done
-		h.waited = true
+
+	timer := time.NewTimer(ReapTimeout)
+	defer timer.Stop()
+	select {
+	case <-h.exited:
+	case <-timer.C:
+		return fmt.Errorf("safety: process %d did not die within %s of SIGKILL; "+
+			"something escaped its process group", h.cmd.Process.Pid, ReapTimeout)
 	}
 	return err
 }
@@ -320,7 +361,7 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 		cmd.Stdout, cmd.Stderr = devNull(), devNull()
 	}
 
-	h := &handle{cmd: cmd, control: ctlWrite, status: stRead, done: make(chan error, 1), start: time.Now()}
+	h := &handle{cmd: cmd, control: ctlWrite, status: stRead, exited: make(chan struct{}), start: time.Now()}
 	if err := cmd.Start(); err != nil {
 		ctlRead.Close()
 		ctlWrite.Close()
@@ -336,18 +377,35 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 	ctlRead.Close()
 	stWrite.Close()
 
-	go func() { h.done <- cmd.Wait() }()
+	go h.reap()
 
 	if ctx != nil && ctx.Done() != nil {
 		go func() {
 			select {
 			case <-ctx.Done():
 				h.Kill()
-			case <-h.done:
+			case <-h.exited:
 			}
 		}()
 	}
 	return h, nil
+}
+
+// reap takes a process's wait result, giving up after ReapTimeout.
+//
+// Giving up is not the same as forgetting: done is buffered, so the waiting
+// goroutine still finishes and the process is still reaped if it ever dies. All
+// that is abandoned is this caller's interest in the answer, which is what
+// keeps a target that escaped its process group from wedging the fuzz loop.
+func reap(done <-chan error) (reaped bool, waitErr error) {
+	timer := time.NewTimer(ReapTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return true, err
+	case <-timer.C:
+		return false, nil
+	}
 }
 
 func (s *Spawner) terminate(cmd *exec.Cmd) {

@@ -92,6 +92,13 @@ type Sandbox struct {
 	// Workdir is the directory the target runs in. Empty means the caller's.
 	Workdir string
 
+	// Target is the executable the confined process will run. It is checked
+	// against the identity the target is given, because giving a target a
+	// separate uid also takes away its ability to execute a binary the fuzzer
+	// left in a private directory — and the symptom of that is a campaign that
+	// starts, reports healthy workers, and never completes an execution.
+	Target string
+
 	// Network keeps the target in the host's network namespace, for a campaign
 	// whose target is a network client or server. It is the single largest
 	// relaxation available and is audited as an escape hatch.
@@ -262,6 +269,9 @@ func (s *Sandbox) Check(ctx context.Context) error {
 	if err := s.checkWorkdir(); err != nil {
 		return err
 	}
+	if err := s.checkTarget(); err != nil {
+		return err
+	}
 	if s.Auditor != nil {
 		if err := s.Auditor.Audit(ctx, "", AuditSandboxLevel, s.Explain()); err != nil {
 			return err
@@ -347,6 +357,51 @@ func ownerOf(fi os.FileInfo) string {
 		return "an unknown user"
 	}
 	return fmt.Sprintf("uid %d gid %d", uid, gid)
+}
+
+// ErrTargetUnreachable is returned when the target's identity cannot execute
+// the target.
+var ErrTargetUnreachable = errors.New("safety: the target cannot execute its own binary")
+
+// checkTarget verifies the target will be able to run.
+//
+// The same change that keeps a target out of the corpus — giving it a uid of its
+// own — is what makes a binary in a 0700 build directory unrunnable. Caught here
+// it is one sentence naming the directory; missed, it is a campaign that looks
+// healthy, reports two live workers, and completes no executions at all.
+func (s *Sandbox) checkTarget() error {
+	uid, gid := s.dropTo()
+	if uid == 0 || s.Target == "" {
+		return nil
+	}
+	abs, err := filepath.Abs(s.Target)
+	if err != nil {
+		return err
+	}
+
+	var walked string
+	parts := strings.Split(filepath.Dir(abs), string(filepath.Separator))
+	for _, part := range parts {
+		walked = filepath.Join(walked, string(filepath.Separator), part)
+		fi, err := os.Stat(walked)
+		if err != nil {
+			return fmt.Errorf("%w: %s: %w", ErrTargetUnreachable, walked, err)
+		}
+		if !permitted(fi, uid, gid, 0o1) {
+			return fmt.Errorf("%w: %s is mode %v and owned by %s, so uid %d cannot enter it "+
+				"to reach %s", ErrTargetUnreachable, walked, fi.Mode().Perm(), ownerOf(fi),
+				uid, filepath.Base(abs))
+		}
+	}
+	fi, err := os.Stat(abs)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %w", ErrTargetUnreachable, abs, err)
+	}
+	if !permitted(fi, uid, gid, 0o1) || !permitted(fi, uid, gid, 0o4) {
+		return fmt.Errorf("%w: %s is mode %v and owned by %s, so uid %d cannot read and "+
+			"execute it", ErrTargetUnreachable, abs, fi.Mode().Perm(), ownerOf(fi), uid)
+	}
+	return nil
 }
 
 // hatches lists the relaxations this configuration takes.
@@ -442,6 +497,22 @@ func (s *Sandbox) dropTo() (uid, gid int) {
 
 // wantRORoot reports whether the helper should build a read-only root.
 func (s *Sandbox) wantRORoot() bool { return s.roRoot && !s.WritableRoot }
+
+// TargetIdentity returns the uid and gid a target will run as, or -1 when it
+// keeps the fuzzer's own.
+//
+// Exposed because confinement is not only a restriction: anything the target
+// legitimately needs — its working directory, its binary, the shared region it
+// writes coverage into — has to be reachable by the identity confinement gives
+// it, and only this package knows what that identity is.
+func (s *Sandbox) TargetIdentity() (uid, gid int) {
+	s.Probe()
+	u, g := s.dropTo()
+	if u == 0 {
+		return -1, -1
+	}
+	return u, g
+}
 
 // probeReadOnlyRoot finds out whether a read-only root can actually be
 // established here.

@@ -603,3 +603,11 @@ func (e *Engine) SortedBuckets() []string {
 	sort.Strings(out)
 	return out
 }
+
+// Corpus returns the engine's corpus.
+//
+// Exposed so a worker can report newly admitted entries to the daemon, which
+// owns the store. The engine deliberately does not persist anything itself: it
+// is the hot loop, and everything that would slow it down is somebody else's
+// job (ARCHITECTURE section 4).
+func (e *Engine) Corpus() *corpus.Corpus { return e.cfg.Corpus }

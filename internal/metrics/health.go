@@ -113,8 +113,27 @@ func DefaultThresholds() Thresholds {
 // elapsed is how long the campaign has been running, which several checks need:
 // a campaign three seconds old has no coverage and no rate, and reporting that
 // as broken would teach people to ignore the diagnostics — which would cost more
-// than the checks are worth.
-func Health(s Snapshot, elapsed time.Duration, t Thresholds) []Diagnostic {
+// than the checks are worth. phase is the same argument at the other end of a
+// campaign's life.
+// Phase is whether the campaign is still fuzzing.
+//
+// It changes what an observation means rather than what it is. Every worker
+// silent is a broken campaign while one is meant to be running and is simply
+// what a finished campaign looks like, and a diagnostic that cannot tell the
+// two apart teaches people to ignore the whole panel.
+type Phase int
+
+const (
+	// PhaseRunning is a campaign that is meant to be fuzzing right now.
+	PhaseRunning Phase = iota
+
+	// PhaseStopped is a campaign that has finished, been stopped, or is
+	// paused. Its diagnostics are a post-mortem: what the run was like, not
+	// what is wrong with it now.
+	PhaseStopped
+)
+
+func Health(s Snapshot, elapsed time.Duration, t Thresholds, phase Phase) []Diagnostic {
 	var out []Diagnostic
 	add := func(name string, sev Severity, summary, remedy string) {
 		out = append(out, Diagnostic{Name: name, Severity: sev, Summary: summary, Remedy: remedy})
@@ -195,7 +214,7 @@ func Health(s Snapshot, elapsed time.Duration, t Thresholds) []Diagnostic {
 			"findings are arriving faster than they can be verified; they are almost "+
 				"certainly duplicates, but the count is reported rather than hidden")
 	}
-	if s.Workers > 0 && s.WorkersHealthy < s.Workers {
+	if phase == PhaseRunning && s.Workers > 0 && s.WorkersHealthy < s.Workers {
 		add("workers-down", SeverityWarn,
 			fmt.Sprintf("%d of %d workers are not reporting", s.Workers-s.WorkersHealthy, s.Workers),
 			"a worker that keeps dying usually means the target crashes on startup "+

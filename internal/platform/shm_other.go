@@ -23,6 +23,12 @@ type unsupportedShmProvider struct{}
 // NewSharedMemoryProvider returns a provider that reports itself unavailable.
 func NewSharedMemoryProvider() executor.SharedMemoryProvider { return unsupportedShmProvider{} }
 
+// NewSharedMemoryProviderFor returns the same unsupported provider: there is no
+// identity to grant access to where there is no shared memory.
+func NewSharedMemoryProviderFor(uid, gid int) executor.SharedMemoryProvider {
+	return unsupportedShmProvider{}
+}
+
 func (unsupportedShmProvider) Available() bool { return false }
 
 func (unsupportedShmProvider) Create(int) (executor.SharedMemory, error) {

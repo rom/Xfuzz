@@ -69,11 +69,31 @@ func (s *unixShm) Close() error {
 	return first
 }
 
-type unixShmProvider struct{ dir string }
+type unixShmProvider struct {
+	dir      string
+	uid, gid int
+}
 
 // NewSharedMemoryProvider returns the platform's shared memory implementation.
 func NewSharedMemoryProvider() executor.SharedMemoryProvider {
-	return &unixShmProvider{dir: shmDir()}
+	return &unixShmProvider{dir: shmDir(), uid: -1, gid: -1}
+}
+
+// NewSharedMemoryProviderFor returns a provider whose regions the given
+// identity can write.
+//
+// The coverage map is the one thing a confined target *must* be able to write:
+// it is how the target reports where it went. Giving the target a uid of its
+// own — which is what keeps it out of the corpus — otherwise leaves it unable
+// to open an owner-only region, and the symptom is the worst kind there is: a
+// campaign that executes happily and reports no coverage at all, which looks
+// exactly like a target that was never instrumented.
+//
+// The region stays mode 0600 rather than becoming world-writable. It is owned
+// by the target instead, so any other local user still cannot corrupt a
+// campaign's coverage.
+func NewSharedMemoryProviderFor(uid, gid int) executor.SharedMemoryProvider {
+	return &unixShmProvider{dir: shmDir(), uid: uid, gid: gid}
 }
 
 func (p *unixShmProvider) Available() bool { return true }
@@ -100,14 +120,23 @@ func (p *unixShmProvider) Create(size int) (executor.SharedMemory, error) {
 		os.Remove(path)
 		return nil, fmt.Errorf("platform: mapping %s: %w", path, err)
 	}
-	// The region is world-writable for the target, which runs confined and may
-	// have a different uid once the sandbox lands. It lives in a private
-	// temporary file that is removed on Close.
+	// Owner-only, in a private temporary file removed on Close. When the target
+	// runs as a different user the owner is changed to *it* rather than the
+	// mode being widened: the target must write the map, and nobody else on the
+	// host should be able to.
 	if err := os.Chmod(path, 0o600); err != nil {
 		syscall.Munmap(data)
 		f.Close()
 		os.Remove(path)
 		return nil, fmt.Errorf("platform: securing %s: %w", path, err)
+	}
+	if p.uid > 0 {
+		if err := os.Chown(path, p.uid, p.gid); err != nil {
+			syscall.Munmap(data)
+			f.Close()
+			os.Remove(path)
+			return nil, fmt.Errorf("platform: giving uid %d access to %s: %w", p.uid, path, err)
+		}
 	}
 	return &unixShm{path: path, file: f, data: data}, nil
 }

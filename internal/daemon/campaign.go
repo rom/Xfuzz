@@ -225,6 +225,7 @@ func (c *Campaign) prepareSafety(ctx context.Context) error {
 	c.sandbox = &safety.Sandbox{
 		Require:  level,
 		Name:     c.Config.Name,
+		Target:   c.Config.Target.Path,
 		Network:  s.Network,
 		Writable: s.Writable,
 		Workdir:  c.Config.Target.Dir,
@@ -517,6 +518,11 @@ func (c *Campaign) Status() Status {
 		elapsed = end.Sub(started)
 	}
 
+	phase := metrics.PhaseStopped
+	if state == StateRunning {
+		phase = metrics.PhaseRunning
+	}
+
 	return Status{
 		Name:      c.Config.Name,
 		State:     state,
@@ -527,7 +533,7 @@ func (c *Campaign) Status() Status {
 		Reason:    reason,
 		Isolation: c.sandbox.Level().String(),
 		Metrics:   snap,
-		Health:    metrics.Health(snap, elapsed, metrics.DefaultThresholds()),
+		Health:    metrics.Health(snap, elapsed, metrics.DefaultThresholds(), phase),
 		Workers:   c.sup.Status(),
 	}
 }
@@ -550,7 +556,17 @@ func (c *Campaign) onMessage(worker int, m *Message) {
 	case MsgMetrics:
 		if m.Metrics != nil {
 			c.metrics.Report(worker, *m.Metrics)
-			c.bus.Publish(Event{Kind: EventMetrics, Campaign: c.Config.Name, Worker: worker, Data: m.Metrics})
+			// The campaign's aggregate, not the reporting worker's own
+			// counters. Two things make that the right payload. A reader wants
+			// the campaign's rate — one worker's figure looks like a campaign
+			// running at half speed on two workers, and disagrees with the
+			// final status for the same run. And the bus coalesces this kind on
+			// the premise that only the newest matters, which holds for a total
+			// and does not hold for a stream of per-worker numbers where the
+			// newest is whichever worker happened to report last. Per-worker
+			// counters are still exact, from the workers endpoint.
+			snap := c.metrics.Snapshot()
+			c.bus.Publish(Event{Kind: EventMetrics, Campaign: c.Config.Name, Data: &snap})
 		}
 
 	case MsgCorpus:

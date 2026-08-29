@@ -175,7 +175,7 @@ func healthy() Snapshot {
 }
 
 func TestHealthySnapshotHasNothingToSay(t *testing.T) {
-	ds := Health(healthy(), time.Hour, DefaultThresholds())
+	ds := Health(healthy(), time.Hour, DefaultThresholds(), PhaseRunning)
 	if len(ds) != 0 {
 		t.Fatalf("a healthy campaign produced diagnostics: %v", ds)
 	}
@@ -185,7 +185,7 @@ func TestHealthIsSilentDuringTheGracePeriod(t *testing.T) {
 	// Every check is meaningless in the first seconds of a run, and a
 	// diagnostic that fires on every campaign start teaches people to ignore
 	// diagnostics.
-	if ds := Health(Snapshot{}, time.Second, DefaultThresholds()); len(ds) != 0 {
+	if ds := Health(Snapshot{}, time.Second, DefaultThresholds(), PhaseRunning); len(ds) != 0 {
 		t.Fatalf("a three-second-old campaign was judged: %v", ds)
 	}
 }
@@ -247,7 +247,7 @@ func TestHealthNamesEachSilentFailure(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := Health(tc.snap(healthy()), time.Hour, th)
+			ds := Health(tc.snap(healthy()), time.Hour, th, PhaseRunning)
 			var found *Diagnostic
 			for i := range ds {
 				if ds[i].Name == tc.want {
@@ -282,7 +282,7 @@ func TestHealthOrdersBySeverity(t *testing.T) {
 	s.Stability = 0.3
 	s.LastNewCoverage = s.At.Add(-2 * time.Hour)
 
-	ds := Health(s, time.Hour, DefaultThresholds())
+	ds := Health(s, time.Hour, DefaultThresholds(), PhaseRunning)
 	if len(ds) < 3 {
 		t.Fatalf("expected several diagnostics, got %v", ds)
 	}
@@ -301,7 +301,7 @@ func TestHealthStopsAtNoExecutions(t *testing.T) {
 	// produce a page of noise. One accurate diagnostic beats nine derived ones.
 	s := healthy()
 	s.Execs = 0
-	ds := Health(s, time.Hour, DefaultThresholds())
+	ds := Health(s, time.Hour, DefaultThresholds(), PhaseRunning)
 	if len(ds) != 1 || ds[0].Name != "no-executions" {
 		t.Fatalf("diagnostics = %v, want only no-executions", ds)
 	}

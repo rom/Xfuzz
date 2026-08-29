@@ -27,9 +27,28 @@ type harness struct {
 	dir    string
 }
 
+// reachableDir is a temporary directory a confined target can enter.
+//
+// Not t.TempDir: that returns a subdirectory of a 0700 parent it made for the
+// test, and the sandbox runs targets under an unprivileged uid that cannot
+// traverse it. A campaign refuses to start on that, so a harness using
+// t.TempDir would be testing the refusal rather than the API.
+func reachableDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "xfuzz-api-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	dir := t.TempDir()
+	dir := reachableDir(t)
 	d, err := daemon.New(daemon.Options{DataDir: dir})
 	if err != nil {
 		t.Fatal(err)
