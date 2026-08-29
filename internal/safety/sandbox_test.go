@@ -237,3 +237,44 @@ func TestSandboxCloseIsSafeToRepeat(t *testing.T) {
 		t.Fatalf("second Close: %v", err)
 	}
 }
+
+func TestUnconfinedIsHonestAboutItself(t *testing.T) {
+	sb := &Sandbox{Unconfined: true}
+	if got := sb.Level(); got != LevelNone {
+		t.Fatalf("an unconfined sandbox reports %v", got)
+	}
+	if !strings.Contains(sb.Explain(), "not sandboxed") &&
+		!strings.Contains(sb.Explain(), "switched off") {
+		t.Fatalf("Explain does not say the process is unconfined:\n%s", sb.Explain())
+	}
+	// It applies no namespaces and asks the helper for nothing.
+	if o := sb.namespaces(); o.UserNS || o.MountNS || o.PIDNS || o.NetNS {
+		t.Fatalf("an unconfined sandbox still requested namespaces: %+v", o)
+	}
+	sb.HelperPath = helperForTest(t)
+	sb.Probe()
+	path, argv := sb.wrap("/bin/true", []string{"/bin/true"}, "")
+	if path != "/bin/true" || len(argv) != 1 {
+		t.Fatalf("an unconfined spawn went through the helper: %q %v", path, argv)
+	}
+}
+
+func TestUnconfinedCannotSatisfyARequiredLevel(t *testing.T) {
+	// The exemption is for Xfuzz's own processes. It must never be a way to
+	// run a campaign that asked for confinement without it.
+	sb := &Sandbox{Unconfined: true, Require: LevelMinimal}
+	err := sb.Check(context.Background())
+	if !errors.Is(err, ErrIsolationTooWeak) {
+		t.Fatalf("err = %v, want ErrIsolationTooWeak", err)
+	}
+}
+
+func TestTrustedSpawnerIsUnconfinedAndSaysSo(t *testing.T) {
+	sp := NewTrustedSpawner()
+	if sp.IsolationLevel() != LevelNone.String() {
+		t.Fatalf("the trusted spawner reports %q", sp.IsolationLevel())
+	}
+	if NewSpawner().IsolationLevel() == LevelNone.String() {
+		t.Fatal("the ordinary spawner is also unconfined; the default must confine")
+	}
+}

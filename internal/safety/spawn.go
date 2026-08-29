@@ -53,13 +53,30 @@ type Spawner struct {
 	defaultOnce sync.Once
 }
 
-// NewSpawner returns a spawner with defaults.
+// NewSpawner returns a spawner with defaults. Its targets are confined.
 func NewSpawner() *Spawner {
 	return &Spawner{
 		MaxOutputBytes: 1 << 20,
 		KillGrace:      100 * time.Millisecond,
 		DefaultTimeout: 5 * time.Second,
 	}
+}
+
+// NewTrustedSpawner returns a spawner for Xfuzz's own processes.
+//
+// The daemon starts workers, and a worker is this binary rather than a target.
+// Confining it would nest a namespace inside a namespace and strip the
+// privilege the worker needs to confine the target itself — so the exemption is
+// for the process, never for what it runs. Every target a worker executes still
+// goes through a confining spawner of the worker's own.
+//
+// It is a separate constructor rather than a flag on Run so that "this spawn is
+// not confined" is a decision made once, in one visible place, by code that can
+// say why.
+func NewTrustedSpawner() *Spawner {
+	s := NewSpawner()
+	s.Sandbox = &Sandbox{Unconfined: true}
+	return s
 }
 
 // IsolationLevel implements executor.Spawner.

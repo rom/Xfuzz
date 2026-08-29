@@ -114,6 +114,19 @@ type Sandbox struct {
 	// NoSeccomp disables the syscall denylist.
 	NoSeccomp bool
 
+	// Unconfined skips confinement entirely.
+	//
+	// It exists for one case: Xfuzz spawning *its own* processes. A worker is
+	// this binary, not a target, and confining it would nest a namespace inside
+	// a namespace and take away the privilege it needs to confine the target
+	// itself. The target inside a worker is still confined, by that worker's own
+	// sandbox — the exemption covers the process, not what it runs.
+	//
+	// It is a field rather than a separate constructor so that it appears in
+	// the configuration a reviewer reads, and Level reports "none" when it is
+	// set, so nothing can claim confinement it does not have.
+	Unconfined bool
+
 	// Limits are the per-target resource caps.
 	Limits platform.Limits
 
@@ -162,6 +175,9 @@ func (s *Sandbox) Probe() (Level, platform.SandboxCapabilities) {
 
 // level computes the isolation level from the mechanisms actually available.
 func (s *Sandbox) level() Level {
+	if s.Unconfined {
+		return LevelNone
+	}
 	c := s.caps
 	// The filter and the resource limits both need the helper, because both can
 	// only be installed by the process that becomes the target.
@@ -192,6 +208,11 @@ func (s *Sandbox) Explain() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "isolation %s (%s)", level, caps)
 	notes := append([]string(nil), caps.Notes...)
+	if s.Unconfined {
+		notes = append(notes,
+			"confinement is switched off for this process: it is one of Xfuzz's own, "+
+				"and the target it runs is confined by its own sandbox")
+	}
 	if s.helper == "" {
 		notes = append(notes,
 			HelperName+" was not found beside the running binary or on PATH; "+
@@ -229,6 +250,10 @@ func (s *Sandbox) Explain() string {
 
 // Check refuses a campaign whose required level the host cannot reach.
 func (s *Sandbox) Check(ctx context.Context) error {
+	if s.Unconfined && s.Require != LevelNone {
+		return fmt.Errorf("%w: the sandbox is explicitly unconfined but %s is required",
+			ErrIsolationTooWeak, s.Require)
+	}
 	level, _ := s.Probe()
 	if level < s.Require {
 		return fmt.Errorf("%w: %s is required, %s is available\n%s",
@@ -336,6 +361,9 @@ func (s *Sandbox) hatches() []string {
 	if s.NoSeccomp {
 		out = append(out, "seccomp: the syscall denylist is disabled")
 	}
+	if s.Unconfined {
+		out = append(out, "unconfined: this process is one of Xfuzz's own and is not sandboxed")
+	}
 	if s.WritableRoot {
 		out = append(out, "filesystem: the root is writable rather than read-only")
 	}
@@ -365,16 +393,32 @@ func (s *Sandbox) findHelper() (string, error) {
 		}
 		return s.HelperPath, nil
 	}
+	return FindTool(HelperName)
+}
+
+// FindTool locates one of Xfuzz's own binaries.
+//
+// Beside the running binary first, because that is where a released tarball
+// puts it and because it is the copy whose version matches; then PATH, for a
+// development tree where the binaries are installed. Nothing else: searching
+// the working directory would let whatever can write there choose which binary
+// Xfuzz runs, which for a tool that spawns processes is a straightforward way
+// to hand it a different program.
+//
+// It lives in this package because looking a program up on PATH is part of
+// deciding what to execute, and deciding what to execute is what the spawn
+// boundary is for (ARCHITECTURE section 2).
+func FindTool(name string) (string, error) {
 	if self, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(self), HelperName)
+		candidate := filepath.Join(filepath.Dir(self), name)
 		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
 			return candidate, nil
 		}
 	}
-	if p, err := exec.LookPath(HelperName); err == nil {
+	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("safety: %s was not found", HelperName)
+	return "", fmt.Errorf("safety: %s was not found beside the running binary or on PATH", name)
 }
 
 // privileged reports whether the fuzzer itself runs as root.
@@ -390,7 +434,7 @@ func (s *Sandbox) privileged() bool { return os.Geteuid() == 0 }
 // dropTo returns the identity the target should run as, or zero when the
 // fuzzer cannot give it one.
 func (s *Sandbox) dropTo() (uid, gid int) {
-	if !s.privileged() {
+	if s.Unconfined || !s.privileged() {
 		return 0, 0
 	}
 	return platform.UnprivilegedID()
@@ -413,7 +457,7 @@ func (s *Sandbox) wantRORoot() bool { return s.roRoot && !s.WritableRoot }
 // execution of the campaign. Not asking for one that could be built would give
 // up real confinement. Probing is what avoids having to guess.
 func (s *Sandbox) probeReadOnlyRoot() bool {
-	if s.helper == "" || !s.caps.MountNS || s.WritableRoot {
+	if s.Unconfined || s.helper == "" || !s.caps.MountNS || s.WritableRoot {
 		return false
 	}
 	probe, err := exec.LookPath("true")
@@ -442,6 +486,9 @@ func (s *Sandbox) probeReadOnlyRoot() bool {
 
 // namespaces returns the namespace options for this policy.
 func (s *Sandbox) namespaces() platform.SandboxOptions {
+	if s.Unconfined {
+		return platform.SandboxOptions{}
+	}
 	c := s.caps
 	uid, gid := platform.UnprivilegedID()
 	o := platform.SandboxOptions{
@@ -478,7 +525,7 @@ func (s *Sandbox) namespaces() platform.SandboxOptions {
 // silently lost its resource limits is worse than one that never had them: the
 // campaign would still report itself as limited.
 func (s *Sandbox) wrap(path string, argv []string, dir string) (string, []string) {
-	if s.helper == "" {
+	if s.Unconfined || s.helper == "" {
 		return path, argv
 	}
 	args := []string{s.helper}
@@ -523,6 +570,9 @@ func (s *Sandbox) wrap(path string, argv []string, dir string) (string, []string
 
 // ensureCgroup creates the campaign's cgroup on first use.
 func (s *Sandbox) ensureCgroup() *platform.Cgroup {
+	if s.Unconfined {
+		return nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cgroup != nil {
