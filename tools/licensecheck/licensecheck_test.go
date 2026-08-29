@@ -69,6 +69,21 @@ func TestDetectsPolicyBreaches(t *testing.T) {
 			want:   "NOTICE records version",
 		},
 		{
+			// The dangerous case: a module under both licences where one is
+			// forbidden. Accepting it because the other arm is allowed would
+			// let a GPL obligation in under an MIT label.
+			name:   "conjunction with a forbidden term",
+			gomod:  "module x\n\ngo 1.24\n\nrequire example.com/a v1.0.0\n",
+			notice: "## Components\n\n| Module | Version | License | Used for |\n| --- | --- | --- | --- |\n| example.com/a | v1.0.0 | MIT AND GPL-3.0 | things |\n",
+			want:   "forbidden",
+		},
+		{
+			name:   "disjunction is not interpreted",
+			gomod:  "module x\n\ngo 1.24\n\nrequire example.com/a v1.0.0\n",
+			notice: "## Components\n\n| Module | Version | License | Used for |\n| --- | --- | --- | --- |\n| example.com/a | v1.0.0 | MIT OR GPL-3.0 | things |\n",
+			want:   "not in the ADR-0018 allowed set",
+		},
+		{
 			name:   "unknown license",
 			gomod:  "module x\n\ngo 1.24\n\nrequire example.com/a v1.0.0\n",
 			notice: "## Components\n\n| Module | Version | License | Used for |\n| --- | --- | --- | --- |\n| example.com/a | v1.0.0 | WTFPL | things |\n",
@@ -92,6 +107,46 @@ func TestDetectsPolicyBreaches(t *testing.T) {
 				t.Errorf("expected a problem containing %q, got %v", tc.want, ps)
 			}
 		})
+	}
+}
+
+func TestAcceptsAConjunctionOfAllowedLicenses(t *testing.T) {
+	// gopkg.in/yaml.v3 is the real instance: the libyaml-derived files are MIT
+	// and the rest is Apache-2.0, so the module is under both at once.
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"),
+		"module x\n\ngo 1.24\n\nrequire example.com/dual v1.0.0\n")
+	write(t, filepath.Join(dir, "NOTICE"),
+		"## Components\n\n| Module | Version | License | Used for |\n| --- | --- | --- | --- |\n"+
+			"| example.com/dual | v1.0.0 | MIT AND Apache-2.0 | things |\n")
+
+	ps, err := Check(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ps) != 0 {
+		t.Fatalf("a module under two allowed licences was rejected: %v", ps)
+	}
+}
+
+func TestSplitLicense(t *testing.T) {
+	for in, want := range map[string][]string{
+		"MIT":                       {"MIT"},
+		"MIT AND Apache-2.0":        {"MIT", "Apache-2.0"},
+		"  MIT AND  BSD-3-Clause  ": {"MIT", "BSD-3-Clause"},
+		"MIT OR GPL-3.0":            {"MIT OR GPL-3.0"},
+	} {
+		got := SplitLicense(in)
+		if len(got) != len(want) {
+			t.Errorf("SplitLicense(%q) = %v, want %v", in, got, want)
+			continue
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Errorf("SplitLicense(%q) = %v, want %v", in, got, want)
+				break
+			}
+		}
 	}
 }
 

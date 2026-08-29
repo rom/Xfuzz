@@ -1,0 +1,430 @@
+{
+  "$id": "https://xfuzz.dev/schema/campaign/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A campaign file is the only interface for defining what a campaign does (ADR-0016). Every field is optional in the schema; what is actually required is reported by `xfuzz validate`, which can say things a schema cannot — that a target path is executable, that a scope is present when the campaign leaves the host, that a grammar exists.",
+  "properties": {
+    "description": {
+      "description": "Free-text description.",
+      "type": "string"
+    },
+    "feedback": {
+      "additionalProperties": false,
+      "description": "What counts as interesting.",
+      "properties": {
+        "coverage": {
+          "description": "Coverage backend: sancov, blackbox, or none.",
+          "type": "string"
+        },
+        "map_size": {
+          "description": "Coverage map size in bytes.",
+          "type": "integer"
+        },
+        "novelty": {
+          "description": "Treat novel output as interesting.",
+          "type": "boolean"
+        },
+        "objectives": {
+          "description": "What counts as a finding: crash, hang, oom, sanitizer.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "format": {
+      "additionalProperties": false,
+      "description": "How bytes are interpreted as structure.",
+      "properties": {
+        "codec": {
+          "description": "Built-in codec: raw or png.",
+          "type": "string"
+        },
+        "dictionary": {
+          "description": "Path to an AFL-format dictionary.",
+          "type": "string"
+        },
+        "grammar": {
+          "description": "Path to an .xfg grammar.",
+          "type": "string"
+        },
+        "max_input_bytes": {
+          "description": "Largest input mutation may produce.",
+          "type": "integer"
+        },
+        "suppress": {
+          "description": "Derivations to leave inconsistent: length, count, offset, checksum.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "include": {
+      "description": "Files merged in before this one, in order.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "mutation": {
+      "additionalProperties": false,
+      "description": "Which operators run and how they are weighted.",
+      "properties": {
+        "operators": {
+          "description": "Operator names to enable. Empty enables all.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "stack": {
+          "description": "Operators applied per mutation.",
+          "type": "integer"
+        },
+        "trim_budget": {
+          "description": "Executions spent trimming each new corpus entry. 0 disables.",
+          "type": "integer"
+        },
+        "weights": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Per-operator selection weights.",
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "name": {
+      "description": "Campaign name, unique within a store.",
+      "type": "string"
+    },
+    "profiles": {
+      "additionalProperties": {
+        "type": "object"
+      },
+      "description": "Named overlays, applied on top when selected.",
+      "type": "object"
+    },
+    "safety": {
+      "additionalProperties": false,
+      "description": "Isolation, resource limits, network scope, authorization.",
+      "properties": {
+        "authorization": {
+          "additionalProperties": false,
+          "description": "Who authorised this campaign, and under what reference.",
+          "properties": {
+            "attestation": {
+              "description": "Statement that the operator is authorised to test the declared scope.",
+              "type": "string"
+            },
+            "operator": {
+              "description": "Who is running this campaign.",
+              "type": "string"
+            },
+            "reference": {
+              "description": "Engagement identifier, ticket, or approval reference.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "attestation",
+            "operator",
+            "reference"
+          ],
+          "type": "object"
+        },
+        "cpu_limit": {
+          "description": "Per-target CPU time cap.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "file_size_limit": {
+          "description": "Largest file the target may write.",
+          "type": "integer"
+        },
+        "isolation": {
+          "description": "Minimum isolation level: none, minimal, moderate, strong.",
+          "type": "string"
+        },
+        "memory_limit": {
+          "description": "Per-target memory cap in bytes.",
+          "type": "integer"
+        },
+        "network": {
+          "description": "Leave the target in the host network namespace.",
+          "type": "boolean"
+        },
+        "process_limit": {
+          "description": "Per-target process cap.",
+          "type": "integer"
+        },
+        "scope": {
+          "additionalProperties": false,
+          "description": "Network allowlist for campaigns that leave the host.",
+          "properties": {
+            "acknowledge_public": {
+              "description": "Acknowledge that the scope reaches public address space.",
+              "type": "boolean"
+            },
+            "allow": {
+              "description": "Allowed destinations: host, address, or CIDR, optionally with :ports.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "loopback": {
+              "description": "Permit loopback. Defaults to true.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "writable": {
+          "description": "Extra writable paths under the read-only root.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "seeds": {
+      "additionalProperties": false,
+      "description": "Where the starting corpus comes from.",
+      "properties": {
+        "dirs": {
+          "description": "Corpus directories to import.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "format": {
+          "description": "Corpus layout: auto, afl, libfuzzer, or raw.",
+          "type": "string"
+        },
+        "generate": {
+          "description": "Seeds to generate from the grammar when no corpus is given.",
+          "type": "integer"
+        },
+        "inline": {
+          "description": "Literal seed inputs, as strings.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_file_size": {
+          "description": "Largest seed file to import, in bytes.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "stop": {
+      "additionalProperties": false,
+      "description": "Termination conditions. A campaign must be able to end.",
+      "properties": {
+        "after": {
+          "description": "Wall-clock budget.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "execs": {
+          "description": "Execution budget.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "findings": {
+          "description": "Stop after this many distinct finding buckets.",
+          "type": "integer"
+        },
+        "no_new_coverage": {
+          "description": "Stop after this long without new coverage.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "storage": {
+      "additionalProperties": false,
+      "description": "Where the corpus and findings live, and their budgets.",
+      "properties": {
+        "checkpoint_interval": {
+          "description": "How often resume state is written.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "dir": {
+          "description": "Store directory. Empty uses the daemon's data directory.",
+          "type": "string"
+        },
+        "max_corpus_bytes": {
+          "description": "Corpus size cap in bytes. 0 is unlimited.",
+          "type": "integer"
+        },
+        "max_corpus_entries": {
+          "description": "Corpus entry cap. 0 is unlimited.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "target": {
+      "additionalProperties": false,
+      "description": "What to fuzz and how to deliver input to it.",
+      "properties": {
+        "args": {
+          "description": "Arguments after the program name. @@ is replaced with the input file path.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "dir": {
+          "description": "Working directory for the target.",
+          "type": "string"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Environment variables for the target.",
+          "type": "object"
+        },
+        "executor": {
+          "description": "Delivery tier: auto, forkserver, subprocess, or inproc.",
+          "type": "string"
+        },
+        "input": {
+          "description": "How input is delivered: stdin, file, or arg.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Path to the target executable.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Per-execution timeout.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "type": "object"
+    },
+    "triage": {
+      "additionalProperties": false,
+      "description": "How findings are verified, minimised, and bucketed.",
+      "properties": {
+        "enabled": {
+          "description": "Run triage. Defaults to true.",
+          "type": "boolean"
+        },
+        "minimize": {
+          "description": "Minimise reproducers. Defaults to true.",
+          "type": "boolean"
+        },
+        "minimize_budget": {
+          "description": "Executions spent minimising one reproducer.",
+          "type": "integer"
+        },
+        "strategy": {
+          "description": "Bucketing strategy: chain, frames, marker, coverage, or signal.",
+          "type": "string"
+        },
+        "trials": {
+          "description": "Verification runs per finding.",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "version": {
+      "description": "Campaign file format version.",
+      "type": "integer"
+    },
+    "workers": {
+      "additionalProperties": false,
+      "description": "How many workers and what strategies they run.",
+      "properties": {
+        "count": {
+          "description": "Worker processes. 0 means one per core.",
+          "type": "integer"
+        },
+        "strategies": {
+          "description": "Per-worker strategy overlays, assigned round-robin.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "mutation": {
+                "additionalProperties": false,
+                "description": "Mutation overrides for workers running this strategy.",
+                "properties": {
+                  "operators": {
+                    "description": "Operator names to enable. Empty enables all.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "stack": {
+                    "description": "Operators applied per mutation.",
+                    "type": "integer"
+                  },
+                  "trim_budget": {
+                    "description": "Executions spent trimming each new corpus entry. 0 disables.",
+                    "type": "integer"
+                  },
+                  "weights": {
+                    "additionalProperties": {
+                      "type": "integer"
+                    },
+                    "description": "Per-operator selection weights.",
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              },
+              "name": {
+                "description": "Strategy name, for reports.",
+                "type": "string"
+              },
+              "schedule": {
+                "description": "Power schedule: fast, rand, or roundrobin.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "name"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "sync_interval": {
+          "description": "How often workers exchange corpus entries.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "name"
+  ],
+  "title": "Xfuzz campaign",
+  "type": "object"
+}

@@ -33,6 +33,27 @@ var Forbidden = map[string]bool{
 	"LGPL-3.0": true, "SSPL-1.0": true, "BUSL-1.1": true, "CC-BY-NC-4.0": true,
 }
 
+// SplitLicense breaks an SPDX expression into the terms that must each be
+// allowed.
+//
+// Only conjunction is understood. "MIT AND Apache-2.0" means the module is under
+// both, so both must pass — that is a real and common case, and a checker that
+// cannot express it forces whoever adds the dependency to record one half and
+// omit the other. Disjunction ("MIT OR GPL-3.0", where the user chooses) is
+// deliberately *not* accepted: it would need the NOTICE to record which arm was
+// chosen and why, which is a judgement, and a judgement belongs in review rather
+// than in a string a tool interprets. Record the chosen arm instead.
+func SplitLicense(expr string) []string {
+	parts := strings.Split(expr, " AND ")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Problem is a single policy breach.
 type Problem struct {
 	Module string
@@ -75,20 +96,26 @@ func Check(dir string) ([]Problem, error) {
 		}
 		byModule[c.Module] = c
 
-		switch {
-		case Forbidden[c.License]:
-			ps = append(ps, Problem{c.Module, fmt.Sprintf(
-				"license %s is forbidden by ADR-0018; this dependency cannot be used", c.License)})
-		case Allowed[c.License]:
-		default:
-			if note, ok := Conditional[c.License]; ok {
+		// Every term of the expression must pass. A module under "MIT AND
+		// Apache-2.0" is under both at once, so being allowed under one of them
+		// is not enough — and recording only the convenient half is how a
+		// licence inventory becomes fiction.
+		for _, term := range SplitLicense(c.License) {
+			switch {
+			case Forbidden[term]:
 				ps = append(ps, Problem{c.Module, fmt.Sprintf(
-					"license %s is conditional (%s); confirm the condition holds and move the entry to the allowed set",
-					c.License, note)})
-				continue
+					"license %s is forbidden by ADR-0018; this dependency cannot be used", term)})
+			case Allowed[term]:
+			default:
+				if note, ok := Conditional[term]; ok {
+					ps = append(ps, Problem{c.Module, fmt.Sprintf(
+						"license %s is conditional (%s); confirm the condition holds and move the entry to the allowed set",
+						term, note)})
+					continue
+				}
+				ps = append(ps, Problem{c.Module, fmt.Sprintf(
+					"license %q is not in the ADR-0018 allowed set", term)})
 			}
-			ps = append(ps, Problem{c.Module, fmt.Sprintf(
-				"license %q is not in the ADR-0018 allowed set", c.License)})
 		}
 	}
 

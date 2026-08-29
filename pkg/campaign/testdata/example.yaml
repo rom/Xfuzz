@@ -1,0 +1,94 @@
+# An annotated campaign file.
+#
+# This is the file `xfuzz init` scaffolds and the one the documentation shows.
+# It is loaded and validated by the test suite, so it cannot drift into
+# something that does not run — an example that does not work is worse than no
+# example, because it is the first thing anybody copies.
+
+name: png-decoder
+
+description: |
+  Structure-aware fuzzing of a PNG decoder, with the checksum recomputed after
+  every mutation so the parser is reached rather than rejected at the header.
+
+target:
+  path: ./target
+  # @@ is replaced with the input file path, following AFL's convention.
+  # args: ["--decode", "@@"]
+  # input: file
+  input: stdin
+  timeout: 5s
+
+seeds:
+  dirs: [./seeds]
+  format: auto
+
+format:
+  codec: png
+  # A grammar makes mutation structural: lengths and CRCs are recomputed after
+  # every change, so a mutated file still parses far enough to be interesting.
+  # grammar: ./png.xfg
+  max_input_bytes: 1048576
+
+  # Leaving a derivation inconsistent on purpose is how the campaign also
+  # reaches the target's validation code.
+  # suppress: [checksum]
+
+mutation:
+  stack: 4
+  trim_budget: 48
+
+feedback:
+  coverage: sancov
+  map_size: 65536
+  objectives: [crash, hang, oom, sanitizer]
+
+workers:
+  count: 4
+  sync_interval: 5s
+
+  # Strategy diversity across workers beats N identical workers. Workers take
+  # these round-robin.
+  strategies:
+    - name: explore
+      schedule: fast
+    - name: even
+      schedule: roundrobin
+
+safety:
+  # The campaign refuses to start if the host cannot provide this much.
+  isolation: minimal
+  memory_limit: 2147483648
+  process_limit: 64
+
+storage:
+  # How often resume state is written, and therefore how much a kill costs.
+  checkpoint_interval: 30s
+  max_corpus_bytes: 1073741824
+
+triage:
+  enabled: true
+  trials: 5
+  minimize: true
+  strategy: chain
+
+stop:
+  # A campaign should be able to end. CI depends on it.
+  after: 1h
+
+profiles:
+  # xfuzz run example.yaml --profile ci
+  ci:
+    workers:
+      count: 2
+    stop:
+      execs: 2000000
+      after: 10m
+    triage:
+      minimize_budget: 500
+
+  # A long soak, for finding what an hour does not.
+  soak:
+    stop:
+      after: 7d
+      no_new_coverage: 6h

@@ -13,6 +13,12 @@ mechanically rather than audited before release.
 
 ## Policy
 
+An expression may name several licenses joined by `AND`, for a module that is
+under all of them at once — `gopkg.in/yaml.v3` is the example here. Every term
+must be permitted. `OR` is not accepted: choosing an arm of a disjunction is a
+judgement, and the chosen arm should be recorded rather than the choice deferred
+to a string a tool interprets.
+
 | Class | Licenses | Rule |
 | --- | --- | --- |
 | Allowed | Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Unlicense, Zlib, BSD-3-Clause-Clear | Permitted with attribution below |
@@ -36,6 +42,7 @@ Reimplementation from published papers and specifications is the required path.
 | github.com/mattn/go-isatty | v0.0.24 | MIT | Transitive: terminal detection in modernc.org/sqlite |
 | github.com/ncruces/go-strftime | v1.0.0 | MIT | Transitive: `strftime` for SQLite's date functions |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Transitive: big-integer multiplication in modernc.org/mathutil |
+| gopkg.in/yaml.v3 | v3.0.1 | MIT AND Apache-2.0 | Campaign files: YAML parsing with comments and key order preserved (ADR-0016, ADR-0011) |
 | golang.org/x/sys | v0.47.0 | BSD-3-Clause | Namespace, seccomp, rlimit, and cgroup syscalls in `internal/platform` (ADR-0012); also transitive for modernc.org/libc |
 | modernc.org/libc | v1.74.4 | BSD-3-Clause | Transitive: the C runtime modernc.org/sqlite is transpiled against |
 | modernc.org/mathutil | v1.7.1 | BSD-3-Clause | Transitive: arithmetic helpers for modernc.org/libc |
