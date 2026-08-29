@@ -61,7 +61,12 @@ test-integration: ## Layers 3, 4, 5, 8, and the milestone exit criteria
 	# concurrently makes each one's numbers a function of what the others happen
 	# to be doing, and a scaling measurement taken while three other packages
 	# fuzz is not a measurement.
-	$(GO) test -race -p 1 -tags integration -timeout 40m ./...
+	#
+	# The timeout is generous because the milestone criteria are campaigns, and
+	# one of them budgets for the tail of a distribution rather than its median.
+	# A suite that runs out of time reports nothing at all, which is worse than
+	# a suite that takes a while.
+	$(GO) test -race -p 1 -tags integration -timeout 75m ./...
 
 .PHONY: test-security
 test-security: ## Layer 12: sandbox escape, scope guard, audit integrity
