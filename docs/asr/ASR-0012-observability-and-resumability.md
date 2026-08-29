@@ -53,4 +53,4 @@ practical.
 
 ## Satisfied by
 
-ADR-0003, ADR-0008, ADR-0011
+ADR-0003, ADR-0008, ADR-0011, ADR-0024

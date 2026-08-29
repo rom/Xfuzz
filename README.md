@@ -59,7 +59,7 @@ Everything lives in [`docs/`](docs/README.md):
 | [SECURITY.md](docs/SECURITY.md) | Threat model and controls |
 | [TESTS.md](docs/TESTS.md) | Test strategy |
 | [CHANGELOG.md](docs/CHANGELOG.md) | Release history |
-| [adr/](docs/adr/README.md) | 23 architecture decisions, with rejected alternatives |
+| [adr/](docs/adr/README.md) | 24 architecture decisions, with rejected alternatives |
 | [asr/](docs/asr/README.md) | 15 architecturally significant requirements |
 
 ## Building

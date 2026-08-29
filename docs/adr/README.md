@@ -44,6 +44,7 @@ extended Nygard template.
 | [ADR-0021](ADR-0021-layered-differential-and-self-fuzzing-tests.md) | Layered, differential, and self-fuzzing test strategy | Accepted | ASR-0007, ASR-0008, ASR-0011, ASR-0014 |
 | [ADR-0022](ADR-0022-sandbox-helper-and-seccomp-denylist.md) | Sandbox helper process, seccomp denylist, and honest isolation levels | Accepted | ASR-0006, ASR-0010 |
 | [ADR-0023](ADR-0023-go-1-25-toolchain-floor.md) | Go 1.25 as the toolchain floor | Accepted | ASR-0015 |
+| [ADR-0024](ADR-0024-http-json-api-instead-of-grpc.md) | HTTP/JSON API instead of gRPC for v1 | Accepted | ASR-0005, ASR-0012, ASR-0015 |
 
 Three ADRs serve no single ASR: **ADR-0018** and **ADR-0019** are project
 constraints (licensing, identity) rather than responses to a requirement, and

@@ -586,7 +586,9 @@ is not, so degraded capability is visible rather than mysterious.
 
 ## 9. API surface
 
-gRPC services, with a REST/JSON gateway for the browser and scripting:
+HTTP/JSON, described by a generated OpenAPI document (ADR-0024, which supersedes
+ADR-0003's gRPC transport choice while keeping its service decomposition and its
+daemon architecture intact). Six route groups:
 
 | Service | Responsibility |
 | --- | --- |
@@ -601,7 +603,14 @@ CLI commands and console views are both defined against this surface, and a
 parity test asserts neither side has a capability the other lacks (ASR-0005).
 
 Event streaming is **lossy by design** for high-rate events: the server
-downsamples and batches so a browser can never back-pressure the engine.
+downsamples and batches so a browser can never back-pressure the engine. It is
+carried as server-sent events over the same listener, which is a close fit for a
+stream that is server-to-client and droppable, and which reconnects without
+client code.
+
+The default listener is a **Unix domain socket** with filesystem permissions;
+TCP with token authentication is opt-in and never the default (ADR-0003,
+ADR-0012).
 
 ## 10. Extension points
 
@@ -634,17 +643,17 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 | ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
 | ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009 |
 | ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013 |
-| ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016 |
+| ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
 | ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021 |
 | ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021 |
 | ASR-0009 Extensibility | ADR-0010 |
 | ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022 |
 | ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021 |
-| ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011 |
+| ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024 |
 | ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008 |
 | ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021 |
-| ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023 |
+| ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023, ADR-0024 |
 
 Three ADRs appear in no row: **ADR-0018** (licensing) and **ADR-0019** (module
 identity) are project constraints rather than responses to a requirement, and

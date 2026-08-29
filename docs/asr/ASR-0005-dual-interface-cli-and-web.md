@@ -50,4 +50,4 @@ GUI-first are unusable in CI.
 
 ## Satisfied by
 
-ADR-0003, ADR-0011, ADR-0016
+ADR-0003, ADR-0011, ADR-0016, ADR-0024
