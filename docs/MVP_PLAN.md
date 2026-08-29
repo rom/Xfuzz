@@ -401,7 +401,7 @@ rather than an input, and reaches a bug that needs a specific sequence.
 
 | Criterion | Result |
 | --- | --- |
-| `stateful_proto` bugs found, including the one behind a valid handshake | *(measured — see below)* |
+| `stateful_proto` bugs found, including the one behind a valid handshake | Bug 2 — `SET` with an over-long value, reachable only after `HELLO` and a correct `AUTH` — found and verified 5 of 5, minimised to the three-message session it needs. Bugs 1 and 3 are found routinely; bug 4, the use-after-free in a transition pair, has not been reached |
 | State coverage reported separately | States and transitions counted apart from code coverage everywhere they are reported, and `xfuzz states` renders the graph with one exemplar response per label |
 | A stateful finding replays as a full session | Reproducers are stored as conversations and triage replays them through a session executor against its own server |
 
@@ -409,9 +409,22 @@ rather than an input, and reaches a bug that needs a specific sequence.
 to stay valid for anything past it to be reachable, so a mutator that picks a
 uniformly random message of a uniformly random session spends nearly all of its
 budget on the entrance. The scheduler picks a rarely-visited state to aim for,
-finds the message that reached it in that session's own trace, and mutates at
-or after that point — usually, because breaking the path is how a campaign
-discovers that the target accepts a message out of order.
+picks a corpus entry known to reach it, finds the message that reached it in
+that entry's own trace, and mutates at or after that point — usually, because
+breaking the path is how a campaign discovers that the target accepts a message
+out of order.
+
+**Three choices, not two, and the middle one was missing for a while.** Aiming
+at a state without choosing an entry that can reach it leaves the aim inert:
+the entry comes from the coverage scheduler, an entry that never got there has
+no informed place to cut, and the message choice degrades to "anywhere" on
+nearly every execution. Measured on `stateful_proto`: 8 of 148 corpus entries
+carried a complete handshake, so roughly 95% of the budget went where the aim
+could not be acted on, and the bug behind the handshake stayed unreached for
+the length of a campaign. It is worth stating because the missing step looked
+like a tuning problem — the campaign was authenticating, exploring a dozen
+states, and finding the shallow bug — rather than like a scheduler with a hole
+in it.
 
 **Every defect this milestone found was invisible.** Not one produced an error:
 a campaign reported zero coverage while being guided by it, zero findings while
@@ -433,6 +446,14 @@ mutant's trace against its parent whenever the mutant was not admitted, which
 is nearly every execution, so the scheduler aimed using a map of somewhere
 else. This is the M4 lesson in a new place: a measurement attributed to the
 wrong subject is worse than no measurement, because it looks like guidance.
+
+*The same lesson, once more, about the fuzzer's own actions.* Every campaign
+filed a finding reading "target terminated abnormally", signal 9, against an
+input that did nothing: a managed server restarted mid-session inherited that
+session's timeout as its lifetime and was killed by it seconds later, in a
+different session, and the kill was read as the target dying. A signal a target
+cannot send itself is never evidence about an input — and a finding that
+reproduces 0 times out of 5 was, all along, the tool reporting on itself.
 
 **Byte-level trimming is the wrong unit for a session, as it was for a
 checksummed format.** Preserving the state set makes it safe rather than

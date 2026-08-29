@@ -344,6 +344,20 @@ test: a campaign that aggregates its workers' counters wrongly passes a rate
 check while doing nothing of the sort. That defect was real, and a rate check
 would have passed over it.
 
+M6's criteria are about *which* bug was reached, so they read the marker the
+target itself printed rather than a finding count or a bucket count. Counting
+would have passed throughout the milestone: every campaign reported findings,
+and one of them was the fuzzer's own SIGKILL of a server it had restarted. The
+same tests therefore assert what a finding must carry — the target's account of
+its own failure, and a reproducer that is the whole conversation — and that two
+bugs the target names apart do not share a bucket, which is how finding the
+second one stops counting as finding it.
+
+A criterion about a fuzzer is a statement about a distribution, so the budgets
+are generous relative to the median run and a failure is read as a regression
+only when it repeats. The one criterion that is not statistical is the
+negative: no finding may be attributable to the harness.
+
 ## 12. Security tests
 
 Security properties from [SECURITY.md](SECURITY.md) are executable tests, not
