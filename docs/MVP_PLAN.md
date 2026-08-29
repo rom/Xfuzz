@@ -368,6 +368,19 @@ copy — so a worker runs what was submitted rather than re-resolving a file it
 may not be able to see, and the directory ends up holding the record of what
 ran.
 
+**What M5 does not do.** A restarted daemon does not remember the campaigns it
+was running. Everything they produced is in the store — corpus, findings,
+buckets, audit chain — and a resumed run picks all of it up, which is what the
+exit criterion measures. What is missing is reaching a *finished* campaign's
+findings without starting it again: `xfuzz replay` and `xfuzz minimize` need the
+campaign loaded, and the only way to load one today is to run it. ADR-0003's
+"triage tomorrow" is therefore only half delivered, and closing it needs
+decisions this milestone did not need to make — whether an adopted campaign
+whose target has since moved is readable or refused, and what
+`xfuzz run` should mean for a name the daemon already holds. It is a
+prerequisite for the console (M7), which is where those decisions have to be
+made anyway.
+
 ---
 
 ### M6 — Stateful protocol fuzzing *(3–4 weeks)*
@@ -389,6 +402,9 @@ finding replays as a full session on another host.
 
 ### M7 — Web console *(4–5 weeks)*
 
+- Loading a finished campaign from its store, so its findings can be read and
+  re-triaged without running it again (the half of ADR-0003's "triage tomorrow"
+  M5 left open).
 - TypeScript SPA, Vite build, `embed.FS` embedding, no external assets.
 - All v1 views (ARCHITECTURE.md § 9, ADR-0011): campaigns, campaign detail,
   coverage, state machine, findings triage, corpus browser, config editor,
