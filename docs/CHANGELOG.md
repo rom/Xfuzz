@@ -90,8 +90,16 @@ listed here with its migration path.
   by `cmd/xfuzz/parity_test.go` in both directions; a tier table; and a section
   on repeating a campaign exactly.
 - MVP_PLAN § 6.1 records what was run for each clause of the definition of
-  done, and § 6.2 states what clause 2 does not cover: `stateful_proto`'s bug 3
-  has no established budget.
+  done, and § 6.2 what clause 2 costs. All four planted-bug targets find every
+  bug they carry: `stateful_proto`'s slowest was measured at between 42,000 and
+  113,000 sessions, against an exit criterion budgeted at 20,000. Two of its
+  four are therefore recorded rather than required — a decision about test
+  economics, since a criterion that runs for an hour is one people stop
+  running.
+- The order the stateful bugs fall in is itself evidence for ADR-0006: the bug
+  that needs a *sequence* is found at ~2,700 sessions and the one that needs
+  only a *payload* at ~4,200, because state-then-message scheduling explores
+  sequences deliberately while payloads are still being sampled.
 
 ### Fixed — v0.1 release audit
 
