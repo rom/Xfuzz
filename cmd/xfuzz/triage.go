@@ -10,6 +10,13 @@ import (
 
 func init() {
 	register(&Command{
+		Name: "triage", Group: "triage",
+		Short: "Record a judgement of a finding, and a note",
+		Usage: "triage NAME ID [--as JUDGEMENT] [--note TEXT]",
+		API:   []string{"finding.triage"},
+		Run:   runTriage,
+	})
+	register(&Command{
 		Name: "replay", Group: "inspection",
 		Short: "Re-run a finding's reproducer and report whether it still fails",
 		Usage: "replay NAME ID [--trials N]",
@@ -278,6 +285,57 @@ func runStates(ctx context.Context, args []string) error {
 		for _, t := range rep.Illegal {
 			fmt.Printf("  %-28s %9d\n", t.From+" -> "+t.To, t.Count)
 		}
+	}
+	return nil
+}
+
+// runTriage records a judgement and a note against a finding.
+//
+// The machine's verdict — does it reproduce, how small does it get — is written
+// by triage and is not settable here. What this writes is the other half: what
+// a person decided about it, which nothing else can supply and which a re-run
+// must not erase.
+func runTriage(ctx context.Context, args []string) error {
+	fs, opts := flags(commands["triage"])
+	as := fs.String("as", "", "judgement: confirmed, duplicate, wontfix, invalid, or pending to clear it")
+	note := fs.String("note", "", "note to record with it")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 2 {
+		return errors.New("expected a campaign name and a finding id")
+	}
+	disposition := *as
+	if disposition == "pending" {
+		disposition = ""
+	}
+
+	c, err := opts.connect(ctx)
+	if err != nil {
+		return err
+	}
+	var f struct {
+		ID          int64  `json:"id"`
+		Summary     string `json:"summary"`
+		Disposition string `json:"disposition"`
+		Notes       string `json:"notes"`
+	}
+	err = c.Do(ctx, "POST",
+		"/v1/campaigns/"+fs.Arg(0)+"/findings/"+fs.Arg(1)+"/triage",
+		map[string]any{"disposition": disposition, "notes": *note}, &f)
+	if err != nil {
+		return err
+	}
+	if opts.jsonOut {
+		return printJSON(f)
+	}
+	state := f.Disposition
+	if state == "" {
+		state = "pending"
+	}
+	fmt.Printf("finding %d: %s — %s\n", f.ID, state, f.Summary)
+	if f.Notes != "" {
+		fmt.Printf("  %s\n", f.Notes)
 	}
 	return nil
 }

@@ -277,6 +277,29 @@ type ReplayReport struct {
 	Output     string  `json:"output,omitempty"`
 }
 
+// SetDisposition records a person's judgement of a finding and their note.
+//
+// It needs no triage runner and no target: a judgement is somebody's reading of
+// evidence already recorded, which is what makes it the one triage operation
+// that still works on a campaign loaded from a store whose target is long gone.
+func (c *Campaign) SetDisposition(ctx context.Context, id int64, disposition, notes string) (*store.Finding, error) {
+	f, err := c.store.Finding(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if f.CampaignID != c.id {
+		return nil, fmt.Errorf("daemon: finding %d belongs to another campaign", id)
+	}
+	if err := c.store.SetDisposition(ctx, id, disposition, notes); err != nil {
+		return nil, err
+	}
+	// Audited, because a disposition is the one finding field a person writes:
+	// "who decided this was not a bug, and when" is a question that gets asked.
+	_, _ = c.store.Audit(ctx, "", "finding.triage",
+		fmt.Sprintf("finding %d: %s", id, dispositionOrPending(disposition)))
+	return c.store.Finding(ctx, id)
+}
+
 // Replay re-runs a finding's reproducer and records what it found.
 //
 // Trials rather than one run, because "it crashed once" and "it crashes every
@@ -312,7 +335,7 @@ func (c *Campaign) Replay(ctx context.Context, id int64, trials int) (*ReplayRep
 	}
 
 	err = st.UpdateTriage(ctx, f.ID, out.State, rep.Trials, rep.Rate(),
-		f.Minimized, f.MinimizedSize, f.Notes)
+		f.Minimized, f.MinimizedSize, rep.String())
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +411,8 @@ func (c *Campaign) Minimize(ctx context.Context, id int64, budget int) (*Minimiz
 		// reproduce; it only makes the unreliable thing smaller.
 		state = f.TriageState
 	}
-	err = st.UpdateTriage(ctx, f.ID, state, f.ReproTrials, f.ReproRate, digest, len(small), f.Notes)
+	err = st.UpdateTriage(ctx, f.ID, state, f.ReproTrials, f.ReproRate, digest, len(small),
+		joinDiagnosis(f.Diagnosis, rep.String()))
 	if err != nil {
 		return nil, err
 	}
@@ -418,4 +442,27 @@ func reproducerOf(st *store.Store, f *store.Finding) ([]byte, error) {
 		return nil, fmt.Errorf("daemon: finding %d has no stored reproducer: %w", f.ID, err)
 	}
 	return payload, nil
+}
+
+// dispositionOrPending names a disposition for the audit log, including the
+// empty one: "cleared" is a decision too, and a log that omitted it would show
+// a judgement being made and never unmade.
+func dispositionOrPending(d string) string {
+	if d == store.DispositionPending {
+		return "pending"
+	}
+	return d
+}
+
+// joinDiagnosis adds this pass's account to what triage said before, so that a
+// minimisation does not erase the verification that justified it.
+func joinDiagnosis(before, now string) string {
+	switch {
+	case before == "":
+		return now
+	case now == "":
+		return before
+	default:
+		return before + "; " + now
+	}
 }

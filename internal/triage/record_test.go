@@ -73,8 +73,10 @@ func TestRecordPersistsATriageResult(t *testing.T) {
 	if got.Reduction() < 0.8 {
 		t.Fatalf("recorded reduction = %.2f", got.Reduction())
 	}
-	if !strings.Contains(got.Notes, "reproduced") {
-		t.Fatalf("notes = %q", got.Notes)
+	// Triage's account goes in the diagnosis, not in the notes: notes are
+	// where a person writes, and a re-triage must not overwrite them.
+	if !strings.Contains(got.Diagnosis, "reproduced") {
+		t.Fatalf("diagnosis = %q", got.Diagnosis)
 	}
 
 	payload, err := s.Blobs().Get(got.Minimized)

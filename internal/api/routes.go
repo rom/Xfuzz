@@ -83,6 +83,9 @@ func (s *Server) register() {
 		Name: "finding.get", Summary: "Fetch one finding with its reproducer", handler: s.findingGet})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}/buckets", Service: ServiceFinding,
 		Name: "finding.buckets", Summary: "List finding buckets", handler: s.findingBuckets})
+	s.route(Route{Method: "POST", Path: "/v1/campaigns/{name}/findings/{id}/triage", Service: ServiceFinding,
+		Name: "finding.triage", Summary: "Record a person's judgement of a finding, and their note",
+		Mutating: true, handler: s.findingTriage})
 	s.route(Route{Method: "POST", Path: "/v1/campaigns/{name}/findings/{id}/replay", Service: ServiceFinding,
 		Name: "finding.replay", Summary: "Re-run a finding's reproducer and record whether it still fails",
 		Mutating: true, handler: s.findingReplay})
@@ -557,6 +560,32 @@ type TriageRequest struct {
 	// Budget is how many executions minimisation may spend. Zero uses the
 	// campaign's own triage.minimize_budget.
 	Budget int `json:"budget,omitempty"`
+}
+
+// findingTriage records a judgement and a note.
+//
+// The judgement is a person's and the triage state is the machine's, so this
+// writes only the former: a console that could set "verified" would be
+// asserting something it has not checked.
+func (s *Server) findingTriage(w http.ResponseWriter, r *http.Request) {
+	c, id, ok := s.findingTarget(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Disposition string `json:"disposition"`
+		Notes       string `json:"notes"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	f, err := c.SetDisposition(r.Context(), id, req.Disposition, req.Notes)
+	if err != nil {
+		writeError(w, statusFor(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, findingViewOf(f))
 }
 
 func (s *Server) findingReplay(w http.ResponseWriter, r *http.Request) {

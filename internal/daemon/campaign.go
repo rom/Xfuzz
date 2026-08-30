@@ -948,8 +948,12 @@ func (c *Campaign) onTriaged(res triage.Result) {
 		}
 	}
 
+	diagnosis := res.Verify.String()
+	if res.Minimize.OriginalSize > 0 {
+		diagnosis += "; " + res.Minimize.String()
+	}
 	if err := c.store.UpdateTriage(ctx, res.ID, res.State, res.Verify.Trials, res.Verify.Rate(),
-		minimized, size, f.Notes); err != nil {
+		minimized, size, diagnosis); err != nil {
 		c.warn(fmt.Sprintf("recording triage for finding %d: %v", res.ID, err))
 		return
 	}

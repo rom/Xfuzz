@@ -16,9 +16,10 @@ type Recorder interface {
 	// PutBlob stores a minimised reproducer.
 	PutBlob(ctx context.Context, data []byte) (corpus.Digest, error)
 
-	// UpdateTriage records the verification and minimisation outcome.
+	// UpdateTriage records the verification and minimisation outcome, and
+	// triage's own account of it. Never a person's notes: those are theirs.
 	UpdateTriage(ctx context.Context, id int64, state string, trials int, rate float64,
-		minimized corpus.Digest, minimizedSize int, notes string) error
+		minimized corpus.Digest, minimizedSize int, diagnosis string) error
 
 	// Rebucket files the finding under the bucket triage computed.
 	Rebucket(ctx context.Context, findingID int64, strategy, signature string) error
@@ -44,12 +45,12 @@ func Record(ctx context.Context, rec Recorder, res Result) error {
 		digest, size = d, len(res.Minimized)
 	}
 
-	notes := res.Verify.String()
+	diagnosis := res.Verify.String()
 	if res.Minimize.OriginalSize > 0 {
-		notes += "; " + res.Minimize.String()
+		diagnosis += "; " + res.Minimize.String()
 	}
 	if err := rec.UpdateTriage(ctx, res.ID, res.State, res.Verify.Trials, res.Verify.Rate(),
-		digest, size, notes); err != nil {
+		digest, size, diagnosis); err != nil {
 		return err
 	}
 	if res.Signature == "" {

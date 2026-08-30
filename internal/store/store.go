@@ -21,7 +21,7 @@ import (
 // an explicit error rather than reading fields it does not know about, because
 // a corpus represents weeks of machine time and half-understanding it is worse
 // than refusing it (ASR-0015).
-const SchemaVersion = 2
+const SchemaVersion = 4
 
 // ErrNewerSchema is returned when the store was written by a later version.
 var ErrNewerSchema = errors.New("store: written by a newer version of Xfuzz")
@@ -269,6 +269,30 @@ var migrations = map[int][]string{
 	// self-contained.
 	2: {
 		`ALTER TABLE campaign ADD COLUMN config_document TEXT NOT NULL DEFAULT ''`,
+	},
+
+	// A person's judgement of a finding, kept apart from the machine's verdict.
+	//
+	// triage_state is what the triage worker found out and rewrites on every
+	// re-triage. Storing "this is a duplicate" in the same column would mean a
+	// re-run silently discards it, and that judgement is the labour ASR-0011
+	// puts at the centre of the product.
+	3: {
+		`ALTER TABLE finding ADD COLUMN disposition TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX finding_by_disposition ON finding(campaign_id, disposition)`,
+	},
+
+	// The machine's account of a finding, moved out of the person's notes.
+	//
+	// "5 of 5 runs reproduced; reduced 57 to 12 bytes" is triage reporting what
+	// it did, and it was being written into the same column a person would
+	// write "duplicate of the one Ana filed". Every existing note is
+	// machine-written, so they move wholesale and notes starts empty — which is
+	// what it has been all along.
+	4: {
+		`ALTER TABLE finding ADD COLUMN diagnosis TEXT NOT NULL DEFAULT ''`,
+		`UPDATE finding SET diagnosis = notes`,
+		`UPDATE finding SET notes = ''`,
 	},
 }
 

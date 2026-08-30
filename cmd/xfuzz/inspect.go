@@ -218,6 +218,7 @@ func findingsList(ctx context.Context, args []string) error {
 			Signal      int     `json:"signal"`
 			Summary     string  `json:"summary"`
 			TriageState string  `json:"triage_state"`
+			Disposition string  `json:"disposition"`
 			ReproTrials int     `json:"repro_trials"`
 			ReproRate   float64 `json:"repro_rate"`
 			Reduction   float64 `json:"reduction"`
@@ -234,13 +235,21 @@ func findingsList(ctx context.Context, args []string) error {
 		fmt.Println("no findings")
 		return nil
 	}
-	fmt.Printf("%6s %-10s %-12s %10s  %s\n", "ID", "KIND", "TRIAGE", "REPRO", "SUMMARY")
+	// Triage and judgement in separate columns, because they answer separate
+	// questions: what the machine found out, and what somebody decided.
+	fmt.Printf("%6s %-10s %-12s %-10s %10s  %s\n",
+		"ID", "KIND", "TRIAGE", "JUDGED", "REPRO", "SUMMARY")
 	for _, f := range resp.Findings {
 		repro := "not checked"
 		if f.ReproTrials > 0 {
 			repro = fmt.Sprintf("%.0f%% of %d", 100*f.ReproRate, f.ReproTrials)
 		}
-		fmt.Printf("%6d %-10s %-12s %10s  %s\n", f.ID, f.Kind, f.TriageState, repro, f.Summary)
+		judged := f.Disposition
+		if judged == "" {
+			judged = "-"
+		}
+		fmt.Printf("%6d %-10s %-12s %-10s %10s  %s\n",
+			f.ID, f.Kind, f.TriageState, judged, repro, f.Summary)
 	}
 	fmt.Printf("\n%d findings\n", resp.Count)
 	return nil
@@ -264,13 +273,16 @@ func findingsGet(ctx context.Context, args []string) error {
 	// signal is part of that account: the summary names it only for the
 	// signals that have names, and for the rest the number is the information.
 	var f struct {
-		ID         int64    `json:"id"`
-		Kind       string   `json:"kind"`
-		Signal     int      `json:"signal"`
-		Summary    string   `json:"summary"`
-		Detail     string   `json:"detail"`
-		Frames     []string `json:"frames"`
-		Reproducer []byte   `json:"reproducer"`
+		ID          int64    `json:"id"`
+		Kind        string   `json:"kind"`
+		Signal      int      `json:"signal"`
+		Summary     string   `json:"summary"`
+		Detail      string   `json:"detail"`
+		Frames      []string `json:"frames"`
+		Diagnosis   string   `json:"diagnosis"`
+		Disposition string   `json:"disposition"`
+		Notes       string   `json:"notes"`
+		Reproducer  []byte   `json:"reproducer"`
 	}
 	if err := c.Do(ctx, "GET", "/v1/campaigns/"+fs.Arg(0)+"/findings/"+fs.Arg(1), nil, &f); err != nil {
 		return err
@@ -284,6 +296,19 @@ func findingsGet(ctx context.Context, args []string) error {
 	}
 	if f.Detail != "" {
 		fmt.Printf("\n%s\n", f.Detail)
+	}
+	if f.Diagnosis != "" {
+		fmt.Printf("\ntriage     %s\n", f.Diagnosis)
+	}
+	if f.Disposition != "" || f.Notes != "" {
+		judged := f.Disposition
+		if judged == "" {
+			judged = "pending"
+		}
+		fmt.Printf("judged     %s\n", judged)
+		if f.Notes != "" {
+			fmt.Printf("note       %s\n", f.Notes)
+		}
 	}
 	fmt.Printf("\nreproducer (%d bytes):\n%s\n", len(f.Reproducer), hexDump(f.Reproducer))
 	return nil

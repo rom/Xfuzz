@@ -22,6 +22,40 @@ const (
 	TriageUnverified = "unverified" // did not reproduce at all
 )
 
+// Dispositions are a person's judgement of a finding, kept apart from the
+// triage state above.
+//
+// Two different questions, and one field cannot answer both. The triage state
+// is what the machine found out — does it reproduce, how small can it get —
+// and the worker rewrites it whenever a finding is re-triaged. A disposition is
+// what somebody decided. Sharing a field would mean re-running triage silently
+// discards the judgement that "this one is a duplicate", which is the labour
+// ASR-0011 puts at the centre of the product.
+const (
+	DispositionPending   = ""          // nobody has judged it yet
+	DispositionConfirmed = "confirmed" // a real bug
+	DispositionDuplicate = "duplicate" // the same bug as another finding
+	DispositionWontFix   = "wontfix"   // real, and not going to be fixed
+	DispositionInvalid   = "invalid"   // not a bug: a harness artefact, or intended behaviour
+)
+
+// Dispositions lists every judgement a finding may carry, in the order a report
+// shows them.
+var Dispositions = []string{
+	DispositionPending, DispositionConfirmed, DispositionDuplicate,
+	DispositionWontFix, DispositionInvalid,
+}
+
+// ValidDisposition reports whether s names a judgement.
+func ValidDisposition(s string) bool {
+	for _, d := range Dispositions {
+		if s == d {
+			return true
+		}
+	}
+	return false
+}
+
 // Bucket is a group of findings believed to share a root cause.
 //
 // Bucketing is a judgement, not a fact, which is why the strategy that produced
@@ -70,7 +104,16 @@ type Finding struct {
 	ReproRate   float64
 
 	TriageState string
-	Notes       string
+
+	// Disposition is a person's judgement, empty until somebody makes one.
+	// Never written by the triage worker: see Dispositions above.
+	Disposition string
+
+	// Diagnosis is triage's own account of what it did — how often the
+	// reproducer reproduced, how far it minimised. Rewritten on every
+	// re-triage, and never by a person, which is the mirror of Notes.
+	Diagnosis string
+	Notes     string
 
 	// FoundAtExec is the execution count when it was found — the campaign's own
 	// clock, which unlike wall time is the same on a replay (ASR-0008).
@@ -129,13 +172,13 @@ func (s *Store) SaveFinding(ctx context.Context, f *Finding, payload []byte) err
 		`INSERT INTO finding
 		   (campaign_id, bucket_id, digest, minimized_digest, original_size, minimized_size,
 		    kind, summary, signal, detail, frames, repro_trials, repro_rate,
-		    triage_state, notes, found_at_exec, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		    triage_state, disposition, diagnosis, notes, found_at_exec, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(campaign_id, digest) DO NOTHING`,
 		f.CampaignID, bucketID, f.Digest.String(), digestOrEmpty(f.Minimized),
 		f.OriginalSize, f.MinimizedSize, f.Kind, f.Summary, f.Signal, f.Detail,
 		strings.Join(f.Frames, "\n"), f.ReproTrials, f.ReproRate,
-		stateOrNew(f.TriageState), f.Notes, int64(f.FoundAtExec),
+		stateOrNew(f.TriageState), f.Disposition, f.Diagnosis, f.Notes, int64(f.FoundAtExec),
 		now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return fmt.Errorf("store: recording finding: %w", err)
@@ -162,15 +205,47 @@ func (s *Store) SaveFinding(ctx context.Context, f *Finding, payload []byte) err
 
 // UpdateTriage records the outcome of triaging a finding.
 func (s *Store) UpdateTriage(ctx context.Context, id int64, state string, trials int, reproRate float64,
-	minimized corpus.Digest, minimizedSize int, notes string) error {
+	minimized corpus.Digest, minimizedSize int, diagnosis string) error {
+
+	// Notes are not in this statement, and that is the point. They belong to
+	// whoever wrote them; a re-triage that carried them along would have to
+	// read them first, and a read-modify-write is a judgement waiting to be
+	// lost to whoever saved theirs in between.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE finding SET triage_state = ?, repro_trials = ?, repro_rate = ?,
-		        minimized_digest = ?, minimized_size = ?, notes = ?, updated_at = ?
+		        minimized_digest = ?, minimized_size = ?, diagnosis = ?, updated_at = ?
 		 WHERE id = ?`,
-		state, trials, reproRate, digestOrEmpty(minimized), minimizedSize, notes,
+		state, trials, reproRate, digestOrEmpty(minimized), minimizedSize, diagnosis,
 		s.now().UTC().UnixNano(), id)
 	if err != nil {
 		return fmt.Errorf("store: updating triage for finding %d: %w", id, err)
+	}
+	return nil
+}
+
+// SetDisposition records a person's judgement of a finding, and their note.
+//
+// Separate from UpdateTriage on purpose: that one is the triage worker writing
+// what it found out, and it runs again whenever a finding is re-triaged. A
+// judgement that a re-run could erase would be a judgement nobody could rely
+// on having made.
+func (s *Store) SetDisposition(ctx context.Context, id int64, disposition, notes string) error {
+	if !ValidDisposition(disposition) {
+		return fmt.Errorf("store: %q is not a disposition; one of %s",
+			disposition, strings.Join(Dispositions[1:], ", "))
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE finding SET disposition = ?, notes = ?, updated_at = ? WHERE id = ?`,
+		disposition, notes, s.now().UTC().UnixNano(), id)
+	if err != nil {
+		return fmt.Errorf("store: setting the disposition of finding %d: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("store: no finding %d", id)
 	}
 	return nil
 }
@@ -266,7 +341,8 @@ func (s *Store) CountBuckets(ctx context.Context, campaignID int64, strategy str
 
 const findingSelect = `SELECT id, campaign_id, bucket_id, digest, minimized_digest,
 	original_size, minimized_size, kind, summary, signal, detail, frames,
-	repro_trials, repro_rate, triage_state, notes, found_at_exec, created_at, updated_at FROM finding`
+	repro_trials, repro_rate, triage_state, disposition, diagnosis, notes,
+	found_at_exec, created_at, updated_at FROM finding`
 
 func scanFinding(sc scanner) (*Finding, error) {
 	var (
@@ -278,7 +354,8 @@ func scanFinding(sc scanner) (*Finding, error) {
 	)
 	if err := sc.Scan(&f.ID, &f.CampaignID, &f.BucketID, &digest, &minimized,
 		&f.OriginalSize, &f.MinimizedSize, &f.Kind, &f.Summary, &f.Signal, &f.Detail,
-		&frames, &f.ReproTrials, &f.ReproRate, &f.TriageState, &f.Notes, &foundAt, &created, &updated); err != nil {
+		&frames, &f.ReproTrials, &f.ReproRate, &f.TriageState, &f.Disposition,
+		&f.Diagnosis, &f.Notes, &foundAt, &created, &updated); err != nil {
 		return nil, err
 	}
 	var err error

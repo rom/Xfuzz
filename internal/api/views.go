@@ -88,6 +88,8 @@ type findingView struct {
 	OriginalSize  int       `json:"original_size"`
 	MinimizedSize int       `json:"minimized_size,omitempty"`
 	Reduction     float64   `json:"reduction,omitempty"`
+	Disposition   string    `json:"disposition,omitempty"`
+	Diagnosis     string    `json:"diagnosis,omitempty"`
 	Notes         string    `json:"notes,omitempty"`
 	FoundAtExec   uint64    `json:"found_at_exec"`
 	Created       time.Time `json:"created"`
@@ -100,7 +102,8 @@ func findingViewOf(f *store.Finding) findingView {
 	return findingView{
 		ID: f.ID, Digest: f.Digest.String(), Kind: f.Kind, Signal: f.Signal,
 		Summary: f.Summary, Detail: f.Detail, Frames: f.Frames, Bucket: f.BucketID,
-		TriageState: f.TriageState, ReproTrials: f.ReproTrials, ReproRate: f.ReproRate,
+		TriageState: f.TriageState, Disposition: f.Disposition, Diagnosis: f.Diagnosis,
+		ReproTrials: f.ReproTrials, ReproRate: f.ReproRate,
 		OriginalSize: f.OriginalSize, MinimizedSize: f.MinimizedSize,
 		Reduction: f.Reduction(), Notes: f.Notes, FoundAtExec: f.FoundAtExec,
 		Created: f.CreatedAt,

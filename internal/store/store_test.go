@@ -771,3 +771,51 @@ func TestCollectBlobsKeepsFindingReproducers(t *testing.T) {
 		t.Fatal("a finding's minimised reproducer was collected")
 	}
 }
+
+// A person's judgement and the machine's verdict are different facts, and a
+// re-triage must not erase the one nothing else can supply.
+func TestDispositionSurvivesRetriage(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
+
+	f := &Finding{
+		CampaignID: c.ID,
+		Digest:     corpus.DigestOf([]byte("boom")),
+		Finding:    feedback.Finding{Kind: "crash", Summary: "fatal signal SIGSEGV"},
+	}
+	if err := s.SaveFinding(ctx, f, []byte("boom")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.SetDisposition(ctx, f.ID, DispositionDuplicate, "same as finding 1"); err != nil {
+		t.Fatal(err)
+	}
+	// The triage worker then has its say, as it does whenever a finding is
+	// re-examined.
+	if err := s.UpdateTriage(ctx, f.ID, TriageMinimized, 5, 1.0, corpus.Digest{}, 4, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Finding(ctx, f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Disposition != DispositionDuplicate {
+		t.Errorf("disposition is %q after a re-triage, want %q: the machine overwrote a person's judgement",
+			got.Disposition, DispositionDuplicate)
+	}
+	if got.TriageState != TriageMinimized {
+		t.Errorf("triage state is %q, want %q", got.TriageState, TriageMinimized)
+	}
+	if got.Notes != "same as finding 1" {
+		t.Errorf("notes are %q; the note went with the judgement", got.Notes)
+	}
+
+	if err := s.SetDisposition(ctx, f.ID, "nonsense", ""); err == nil {
+		t.Error("a disposition nobody defined was accepted")
+	}
+	if err := s.SetDisposition(ctx, 99999, DispositionConfirmed, ""); err == nil {
+		t.Error("judging a finding that does not exist succeeded")
+	}
+}
