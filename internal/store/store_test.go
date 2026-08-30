@@ -178,7 +178,7 @@ func TestCampaignLifecycle(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
 
-	c, err := s.CreateCampaign(ctx, "png", "cfg-digest", 0xdeadbeef)
+	c, err := s.CreateCampaign(ctx, "png", "cfg-digest", "", 0xdeadbeef)
 	if err != nil {
 		t.Fatalf("CreateCampaign: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestCampaignLifecycle(t *testing.T) {
 	if _, err := s.Campaign(ctx, "absent"); !errors.Is(err, ErrNoCampaign) {
 		t.Fatalf("err = %v, want ErrNoCampaign", err)
 	}
-	if _, err := s.CreateCampaign(ctx, "png", "", 1); err == nil {
+	if _, err := s.CreateCampaign(ctx, "png", "", "", 1); err == nil {
 		t.Fatal("a duplicate campaign name was accepted")
 	}
 }
@@ -216,7 +216,7 @@ func testcase(payload string, cov int, favoured bool) *corpus.Testcase {
 func TestTestcaseRoundTrip(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	tc := testcase("hello world", 17, true)
 	tc.Prov = corpus.Provenance{
@@ -254,7 +254,7 @@ func TestTestcaseRoundTrip(t *testing.T) {
 func TestSaveTestcaseIsIdempotent(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	tc := testcase("payload", 5, false)
 	for i := 0; i < 3; i++ {
@@ -279,7 +279,7 @@ func TestSaveTestcaseIsIdempotent(t *testing.T) {
 func TestTestcaseBatchAndQuery(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	batch := []*corpus.Testcase{
 		testcase("aaaa", 10, false),
@@ -329,7 +329,7 @@ func sizes(tcs []*corpus.Testcase) []int {
 func TestFindingBucketing(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	mk := func(payload, sig string) *Finding {
 		f := &Finding{
@@ -367,7 +367,7 @@ func TestFindingBucketing(t *testing.T) {
 func TestDuplicateFindingDoesNotInflateBucket(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	for i := 0; i < 3; i++ {
 		f := &Finding{
@@ -393,7 +393,7 @@ func TestDuplicateFindingDoesNotInflateBucket(t *testing.T) {
 func TestTriageUpdate(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	f := &Finding{
 		CampaignID:   c.ID,
@@ -437,7 +437,7 @@ func TestTriageUpdate(t *testing.T) {
 func TestCheckpointRoundTrip(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	if _, err := s.Checkpoint(ctx, c.ID); !errors.Is(err, ErrNoCheckpoint) {
 		t.Fatalf("err = %v, want ErrNoCheckpoint", err)
@@ -600,7 +600,7 @@ func TestAuditDetectsDeletionFromTheMiddle(t *testing.T) {
 func TestBudgetCullsCheapestFirstAndProtects(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	// Coverage per byte: cheap 1/64, mid 20/64, rich 60/64. favoured is cheap
 	// but in the minimal covering set; repro is cheap but a finding needs it.
@@ -646,7 +646,7 @@ func TestBudgetCullsCheapestFirstAndProtects(t *testing.T) {
 func TestBudgetReportsWhenItCannotBeMet(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	var batch []*corpus.Testcase
 	for i := 0; i < 4; i++ {
@@ -671,7 +671,7 @@ func TestBudgetIsDeterministic(t *testing.T) {
 	run := func() []string {
 		s := open(t)
 		ctx := context.Background()
-		c, _ := s.CreateCampaign(ctx, "c", "", 1)
+		c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 		var batch []*corpus.Testcase
 		for i := 0; i < 20; i++ {
 			// Identical value density, so only the tie-break distinguishes them.
@@ -704,7 +704,7 @@ func TestBudgetIsDeterministic(t *testing.T) {
 func TestCollectBlobsRespectsReachabilityAndGrace(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	live := testcase("referenced payload", 9, false)
 	if err := s.SaveTestcase(ctx, c.ID, live); err != nil {
@@ -746,7 +746,7 @@ func TestCollectBlobsRespectsReachabilityAndGrace(t *testing.T) {
 func TestCollectBlobsKeepsFindingReproducers(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	payload := []byte("crashing input")
 	minimized := []byte("crash")

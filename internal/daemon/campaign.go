@@ -182,7 +182,14 @@ func NewCampaign(ctx context.Context, cfg *campaign.Resolved, opts CampaignOptio
 				"the corpus is kept but the run is no longer a continuation of the same configuration")
 		}
 	case errors.Is(err, store.ErrNoCampaign):
-		created, cerr := opts.Store.CreateCampaign(ctx, cfg.Name, c.configDigest(), seed)
+		// The resolved document goes in with the digest. What ran has to be
+		// readable from the store alone, or triaging a finished campaign means
+		// first finding the file that produced it.
+		doc, derr := cfg.YAML()
+		if derr != nil {
+			return nil, fmt.Errorf("daemon: rendering the campaign's configuration: %w", derr)
+		}
+		created, cerr := opts.Store.CreateCampaign(ctx, cfg.Name, c.configDigest(), string(doc), seed)
 		if cerr != nil {
 			return nil, cerr
 		}

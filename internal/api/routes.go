@@ -38,6 +38,9 @@ func (s *Server) register() {
 	s.route(Route{Method: "POST", Path: "/v1/campaigns", Service: ServiceCampaign,
 		Name: "campaign.create", Summary: "Create a campaign from a document", Mutating: true,
 		handler: s.campaignCreate})
+	s.route(Route{Method: "POST", Path: "/v1/campaigns/load", Service: ServiceCampaign,
+		Name: "campaign.load", Summary: "Load a campaign that already exists in a store",
+		Mutating: true, handler: s.campaignLoad})
 	s.route(Route{Method: "GET", Path: "/v1/campaigns/{name}", Service: ServiceCampaign,
 		Name: "campaign.get", Summary: "Get one campaign's status", handler: s.campaignGet})
 	s.route(Route{Method: "POST", Path: "/v1/campaigns/{name}/start", Service: ServiceCampaign,
@@ -237,6 +240,28 @@ func (s *Server) campaignList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, c.Status())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"campaigns": out})
+}
+
+// campaignLoad opens a campaign the daemon does not hold, from its store.
+//
+// The store's own record of what ran, rather than a document supplied here: a
+// load that took a configuration would be a create wearing another name, and
+// the point is to reach a finished campaign when the file is gone.
+func (s *Server) campaignLoad(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"name"`
+		Store string `json:"store,omitempty"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	c, err := s.daemon.Load(r.Context(), req.Store, req.Name)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c.Status())
 }
 
 func (s *Server) campaignCreate(w http.ResponseWriter, r *http.Request) {

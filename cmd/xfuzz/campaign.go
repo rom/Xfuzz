@@ -67,6 +67,43 @@ func init() {
 		Name: "forget", Group: "campaigns", Short: "Forget a finished campaign, keeping its store",
 		Usage: "forget NAME", API: []string{"campaign.forget"}, Run: runForget,
 	})
+	register(&Command{
+		Name: "load", Group: "campaigns", Short: "Open a campaign that already exists in a store",
+		Usage: "load NAME [--store DIR]", API: []string{"campaign.load"}, Run: runLoad,
+	})
+}
+
+// runLoad opens a finished campaign for reading and re-triage.
+//
+// No campaign file: the store carries the configuration the campaign ran under,
+// so what comes back is what ran rather than a reconstruction of it. This is
+// how a finding found last week is looked at today.
+func runLoad(ctx context.Context, args []string) error {
+	fs, opts := flags(commands["load"])
+	dir := fs.String("store", "", "store directory (default: within the data directory)")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("expected exactly one campaign name")
+	}
+
+	c, err := opts.connect(ctx)
+	if err != nil {
+		return err
+	}
+	var st daemon.Status
+	if err := c.Do(ctx, "POST", "/v1/campaigns/load",
+		map[string]any{"name": fs.Arg(0), "store": *dir}, &st); err != nil {
+		return err
+	}
+	if opts.jsonOut {
+		return printJSON(st)
+	}
+	fmt.Printf("campaign %s loaded: %s, seed %d\n", st.Name, st.State, st.Seed)
+	fmt.Printf("read it with '%s status %s', '%s findings list %s', '%s corpus list %s'\n",
+		name, st.Name, name, st.Name, name, st.Name)
+	return nil
 }
 
 // runInit writes the annotated starter file.

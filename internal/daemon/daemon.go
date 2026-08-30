@@ -154,11 +154,19 @@ func (d *Daemon) Create(ctx context.Context, cfg *campaign.Resolved) (*Campaign,
 	}
 	d.mu.Unlock()
 
-	st, err := d.storeFor(cfg)
+	st, err := d.storeAt(cfg.Storage.Dir)
 	if err != nil {
 		return nil, err
 	}
+	return d.register(ctx, cfg, st)
+}
 
+// register builds a campaign against a store and adds it to the registry.
+//
+// Shared by Create and Load, so that a campaign the daemon was given and one it
+// found in a store are the same object built the same way. Anything that held
+// only for one of them would be a rule nobody could predict from the outside.
+func (d *Daemon) register(ctx context.Context, cfg *campaign.Resolved, st *store.Store) (*Campaign, error) {
 	workDir := filepath.Join(d.opts.DataDir, "run", cfg.Name)
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return nil, fmt.Errorf("daemon: creating %s: %w", workDir, err)
@@ -185,34 +193,6 @@ func (d *Daemon) Create(ctx context.Context, cfg *campaign.Resolved) (*Campaign,
 	d.campaigns[cfg.Name] = c
 	d.mu.Unlock()
 	return c, nil
-}
-
-// storeFor opens or reuses the store a campaign writes to.
-//
-// Stores are shared by directory rather than by campaign, because two campaigns
-// pointed at one directory are pointed at one SQLite database, and opening it
-// twice in one process is how a daemon deadlocks against itself.
-func (d *Daemon) storeFor(cfg *campaign.Resolved) (*store.Store, error) {
-	dir := cfg.Storage.Dir
-	if dir == "" {
-		dir = filepath.Join(d.opts.DataDir, "store")
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if st, ok := d.stores[abs]; ok {
-		return st, nil
-	}
-	st, err := store.Open(abs)
-	if err != nil {
-		return nil, err
-	}
-	d.stores[abs] = st
-	return st, nil
 }
 
 // Campaign returns a loaded campaign by name.
@@ -306,4 +286,76 @@ func DefaultDataDir() (string, error) {
 		base = filepath.Join(home, ".config")
 	}
 	return filepath.Join(base, "xfuzz"), nil
+}
+
+// Load registers a campaign that already exists in a store.
+//
+// The other half of ADR-0003's "triage tomorrow": a campaign's findings, corpus
+// and state machine outlive the run, and reading them should not require the
+// file that produced it. The store carries the resolved document (schema 2), so
+// what is loaded is exactly what ran — the same configuration, the same seed,
+// the same corpus — rather than a reconstruction.
+//
+// The result is an ordinary campaign, deliberately. A loaded campaign that
+// could only be read would be a second kind of campaign with its own rules
+// about what works on it; instead, what it can do follows from the state it is
+// in, which is the same answer as for a campaign the daemon has held all along.
+func (d *Daemon) Load(ctx context.Context, dir, name string) (*Campaign, error) {
+	if name == "" {
+		return nil, errors.New("daemon: loading a campaign needs its name")
+	}
+	d.mu.RLock()
+	existing, loaded := d.campaigns[name]
+	d.mu.RUnlock()
+	if loaded {
+		// Not an error. Loading what is already loaded is what a console does
+		// when somebody opens the same campaign twice, and the useful answer is
+		// the campaign rather than a complaint about it.
+		return existing, nil
+	}
+
+	st, err := d.storeAt(dir)
+	if err != nil {
+		return nil, err
+	}
+	rec, err := st.Campaign(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if rec.ConfigDocument == "" {
+		return nil, fmt.Errorf("daemon: campaign %q was recorded without its configuration, "+
+			"by a build older than store schema 2; run it from its campaign file instead", name)
+	}
+
+	cfg, err := campaign.Parse([]byte(rec.ConfigDocument), name)
+	if err != nil {
+		return nil, fmt.Errorf("daemon: the stored configuration for %q does not parse: %w", name, err)
+	}
+	return d.register(ctx, cfg, st)
+}
+
+// storeAt opens the store rooted at dir, or the daemon's own when dir is empty.
+//
+// Stores are shared by directory rather than by campaign, because two campaigns
+// pointed at one directory are pointed at one SQLite database, and opening it
+// twice in one process is how a daemon deadlocks against itself.
+func (d *Daemon) storeAt(dir string) (*store.Store, error) {
+	if dir == "" {
+		dir = filepath.Join(d.opts.DataDir, "store")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.stores[abs]; ok {
+		return st, nil
+	}
+	st, err := store.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	d.stores[abs] = st
+	return st, nil
 }

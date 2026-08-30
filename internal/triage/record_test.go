@@ -28,7 +28,7 @@ var _ Recorder = (*store.Store)(nil)
 func TestRecordPersistsATriageResult(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
-	c, err := s.CreateCampaign(ctx, "c", "", 1)
+	c, err := s.CreateCampaign(ctx, "c", "", "", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRecordPersistsATriageResult(t *testing.T) {
 func TestRecordMovesTheFindingToItsTriagedBucket(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	// Two findings the engine could only file by signal, which merges them.
 	// Triage, with coverage to work from, separates them — and the bucket count
@@ -146,7 +146,7 @@ func TestRecordMovesTheFindingToItsTriagedBucket(t *testing.T) {
 func TestRecordLeavesTheFindingAloneWhenTriageFailed(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	in := []byte("input")
 	f := &store.Finding{CampaignID: c.ID, Digest: corpus.DigestOf(in),
@@ -169,7 +169,7 @@ func TestRecordLeavesTheFindingAloneWhenTriageFailed(t *testing.T) {
 func TestRecordDistinguishesUnverifiedFromUnexamined(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	in := []byte("was a crash, once")
 	f := &store.Finding{CampaignID: c.ID, Digest: corpus.DigestOf(in),

@@ -21,7 +21,7 @@ import (
 // an explicit error rather than reading fields it does not know about, because
 // a corpus represents weeks of machine time and half-understanding it is worse
 // than refusing it (ASR-0015).
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // ErrNewerSchema is returned when the store was written by a later version.
 var ErrNewerSchema = errors.New("store: written by a newer version of Xfuzz")
@@ -256,6 +256,19 @@ var migrations = map[int][]string{
 			prev_hash TEXT NOT NULL DEFAULT '',
 			hash      TEXT NOT NULL
 		)`,
+	},
+
+	// A campaign's own configuration, kept beside its digest.
+	//
+	// The digest pins what ran; it cannot say what ran. A store holding a
+	// finished campaign's findings and a hash of the file that produced them is
+	// a store nobody can triage from without also finding the file — which is
+	// exactly the case ADR-0003's "triage tomorrow" is about, and the one the
+	// console has to serve. The resolved document is small, it is already the
+	// campaign's whole interface (ADR-0016), and keeping it makes the store
+	// self-contained.
+	2: {
+		`ALTER TABLE campaign ADD COLUMN config_document TEXT NOT NULL DEFAULT ''`,
 	},
 }
 

@@ -13,7 +13,7 @@ import (
 func TestImportCorpusIntoCampaign(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	src := t.TempDir()
 	for name, content := range map[string]string{"a": "alpha", "b": "beta", "c": "alpha"} {
@@ -65,7 +65,7 @@ func TestImportCorpusIntoCampaign(t *testing.T) {
 func TestExportCorpusFromCampaign(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	if err := s.SaveTestcases(ctx, c.ID, []*corpus.Testcase{
 		testcase("keep me", 30, true),
@@ -97,7 +97,7 @@ func TestExportCorpusFromCampaign(t *testing.T) {
 func TestCorpusRoundTripThroughStore(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	c, _ := s.CreateCampaign(ctx, "c", "", 1)
+	c, _ := s.CreateCampaign(ctx, "c", "", "", 1)
 
 	payloads := []string{"first", "second", "third", "fourth"}
 	var batch []*corpus.Testcase
@@ -113,7 +113,7 @@ func TestCorpusRoundTripThroughStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	other, _ := s.CreateCampaign(ctx, "other", "", 2)
+	other, _ := s.CreateCampaign(ctx, "other", "", "", 2)
 	rep, err := s.ImportCorpus(ctx, other.ID, dst, corpusio.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)

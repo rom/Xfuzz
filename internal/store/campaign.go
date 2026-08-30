@@ -37,6 +37,15 @@ type Campaign struct {
 	// half of what a byte-identical replay needs (ASR-0008).
 	Seed uint64
 
+	// ConfigDocument is the resolved campaign file this ran under.
+	//
+	// Kept beside the digest because the digest pins what ran and cannot say
+	// what ran. Without it, triaging a finished campaign means finding the file
+	// that produced it — and a store whose findings cannot be read without a
+	// file kept somewhere else is not the durable record it is meant to be.
+	// Empty on a campaign written before this was recorded.
+	ConfigDocument string
+
 	Status    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -45,12 +54,14 @@ type Campaign struct {
 // CreateCampaign records a new campaign. Names are unique: a campaign is
 // addressed by name from the CLI, and two runs sharing one would make "resume"
 // ambiguous.
-func (s *Store) CreateCampaign(ctx context.Context, name, configDigest string, seed uint64) (*Campaign, error) {
+func (s *Store) CreateCampaign(ctx context.Context, name, configDigest, configDocument string,
+	seed uint64) (*Campaign, error) {
+
 	now := s.now().UTC()
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO campaign (name, config_digest, seed, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		name, configDigest, int64(seed), StatusCreated, now.UnixNano(), now.UnixNano())
+		`INSERT INTO campaign (name, config_digest, config_document, seed, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		name, configDigest, configDocument, int64(seed), StatusCreated, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("store: creating campaign %q: %w", name, err)
 	}
@@ -59,15 +70,15 @@ func (s *Store) CreateCampaign(ctx context.Context, name, configDigest string, s
 		return nil, err
 	}
 	return &Campaign{
-		ID: id, Name: name, ConfigDigest: configDigest, Seed: seed,
-		Status: StatusCreated, CreatedAt: now, UpdatedAt: now,
+		ID: id, Name: name, ConfigDigest: configDigest, ConfigDocument: configDocument,
+		Seed: seed, Status: StatusCreated, CreatedAt: now, UpdatedAt: now,
 	}, nil
 }
 
 // Campaign looks a campaign up by name.
 func (s *Store) Campaign(ctx context.Context, name string) (*Campaign, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, name, config_digest, seed, status, created_at, updated_at
+		`SELECT id, name, config_digest, config_document, seed, status, created_at, updated_at
 		 FROM campaign WHERE name = ?`, name)
 	c, err := scanCampaign(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -79,7 +90,7 @@ func (s *Store) Campaign(ctx context.Context, name string) (*Campaign, error) {
 // Campaigns lists every campaign, oldest first.
 func (s *Store) Campaigns(ctx context.Context) ([]*Campaign, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, config_digest, seed, status, created_at, updated_at
+		`SELECT id, name, config_digest, config_document, seed, status, created_at, updated_at
 		 FROM campaign ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -132,7 +143,8 @@ func scanCampaign(sc scanner) (*Campaign, error) {
 		seed         int64
 		created, upd int64
 	)
-	if err := sc.Scan(&c.ID, &c.Name, &c.ConfigDigest, &seed, &c.Status, &created, &upd); err != nil {
+	if err := sc.Scan(&c.ID, &c.Name, &c.ConfigDigest, &c.ConfigDocument, &seed,
+		&c.Status, &created, &upd); err != nil {
 		return nil, err
 	}
 	c.Seed = uint64(seed)

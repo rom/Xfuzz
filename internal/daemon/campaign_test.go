@@ -493,7 +493,7 @@ func TestDaemonSharesOneStorePerDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		st, err := d.storeFor(r)
+		st, err := d.storeAt(r.Storage.Dir)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -501,5 +501,73 @@ func TestDaemonSharesOneStorePerDirectory(t *testing.T) {
 	}
 	if stores[0] != stores[1] {
 		t.Fatal("two campaigns in one directory got two stores")
+	}
+}
+
+// A finished campaign is reachable from its store alone, with the file that
+// produced it gone.
+//
+// This is the half of ADR-0003's "triage tomorrow" that a digest cannot serve:
+// the store knew which configuration ran, but not what it was, so reading last
+// week's findings meant first finding last week's file.
+func TestFinishedCampaignsLoadWithoutTheirFile(t *testing.T) {
+	dir := testenv.ReachableDir(t)
+	d, err := New(Options{DataDir: dir, Spawner: &fakeSpawner{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close(context.Background())
+
+	cfgDir := testenv.ReachableDir(t)
+	target := filepath.Join(cfgDir, "target")
+	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cfgDir, "c.yaml")
+	doc := "name: kept\ntarget:\n  path: " + target + "\nseeds:\n  inline: [\"s\"]\n"
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := campaign.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Create(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	// The campaign leaves the daemon, and its file leaves the disk. All that is
+	// left is the store, which is the situation this is about.
+	if err := d.Forget("kept"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := d.Load(context.Background(), "", "kept")
+	if err != nil {
+		t.Fatalf("loading a finished campaign from its store: %v", err)
+	}
+	if got := loaded.Status().Name; got != "kept" {
+		t.Errorf("loaded campaign is named %q", got)
+	}
+	if got := loaded.Config.Target.Path; got != target {
+		t.Errorf("the loaded configuration points at %q, not the target that ran (%q); "+
+			"what was loaded is not what ran", got, target)
+	}
+
+	// Loading twice is what a console does when somebody opens the same
+	// campaign in two tabs, and the useful answer is the campaign.
+	again, err := d.Load(context.Background(), "", "kept")
+	if err != nil {
+		t.Fatalf("loading an already-loaded campaign: %v", err)
+	}
+	if again != loaded {
+		t.Error("loading twice produced two campaigns over one store")
+	}
+
+	if _, err := d.Load(context.Background(), "", "never-ran"); err == nil {
+		t.Error("loading a campaign the store has never held succeeded")
 	}
 }

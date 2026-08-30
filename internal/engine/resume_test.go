@@ -90,7 +90,7 @@ func openStoreFor(t *testing.T) (*store.Store, int64) {
 		t.Fatalf("opening the store: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
-	c, err := s.CreateCampaign(context.Background(), "resume", "", 0x5EED)
+	c, err := s.CreateCampaign(context.Background(), "resume", "", "", 0x5EED)
 	if err != nil {
 		t.Fatal(err)
 	}
