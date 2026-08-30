@@ -190,6 +190,18 @@ func plural(n int) string {
 func (s *Server) resolve(r *http.Request) (*campaign.Resolved, *CampaignRequest, error) {
 	var req CampaignRequest
 	if err := decodeBody(r, &req); err != nil {
+		// The seed used to be a field here and was never read, so a client that
+		// pinned one got a random campaign and no complaint. Now that the field
+		// is gone the decoder refuses it, which is better — but "unknown field
+		// seed" tells somebody their request is wrong without telling them what
+		// to do, and the answer is one line in the document they are already
+		// sending.
+		if strings.Contains(err.Error(), `unknown field "seed"`) {
+			return nil, nil, fmt.Errorf(
+				"the seed is not a request field: put `seed: <number>` in the campaign " +
+					"document instead, where `xfuzz explain` reports it and the file " +
+					"stays a complete record of what ran")
+		}
 		return nil, nil, err
 	}
 	if req.Name == "" {

@@ -737,3 +737,26 @@ func TestASeedSurvivesJSONInEveryFormAClientMightSendIt(t *testing.T) {
 		}
 	}
 }
+
+func TestASeedInTheRequestBodySaysWhereItBelongs(t *testing.T) {
+	// The field existed and nothing read it, so pinning a seed through the API
+	// produced a random campaign and no error. Removing it makes the decoder
+	// refuse the request, which is right — but a client told only "unknown
+	// field" knows its request is wrong and not what to do instead.
+	h := newHarness(t)
+
+	var resp Error
+	got := h.json(http.MethodPost, "/v1/campaigns", map[string]any{
+		"document": h.document("pinned"),
+		"name":     "pinned",
+		"seed":     42,
+	}, &resp)
+
+	if got.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; a seed nobody reads must not look accepted",
+			got.StatusCode)
+	}
+	if !strings.Contains(resp.Error, "seed:") {
+		t.Errorf("the error does not say where the seed belongs: %q", resp.Error)
+	}
+}
