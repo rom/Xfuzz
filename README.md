@@ -5,18 +5,21 @@ pipeline spanning file formats, command-line tools, network protocols, APIs, GUI
 applications, and TUI applications — stateless or stateful, black-box, grey-box,
 or white-box, driven from a CLI or a web console.
 
-> **Status: M6 complete — it fuzzes conversations.** A campaign can now be a
-> protocol session rather than a file: Xfuzz starts a server, holds a
-> conversation with it, labels each reply with the protocol state it reveals,
-> and treats a new state or a new transition between states as interesting
-> alongside code coverage. Reaching a bug that needs a valid handshake means
-> keeping the handshake valid while changing what comes after it, which is what
-> the state-then-message scheduler is for. Behind it are a structured IR, 24
-> mutation operators, the `.xfg` grammar language, a fork server, a C coverage
-> runtime, a composable feedback pipeline, a content-addressed store, a daemon
-> with an HTTP/JSON API, and a Linux sandbox that reports what is actually in
-> force. M7 (the web console) is next. See
-> [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for the path to v0.1.
+> **Status: M8 complete — v0.1 is in sight.** A campaign can now be extended
+> without touching Xfuzz: an out-of-process plugin in any language, or four
+> lines of hermetic Starlark beside the campaign file. Nine injected faults each
+> have a defined behaviour and a test that injects them for real — a two-megabyte
+> tmpfs for the full disk, a database overwritten in place for the corrupt one.
+> Every untrusted parser fuzzes itself in CI. macOS and Windows run a real
+> subprocess campaign rather than being assumed to. And the v0.1 proof
+> obligation — a coverage-guided campaign against a checksum-protected format at
+> 6,700 exec/s, and a protocol campaign that reaches a bug behind a handshake —
+> is measured rather than claimed. Building that measurement found that a
+> grammar had never reached the mutation loop: it generated seeds, and the
+> campaign then mutated them as bytes. It does now, and the same comparison went
+> from a tie to a corpus twice as valid as byte-level mutation's. See
+> [docs/GUIDE.md](docs/GUIDE.md) to use it and
+> [docs/MVP_PLAN.md](docs/MVP_PLAN.md) for what remains.
 
 ## The idea
 

@@ -573,20 +573,54 @@ not understand does not fail, it misreads.
 
 ---
 
-### M8 — Extensions and hardening *(2–3 weeks)*
+### M8 — Extensions and hardening ✅ *delivered*
 
-- `pkg/plugin`: out-of-process protocol (feedbacks, mutators, objectives) with
-  batching, versioning, and contained failure.
-- Starlark host: hermetic, step- and allocation-bounded, for oracles and
-  campaign-local logic.
-- Fault-injection suite (TESTS.md § 9).
-- Self-fuzzing entry points for every untrusted parser, wired into CI.
-- macOS and Windows verification of the T3/T4 + `blackbox`/`gocov` path.
-- Documentation: user guide, grammar authoring guide, `xfuzz doctor` coverage.
+- `pkg/plugin`: an out-of-process protocol for feedbacks, mutators and
+  objectives — four length bytes and a JSON object over the plugin's own stdio
+  (ADR-0025) — with batching where batching is real, versioning checked in the
+  handshake, and failure that is sticky and contained.
+- `pkg/plugin/script`: a hermetic Starlark host for oracles, mutators and
+  protocol state functions, bounded by a step budget and an allocation budget.
+- `internal/extension`: the campaign file's `extensions:` and `scripts:` blocks
+  resolved into running, confined processes and loaded modules.
+- The fault-injection suite of TESTS.md § 9, all nine faults injected for real.
+- Self-fuzzing for every untrusted parser TESTS.md § 8 names, in CI, with the
+  corpus cached across runs.
+- macOS and Windows measured rather than assumed: a subprocess campaign, black
+  box, against a Go target the test builds, on all three platforms in CI.
+- [GUIDE.md](GUIDE.md), [GRAMMAR.md](GRAMMAR.md), and a test that walks the
+  guide so it cannot go stale.
 
-**Exit:** Both v0.1 proof-obligation campaigns pass on Linux; macOS and Windows
-run a subprocess campaign end to end; all fault-injection tests pass; self-fuzzing
-runs clean in CI.
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| Both v0.1 proof-obligation campaigns pass on Linux | **Stateless:** 1,208,068 executions at **6,711/s sustained** on the fork-server tier against the checksum-protected `chunked_format`, four findings in one bucket, every one verified 5 of 5 and minimised — 45%, 41%, 39% smaller. Its corpus is **48% valid against the byte-level arm's 25%** on identical seeds; the direct measurement of the rate, at the layer where inputs can be counted as they are produced, is 99.8% against 0.0%. **Stateful:** measured in `test/e2e/m6_test.go` — a bug behind a multi-step handshake, with protocol coverage reported beside code coverage |
+| macOS and Windows run a subprocess campaign end to end | `test/e2e/portable_test.go`, run by CI on all three platforms: a campaign, a resume across daemon lifetimes, and `xfuzz doctor` checked against the platform it runs on. On Linux: 9,916 executions, both planted bugs found, two buckets. **The macOS and Windows legs run in CI and have not been executed on the machine this was developed on** |
+| All fault-injection tests pass | 9 of 9. Four in `internal/store` (corrupt blob quarantined and the campaign continues, corrupt database refused on open, a full 2 MB tmpfs degrading with no partial blob left behind, a store from the future refused), three in `test/e2e` (a killed worker replaced and the corpus intact, a hanging target timed out and recorded as `map[hang:1]`, a fork bomb contained with the campaign finishing), one in `internal/worker` (a dying plugin ending its campaign with its own words), one in `test/e2e/m5_test.go` (a killed daemon resuming) |
+| Self-fuzzing runs clean in CI | Ten targets across nine packages, `make fuzz-all`, corpus cached between runs. Locally: 1.8M executions of the grammar parser, 1M of the campaign parser, 2.5M of the schema codec's round-trip, 1M of the plugin frame decoder, 570k of the dictionary parser, 530k of the sanitizer parser, 420k of the API handlers, no crash. The API target found a real defect on its first run |
+
+**The proof obligation found that a grammar never reached the hot loop.** Its
+two arms — structured against byte-level, same seeds, same budget — came back
+37 edges against 38 and 43% corpus validity against 40%. They were the same
+campaign run twice: `format.grammar` generated seeds and `codecFor` returned
+`codec.Raw` whatever the grammar said, so the fixup pass that ADR-0005 exists
+for never ran in any campaign that asked for it. `codec.Schema` is the missing
+half, and with it the same comparison is 48% against 25%, four findings against
+two, and minimisation that reduces 45% where it managed 11%.
+
+**Two other defects surfaced the same way.** `xfuzz init` wrote a campaign file
+that `xfuzz validate` rejected — `workers.count: 0` with a comment saying "one
+per core" — which is two commands into the documented path, and exactly the
+class of defect nobody who already knows the tool would hit. And the API and
+the console, which share a listener, decided which of them answered on the
+*cleaned* path, so `/v1/campaigns/../../etc/passwd` cleaned to `/etc/passwd`
+and a JSON client got an HTML page.
+
+**`gocov` did not make v0.1**, for the reason recorded in § 1.1 above: Go's
+coverage counters are written in a format no public API decodes, and it would
+not have been the grey-box path on Windows anyway, where there is no coverage
+map to fill.
 
 ---
 

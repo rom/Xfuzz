@@ -11,7 +11,7 @@ listed here with its migration path.
 
 ## [Unreleased]
 
-### Added — M8 Extensions and hardening (in progress)
+### Added — M8 Extensions and hardening (2026-08-30)
 
 **The external plugin tier (ADR-0010, ADR-0025, ASR-0009)**
 
@@ -196,6 +196,15 @@ listed here with its migration path.
   on the portable target: 78 buckets for two planted bugs, now 2. Such findings
   are also now reported as kind `panic` rather than `sanitizer`, which was a
   lie about where they came from.
+
+### M8's exit criteria, measured
+
+| Criterion | Result |
+| --- | --- |
+| Both v0.1 proof-obligation campaigns pass on Linux | Stateless: 1,208,068 executions at 6,711/s sustained on the fork server against a checksum-protected format, four findings in one bucket, each verified 5 of 5 and minimised by up to 45%, with a corpus 48% valid against byte-level mutation's 25%. Stateful: `test/e2e/m6_test.go` |
+| macOS and Windows run a subprocess campaign end to end | `test/e2e/portable_test.go`, in CI on all three platforms. The Linux leg: 9,916 executions, both planted bugs, two buckets. The macOS and Windows legs run in CI and have not been executed here |
+| All fault-injection tests pass | 9 of 9, each fault injected for real |
+| Self-fuzzing runs clean in CI | Ten targets, corpus cached across runs; several million executions locally with no crash. The API target found a real defect on its first run |
 
 ### Added — M7 Web console (2026-08-30)
 
