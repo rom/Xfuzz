@@ -93,10 +93,8 @@ func (e *InProc) LastPanic() (string, string) { return e.lastPanic, e.lastStack 
 
 // Run implements Executor.
 func (e *InProc) Run(ctx context.Context, in Input, obs []feedback.Observer) (feedback.ExitKind, error) {
-	for _, o := range obs {
-		if err := o.Pre(); err != nil {
-			return feedback.ExitError, fmt.Errorf("arming %s: %w", o.Name(), err)
-		}
+	if err := Arm(obs, in); err != nil {
+		return feedback.ExitError, err
 	}
 	e.lastPanic, e.lastStack = "", ""
 

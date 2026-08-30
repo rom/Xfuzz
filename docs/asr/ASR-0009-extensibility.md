@@ -58,4 +58,4 @@ in-process.
 
 ## Satisfied by
 
-ADR-0010
+ADR-0010, ADR-0025

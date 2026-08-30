@@ -92,6 +92,23 @@ func (o *Observer) Hangup() { o.trace.Observe(Closed) }
 // that needs it later must copy it.
 func (o *Observer) Trace() *Trace { return o.trace }
 
+// StateLabels returns the trace as plain strings, oldest first.
+//
+// It exists for the extension tiers: an out-of-process plugin cannot be handed
+// a *Trace, and a package that only needs to report where a session went should
+// not have to import the state machine to do it. The method is what makes this
+// observer visible to them (ADR-0010).
+func (o *Observer) StateLabels() []string {
+	if o.trace == nil {
+		return nil
+	}
+	out := make([]string, len(o.trace.States))
+	for i, l := range o.trace.States {
+		out[i] = string(l)
+	}
+	return out
+}
+
 // Exemplars returns the responses that produced this session's labels.
 func (o *Observer) Exemplars() map[Label][]byte { return o.exemplars }
 

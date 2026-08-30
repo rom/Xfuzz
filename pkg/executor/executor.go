@@ -160,6 +160,35 @@ type Executor interface {
 	Close() error
 }
 
+// InputSink is an observer that wants the bytes that were executed.
+//
+// Structural, not imported: pkg/feedback must not depend on pkg/executor
+// (ARCHITECTURE section 2), so the observer that implements this declares the
+// method and never names this interface. The dependency runs one way, and the
+// two still meet.
+type InputSink interface {
+	RecordInput([]byte)
+}
+
+// Arm prepares the observers for one execution.
+//
+// Every executor does this identically, and identically is the point: an
+// observer must be reset before the target runs, and an observer that wants the
+// input must receive it after that reset rather than before, or Pre erases what
+// it was just given. Four copies of that ordering is four chances to get it
+// wrong.
+func Arm(obs []feedback.Observer, in Input) error {
+	for _, o := range obs {
+		if err := o.Pre(); err != nil {
+			return fmt.Errorf("arming %s: %w", o.Name(), err)
+		}
+		if s, ok := o.(InputSink); ok {
+			s.RecordInput(in.Bytes)
+		}
+	}
+	return nil
+}
+
 // --- the spawn boundary -----------------------------------------------------
 
 // ProcSpec describes a process to launch.

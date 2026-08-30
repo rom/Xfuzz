@@ -395,10 +395,8 @@ func (e *Session) Run(ctx context.Context, in Input, obs []feedback.Observer) (f
 		return feedback.ExitOK, nil
 	}
 
-	for _, o := range obs {
-		if err := o.Pre(); err != nil {
-			return feedback.ExitError, fmt.Errorf("arming %s: %w", o.Name(), err)
-		}
+	if err := Arm(obs, in); err != nil {
+		return feedback.ExitError, err
 	}
 
 	sctx, cancel := context.WithTimeout(ctx, e.opts.SessionTimeout)

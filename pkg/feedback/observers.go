@@ -431,3 +431,45 @@ func (o *AnyObjective) IsFinding(obs []Observer, ek ExitKind) (bool, Finding, er
 	}
 	return false, Finding{}, nil
 }
+
+// InputObserver holds the bytes that were executed, for the extensions that
+// judge an input rather than what it did.
+//
+// Nothing in the native pipeline needs it: a coverage feedback judges where the
+// execution went, and a crash objective judges how it ended. An oracle does —
+// "the output should echo the length in the header" is a statement about both
+// sides — and so does any out-of-process extension, which has no other way to
+// see the input at all. It is an observer rather than a parameter because that
+// is the channel executors already have for handing facts to the pipeline, and
+// adding one to the Feedback interface would make every implementation carry a
+// field that almost none of them read.
+type InputObserver struct {
+	name string
+	buf  []byte
+}
+
+// NewInputObserver returns an input observer.
+func NewInputObserver(name string) *InputObserver { return &InputObserver{name: name} }
+
+// Name implements Observer.
+func (o *InputObserver) Name() string { return o.name }
+
+// Pre implements Observer.
+func (o *InputObserver) Pre() error { o.buf = o.buf[:0]; return nil }
+
+// Post implements Observer.
+func (o *InputObserver) Post(ExitKind) error { return nil }
+
+// Reset implements Observer.
+func (o *InputObserver) Reset() { o.buf = o.buf[:0] }
+
+// RecordInput implements executor.InputSink: the executor hands over the bytes
+// it is about to run.
+//
+// The copy is deliberate. The engine's encode buffer is reused on the next
+// iteration, so holding the slice would give a plugin a view of the *next*
+// input by the time it read it.
+func (o *InputObserver) RecordInput(b []byte) { o.buf = append(o.buf[:0], b...) }
+
+// Input returns the bytes of the most recent execution.
+func (o *InputObserver) Input() []byte { return o.buf }

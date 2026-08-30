@@ -143,6 +143,14 @@ func isPayload(n *ir.Node) bool {
 	return isWritable(n) && len(n.Raw) > 0
 }
 
+// IsPayload reports whether a node is one a byte-level operator may rewrite.
+//
+// Exported because the extension tiers must agree with the native one about
+// what an operator can act on (ADR-0010). A plugin mutator that decided for
+// itself would be offered nodes the engine considers immutable, and the
+// disagreement would show up as mutations that are silently discarded.
+func IsPayload(n *ir.Node) bool { return isPayload(n) }
+
 // isWritable reports whether a node holds bytes at all and is not off-limits.
 func isWritable(n *ir.Node) bool {
 	return n != nil && !n.Immutable() &&
