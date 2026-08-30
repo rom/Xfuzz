@@ -11,7 +11,10 @@ package engine
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"github.com/rom/Xfuzz/pkg/schema"
+	"hash/crc32"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -65,6 +68,17 @@ type campaign struct {
 
 func newCampaign(t testing.TB, target string, seeds [][]byte, dictPath string, seed uint64, trace *bytes.Buffer) *campaign {
 	t.Helper()
+	return newCampaignWith(t, target, seeds, dictPath, seed, trace, codec.Raw{})
+}
+
+// newCampaignWith is newCampaign with the codec named.
+//
+// The codec is what decides whether a campaign mutates a structure or a byte
+// string, so a target whose bugs sit behind a checksum needs the one built from
+// its grammar. Raw is still the default: most targets have no grammar, and a
+// harness that quietly assumed one would measure something no campaign runs.
+func newCampaignWith(t testing.TB, target string, seeds [][]byte, dictPath string, seed uint64, trace *bytes.Buffer, cdc codec.Codec) *campaign {
+	t.Helper()
 
 	provider := platform.NewSharedMemoryProvider()
 	if !provider.Available() {
@@ -112,7 +126,7 @@ func newCampaign(t testing.TB, target string, seeds [][]byte, dictPath string, s
 		Corpus:        corpus.New(),
 		Schedule:      corpus.NewFastScheduler(),
 		Mutators:      mutate.Default(),
-		Codec:         codec.Raw{},
+		Codec:         cdc,
 		Dict:          dict,
 		MaxInputBytes: 4096,
 		MaxChildren:   64,
@@ -154,11 +168,12 @@ func foundBugs(e *Engine) map[int]bool {
 // TestCampaignFindsAllPlantedBugs is M3's headline exit criterion.
 func TestCampaignFindsAllPlantedBugs(t *testing.T) {
 	cases := []struct {
-		target string
-		bugs   int
-		dict   string
-		seeds  [][]byte
-		budget Budget
+		target  string
+		bugs    int
+		dict    string
+		grammar string
+		seeds   [][]byte
+		budget  Budget
 	}{
 		{
 			target: "simple_parser",
@@ -193,6 +208,30 @@ func TestCampaignFindsAllPlantedBugs(t *testing.T) {
 			},
 			budget: Budget{MaxExecs: 600_000, MaxTime: 90 * time.Second},
 		},
+		{
+			target:  "chunked_format",
+			bugs:    5,
+			grammar: "chunked_format.xfg",
+			// Real files of the format: one chunk of each kind, and payloads
+			// of the sizes those chunks carry. The large SIZE payload is not a
+			// shortcut — a corpus of uniformly tiny ones would leave the bug
+			// that needs a long one behind two independent conditions with no
+			// coverage gradient between them, which measures guessing rather
+			// than mutation.
+			seeds: [][]byte{
+				chunkedSeed([]string{"SIZE"}, []byte("0123456789abcdef")),
+				chunkedSeed([]string{"SIZE"}, bytes.Repeat([]byte("abcdefgh"), 12)),
+				chunkedSeed([]string{"IDXT"}, []byte{0, 4, 7}),
+				chunkedSeed([]string{"MATH"}, []byte{0, 0, 0, 2, 0, 0, 0, 1}),
+				chunkedSeed([]string{"PTRV"}, []byte{1, 2, 3, 4}),
+				chunkedSeed([]string{"DPTH", "DPTH"}, []byte("d")),
+				chunkedSeed([]string{"DPTH", "SIZE", "IDXT"}, []byte("payload")),
+			},
+			// Every bug in this target sits behind a CRC the parser checks
+			// before it does anything else, so the budget is buying mutations
+			// that survive the fixup pass rather than executions.
+			budget: Budget{MaxExecs: 3_000_000, MaxTime: 6 * time.Minute},
+		},
 	}
 
 	for _, tc := range cases {
@@ -203,7 +242,16 @@ func TestCampaignFindsAllPlantedBugs(t *testing.T) {
 				dict = filepath.Join(repoRoot(t), "testdata", "targets", tc.dict)
 			}
 
-			c := newCampaign(t, target, tc.seeds, dict, 0x58465A33, nil)
+			cdc := codec.Codec(codec.Raw{})
+			if tc.grammar != "" {
+				sch, err := schema.ParseFile(filepath.Join(repoRoot(t), "testdata", "targets", tc.grammar))
+				if err != nil {
+					t.Fatalf("parsing %s: %v", tc.grammar, err)
+				}
+				cdc = codec.NewSchema(sch)
+			}
+
+			c := newCampaignWith(t, target, tc.seeds, dict, 0x58465A33, nil, cdc)
 			stats, err := c.engine.Run(context.Background(), tc.budget)
 			if err != nil {
 				t.Fatalf("campaign failed: %v", err)
@@ -476,4 +524,19 @@ func TestEngineRefusesAnEmptyCorpus(t *testing.T) {
 	if _, err := e.Run(context.Background(), Budget{MaxExecs: 10}); err == nil {
 		t.Error("a campaign with no seeds must refuse to run rather than spin")
 	}
+}
+
+// chunkedSeed builds a well-formed file of the chunked format: correct lengths,
+// correct checksums.
+func chunkedSeed(tags []string, payload []byte) []byte {
+	out := append([]byte("XCHK"), 1)
+	for _, tag := range tags {
+		body := append([]byte(tag), 0, 0, 0, 0)
+		binary.BigEndian.PutUint32(body[4:], uint32(len(payload)))
+		body = append(body, payload...)
+		sum := make([]byte, 4)
+		binary.BigEndian.PutUint32(sum, crc32.ChecksumIEEE(body))
+		out = append(out, append(body, sum...)...)
+	}
+	return out
 }
