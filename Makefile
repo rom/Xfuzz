@@ -174,8 +174,12 @@ vuln: ## Known-vulnerability scan
 
 # ------------------------------------------------------------------- ci ------
 
+# Not the whole of CI, and the name should not suggest otherwise: the workflow
+# also runs integration, portable, fuzz, security, nocgo and vuln, several of
+# them on three platforms. This is the part worth running before a push, which
+# is a different thing.
 .PHONY: ci
-ci: lint test cross bench-check ## What CI runs on every push
+ci: lint test cross bench-check ## The fast subset of CI, worth running before a push
 
 .PHONY: clean
 clean:

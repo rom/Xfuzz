@@ -316,13 +316,18 @@ binaries that ship.
 
 | Job | Platform | Scope |
 | --- | --- | --- |
+| `lint` | Linux | gofmt, vet, and the three Layer 10 checks |
 | `test (ubuntu-latest)` | Linux amd64 | Full suite with `-race` |
 | `test (macos-latest)` | macOS arm64 | Full suite with `-race`, minus Linux-only tiers |
 | `test (windows-latest)` | Windows amd64 | Full suite, minus POSIX-only tiers |
 | `integration` | Linux amd64 | Layer 3: planted-bug campaigns, behind the `integration` build tag |
+| `portable` | Linux, macOS, Windows | A black-box subprocess campaign end to end — what ADR-0020 scopes macOS and Windows to |
+| `fuzz` | Linux | Layer 7: every parser fuzzed for 60s, corpus cached between runs |
+| `security` | Linux amd64 | Layer 12: the escape attempts, and a check that none of them skipped |
 | `nocgo` | Linux amd64 | Full suite with `CGO_ENABLED=0` (ADR-0017) |
 | `cross` | Linux | Compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64` |
 | `vuln` | Linux | `govulncheck` |
+| `bench` | Linux | Layer 6: the regression gate — allocations against the committed baseline on a push, every metric against the base branch on a pull request |
 
 The campaign tests sit behind a build tag and run in their own job. They take
 minutes, so leaving them in the default suite would make the pre-commit run too
@@ -347,6 +352,15 @@ Three deliberate gaps, stated rather than papered over:
 Platform-unavailable capabilities are asserted to **skip explicitly with a
 reason**, never to fail silently or pass vacuously — the same information
 `xfuzz doctor` reports to users.
+
+The one place a skip is *not* acceptable is the `security` job. There a skip
+means the confinement mechanism was not present, which is precisely the state
+the job exists to rule out, and it would otherwise be indistinguishable from a
+pass. So that job runs on Linux only — where every mechanism is available — and
+fails on any skip, and on a suite that has quietly shrunk below the count
+section 12 lists. This job did not exist until the v0.1 release audit: `make
+test-security` was written in M4 and had never run in CI, so twelve security
+properties were being asserted by a suite nobody ran.
 
 ## 11. Layer 10 — Architecture, documentation, and licence checks
 

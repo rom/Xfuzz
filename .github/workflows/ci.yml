@@ -163,6 +163,56 @@ jobs:
           path: '**/testdata/fuzz/**'
           if-no-files-found: ignore
 
+  # Layer 12 / ASR-0010 — the escape attempts. docs/TESTS.md section 12 makes
+  # every claim in SECURITY.md an executable test: a target that writes outside
+  # its directory, forks without bound, allocates without bound, and calls a
+  # privileged syscall, plus the scope guard, the authorization record, and the
+  # audit log's hash chain.
+  #
+  # Its own job, and on Linux, because that is where the mechanisms are: user
+  # namespaces, cgroups, and seccomp (ADR-0022). Elsewhere these tests skip with
+  # a reason, so running them there would prove nothing and cost a runner.
+  #
+  # Each test distinguishes "contained" from "the target never ran". A sandbox
+  # test that passes because nothing started is the one failure mode that would
+  # never be noticed, so the suite asserts the effect rather than the
+  # configuration — which is also why a skip here is a gap and not a pass.
+  security:
+    name: security (escape attempts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: clang version
+        run: clang --version
+      - name: run the escape attempts
+        run: make test-security
+      - name: none of them may have skipped
+        run: |
+          # A skip is how this suite reports "the mechanism is not here", which
+          # is exactly the state a security job must not pass in. On a hosted
+          # Linux runner every mechanism is present, so a skip means something
+          # regressed in detection rather than in confinement — and it would
+          # otherwise look identical to a pass.
+          go test -tags security -run Security -v ./... 2>&1 | tee /tmp/sec.log
+          if grep -q -- '--- SKIP' /tmp/sec.log; then
+            echo "::error::a security test skipped on a runner that has the mechanism"
+            grep -A2 -- '--- SKIP' /tmp/sec.log
+            exit 1
+          fi
+          ran=$(grep -c -- '--- PASS' /tmp/sec.log)
+          echo "$ran security tests passed"
+          # Guards against the suite silently emptying: a build tag that stops
+          # matching, or a rename, would otherwise report a green job that ran
+          # nothing at all.
+          if [ "$ran" -lt 10 ]; then
+            echo "::error::only $ran security tests ran; docs/TESTS.md section 12 lists more than that"
+            exit 1
+          fi
+
   # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
   # slower or less featureful, never broken.
   nocgo:
