@@ -25,7 +25,7 @@ per extension:
 | Tier | Mechanism | Isolation | Overhead | Use for |
 | --- | --- | --- | --- | --- |
 | **Native** | Go interface, compiled in | none | ~ns | Hot-path mutators, codecs, feedbacks |
-| **External plugin** | Out-of-process over gRPC/stdio | process | ~10–100 µs | Untrusted, heavyweight, or non-Go logic |
+| **External plugin** | Out-of-process over stdio ([ADR-0025](ADR-0025-length-prefixed-json-over-stdio-for-plugins.md)) | process | ~10–100 µs | Untrusted, heavyweight, or non-Go logic |
 | **Script** | Embedded Starlark, hermetic | sandbox | ~µs | Campaign-local oracles, glue, rapid iteration |
 
 - **Native** is the reference tier. Every extension point is a narrow, documented,
@@ -34,7 +34,10 @@ per extension:
 - **External plugins** are separate processes speaking a versioned protocol.
   Crashes are contained: a dying plugin fails its campaign with a clear error and
   never touches the daemon or sibling campaigns. Batching amortises IPC — a
-  plugin mutator receives a batch of inputs, not one per call.
+  plugin mutator receives a batch of inputs, not one per call. The transport
+  is settled by [ADR-0025](ADR-0025-length-prefixed-json-over-stdio-for-plugins.md):
+  stdio, not gRPC, for the reasons ADR-0024 gave for the API and because
+  `ExtraFiles` does not exist on Windows.
 - **Scripts** use **Starlark**, chosen specifically because it is hermetic by
   construction: no filesystem, network, or clock access, and deterministic
   execution — which matters because campaign files may be untrusted (ASR-0010)

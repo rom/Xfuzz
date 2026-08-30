@@ -25,7 +25,7 @@ implemented, but only along one path per layer:
 | --- | --- | --- |
 | Domains | File formats, CLI tools, one network protocol | APIs, GUI, TUI |
 | Executors | T0, T2, T3, T4, T6 | T1, T5, T7 |
-| Instrumentation | `sancov`, `gocov`, `forkserver`, `blackbox` | `frida`, `qemu`, `intelpt`, `ptrace-bb`, `agent` |
+| Instrumentation | `sancov`, `forkserver`, `blackbox` | `gocov` ([ADR-0026](ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)), `frida`, `qemu`, `intelpt`, `ptrace-bb`, `agent` |
 | IR | Full node set, fixups, byte + structured mutators | Advanced grammar importers |
 | Grammar | Native `.xfg` DSL, one worked format | protobuf, ASN.1, ABNF, Kaitai, OpenAPI importers |
 | Feedback | Map coverage, state, response, timing; full algebra | Distance (directed), value profile, concolic |
@@ -35,7 +35,7 @@ implemented, but only along one path per layer:
 | Parallelism | N worker processes, corpus sync, ensembles | Distributed |
 | Interfaces | Daemon, CLI, console (all v1 views) | Fleet view, RBAC |
 | Extensions | Native tier complete; plugin + Starlark for feedback/oracles | Full plugin coverage of every extension point |
-| Platforms | Linux full; macOS/Windows via T3/T4 + `blackbox`/`gocov` | Platform fast paths |
+| Platforms | Linux full; macOS/Windows via T3/T4 + `blackbox` | Platform fast paths |
 
 The rule that makes this work: **no layer may be stubbed.** A thin slice with a
 mocked store or a fake feedback pipeline proves nothing, because the integration

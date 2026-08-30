@@ -404,6 +404,65 @@ its campaign with a clear error rather than taking the daemon with it.
 Paths in a campaign file resolve against **the file**, not your working
 directory, so a campaign is movable. That is the single most common surprise.
 
+## Every command
+
+`xfuzz <command> --help` prints a command's own flags. This table is checked
+against the binary by `cmd/xfuzz/parity_test.go`, so it cannot fall behind it.
+
+**Campaign files**
+
+| Command | What it does |
+| --- | --- |
+| `xfuzz edit` | Change fields in a campaign file, keeping its comments and layout |
+| `xfuzz explain` | Print the fully resolved configuration, including every default |
+| `xfuzz init` | Write a starter campaign file |
+| `xfuzz validate` | Check a campaign file without running it |
+
+**Campaigns**
+
+| Command | What it does |
+| --- | --- |
+| `xfuzz forget` | Forget a finished campaign, keeping its store |
+| `xfuzz list` | List campaigns the daemon has loaded |
+| `xfuzz load` | Open a campaign that already exists in a store |
+| `xfuzz pause` | Pause a campaign without losing its state |
+| `xfuzz resume` | Resume a paused campaign |
+| `xfuzz run` | Create and start a campaign, following its progress |
+| `xfuzz start` | Start a campaign the daemon already holds |
+| `xfuzz status` | Show one campaign's state, counters and health |
+| `xfuzz stop` | Stop a campaign |
+
+**Daemon**
+
+| Command | What it does |
+| --- | --- |
+| `xfuzz doctor` | Report what this host can do, and why anything is missing |
+| `xfuzz info` | Show the daemon's version and status |
+| `xfuzz schema` | Print the campaign file JSON Schema |
+| `xfuzz version` | Print this client's version |
+
+**Inspection**
+
+| Command | What it does |
+| --- | --- |
+| `xfuzz audit` | Print the audit log and verify its hash chain |
+| `xfuzz corpus` | Browse, fetch, import and export the corpus |
+| `xfuzz findings` | List findings and fetch their reproducers |
+| `xfuzz grammar` | Compile a grammar and show what it generates |
+| `xfuzz metrics` | Show counters, history, and health diagnostics |
+| `xfuzz minimize` | Reduce a finding's reproducer, preserving its failure class |
+| `xfuzz replay` | Re-run a finding's reproducer and report whether it still fails |
+| `xfuzz safety` | Show the isolation in force, and why it is not higher |
+| `xfuzz states` | Show the protocol state machine a stateful campaign has explored |
+| `xfuzz watch` | Follow a campaign's live event stream |
+| `xfuzz workers` | Show each worker's state |
+
+**Triage**
+
+| Command | What it does |
+| --- | --- |
+| `xfuzz triage` | Record a judgement of a finding, and a note |
+
 ## Where to go next
 
 - [GRAMMAR.md](GRAMMAR.md) — describing a format so mutation respects it.

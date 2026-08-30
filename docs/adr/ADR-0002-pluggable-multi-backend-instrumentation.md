@@ -30,7 +30,7 @@ implement it with **independent, selectable backends**:
 | Backend | Mechanism | Platform |
 | --- | --- | --- |
 | `sancov` | `xfuzz-cc`-injected edge counters in shared memory | Linux, macOS, Windows |
-| `gocov` | Go native coverage counters | all |
+| `gocov` | Go native coverage counters | all (deferred past v0.1, [ADR-0026](ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)) |
 | `forkserver` | AFL-protocol shared-memory bitmap | Linux, macOS |
 | `frida` | Dynamic instrumentation of stripped binaries | Linux, macOS, Windows |
 | `qemu` | User-mode emulation with block tracing | Linux |
@@ -74,6 +74,10 @@ response-novelty and timing feedback plus randomised scheduling.
 
 - Backends beyond `sancov`, `gocov`, `forkserver`, and `blackbox` are phased work
   (ADR-0020); the interface is fixed in v1 so later additions are not retrofits.
+  `gocov` itself moved out of v0.1 during the release audit
+  ([ADR-0026](ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)): Go's
+  coverage format has no public reader, and the v0.1 set is `sancov`,
+  `forkserver`, and `blackbox`.
 
 ## Alternatives considered
 

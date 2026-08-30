@@ -11,6 +11,61 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — v0.1 release audit (2026-08-30)
+
+**T3, the process pool (ADR-0009, ADR-0026, ASR-0006)**
+
+- `pkg/executor.ProcPool`: a pool of pre-spawned processes, each handed its
+  input over stdio, so the cost of creating a process is paid while the previous
+  execution is still running. This is the tier ADR-0009 calls "required on
+  Windows", where the fork server's descriptors 3 and 4 do not exist. It was in
+  the v0.1 scope table with no implementation behind it — found by auditing the
+  ADRs against the code, not by a test.
+- Measured against T4 on the same target: 1420 exec/s against 559 in the
+  benchmark, 302 exec/s against 168 in a real campaign.
+- Black-box by construction, and it says so in its capabilities. A process that
+  already exists has already run its startup path, so claiming edge coverage
+  would attribute the target's initialisation to whichever input arrived first.
+- `executor: pool` in the campaign file; `auto` picks it over the subprocess
+  tier whenever there is no coverage map to fill.
+
+**Benchmarks for every implemented tier (definition of done, clause 3)**
+
+- `BenchmarkInProc`, `BenchmarkSession`, `BenchmarkProcPool` and
+  `BenchmarkSubprocessNop`, shaped so their numbers are comparable: same target,
+  same mutation, one execution per iteration, so what separates them is the cost
+  of the boundary and nothing else. Four of the five tiers previously had no
+  benchmark, which means the gate clause 3 asks for could only ever have held
+  for one of them.
+
+**Documentation**
+
+- [ADR-0026](adr/ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)
+  records the `gocov` deferral as a decision rather than an absence, and amends
+  the scope tables in ADR-0002 and ADR-0020 that still listed it.
+- `docs/GUIDE.md` gains a reference table of every command, held to the binary
+  by `cmd/xfuzz/parity_test.go` in both directions.
+
+### Fixed — v0.1 release audit
+
+- **`xfuzz findings` never showed a finding's bucket**, which is the field the
+  list is usually being read to answer: is this the same bug again? Both the
+  table and the detail view now carry it. The omission had also made two tests
+  vacuous — `test/e2e/m6_test.go` decoded a `bucket` key the CLI did not emit,
+  so it compared zero against zero and passed however the crashes were grouped.
+- **MVP_PLAN § 1.1 documented a Go instrumentation route that does not exist.**
+  It offered `-gcflags=all=-d=libfuzzer` against the runtime `xfuzz-cc` ships as
+  "the same instrumentation by a shorter route". Building it during the audit,
+  it does not link: Go's libfuzzer mode emits against libFuzzer's 8-bit counter
+  interface and `runtime/csrc/xfuzz-rt.c` implements trace-pc-guard, which is a
+  different contract rather than a subset of one. Corrected, with the working
+  route recorded in ADR-0026 for a later version.
+- **ADR-0010 still offered "gRPC/stdio" for the plugin transport** after
+  ADR-0024 removed gRPC from the project and ADR-0025 settled on stdio.
+- **ADR-0009 named the T3 executor `ProcessPool`** where the code calls it
+  `ProcPool`, and **ARCHITECTURE described `internal/platform` as `linux/
+  darwin/ windows/` subdirectories** it has never had.
+
 ### Added — M8 Extensions and hardening (2026-08-30)
 
 **The external plugin tier (ADR-0010, ADR-0025, ASR-0009)**

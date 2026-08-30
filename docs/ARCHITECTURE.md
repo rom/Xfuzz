@@ -91,7 +91,8 @@ github.com/rom/Xfuzz
 │   ├── corpussync/         cross-worker corpus synchronisation
 │   ├── version/            build identity, injected at link time
 │   ├── testenv/            fixtures for integration tests, and nothing else
-│   └── platform/           OS-specific: linux/ darwin/ windows/
+│   └── platform/           OS-specific: shared memory, locks, process groups,
+│                           signals, sandbox — one file per build constraint
 ├── web/                    TypeScript SPA → embedded static assets
 ├── runtime/                xfuzz-rt: the C coverage runtime, embedded for
 │   └── csrc/               xfuzz-cc to compile into targets (never into Xfuzz)
@@ -712,10 +713,10 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 | --- | --- |
 | ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014 |
 | ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
-| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009 |
+| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026 |
 | ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
-| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025 |
+| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021 |
 | ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025 |
 | ASR-0009 Extensibility | ADR-0010, ADR-0025 |

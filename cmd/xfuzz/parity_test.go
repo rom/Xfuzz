@@ -1,12 +1,16 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/rom/Xfuzz/internal/api"
 	"github.com/rom/Xfuzz/internal/daemon"
+	"github.com/rom/Xfuzz/tools/docslint"
 )
 
 // The CLI/API parity test (ASR-0005).
@@ -146,5 +150,51 @@ func TestCommandNamesAreUnique(t *testing.T) {
 			t.Errorf("two commands are named %q", c.Name)
 		}
 		seen[c.Name] = true
+	}
+}
+
+func TestEveryCommandIsInTheGuide(t *testing.T) {
+	// docs/GUIDE.md carries a reference table of every command. A table that
+	// is merely written by hand is a table that is right on the day it is
+	// written: the v0.1 audit found nine commands the guide had never heard
+	// of, all of them added after the section around them was.
+	//
+	// The direction matters in both senses. A command missing from the table
+	// is undiscoverable to anyone who does not already know it exists; a row
+	// for a command that no longer exists sends a reader to an error message.
+	root, err := docslint.FindRepoRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide, err := os.ReadFile(filepath.Join(root, "docs", "GUIDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rowRe := regexp.MustCompile("(?m)^\\| `xfuzz ([a-z-]+)` \\| (.+?) \\|$")
+	listed := map[string]string{}
+	for _, m := range rowRe.FindAllStringSubmatch(string(guide), -1) {
+		listed[m[1]] = m[2]
+	}
+	if len(listed) == 0 {
+		t.Fatal("docs/GUIDE.md has no command reference table; the section was removed or its shape changed")
+	}
+
+	for _, c := range commands {
+		summary, ok := listed[c.Name]
+		if !ok {
+			t.Errorf("command %q is not in the guide's command table", c.Name)
+			continue
+		}
+		// The summary is the one the help output prints, so a reader sees the
+		// same sentence in both places.
+		if summary != c.Short {
+			t.Errorf("guide describes %q as %q, but its help says %q", c.Name, summary, c.Short)
+		}
+	}
+	for name := range listed {
+		if _, ok := commands[name]; !ok {
+			t.Errorf("the guide's command table lists %q, which is not a command", name)
+		}
 	}
 }

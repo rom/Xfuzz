@@ -26,7 +26,7 @@ selected per campaign by target capability:
 | T0 | `InProc` | Direct call into a Go harness, `recover()` for panics | 10⁵–10⁶/s | all |
 | T1 | `Persistent` | Long-lived harness looping over inputs via shared memory | 10⁴–10⁵/s | all |
 | T2 | `ForkServer` | Fork server + shared-memory coverage bitmap | 10³–10⁴/s | Linux, macOS |
-| T3 | `ProcessPool` | Pre-spawned process pool (the portable stand-in for T2) | 10²–10³/s | all, required on Windows |
+| T3 | `ProcPool` | Pre-spawned process pool (the portable stand-in for T2) | 10²–10³/s | all, required on Windows |
 | T4 | `Subprocess` | One `exec` per input | 10²–10³/s | all |
 | T5 | `Emulated` | QEMU-user, Frida, Intel PT, or ptrace tracing | 10¹–10²/s | mostly Linux |
 | T6 | `Session` | Connection-oriented protocol/API sessions | 10⁰–10²/s | all |

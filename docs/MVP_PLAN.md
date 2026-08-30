@@ -42,10 +42,17 @@ cost more than the execution — or a decoder for an unstable internal format.
 
 Neither buys what it appears to. `gocov` was scoped as the grey-box path off
 Linux, and on Windows it would not be one anyway: shared memory is a Unix
-mechanism, so a Windows campaign has no coverage map to fill. On macOS, a Go
-target can already have `sancov` coverage today by building with
-`-gcflags=all=-d=libfuzzer` against the runtime `xfuzz-cc` already ships, which
-is the same instrumentation by a shorter route.
+mechanism, so a Windows campaign has no coverage map to fill.
+
+**An earlier draft of this section claimed a shorter route and was wrong.** It
+said a Go target could have `sancov` coverage today by building with
+`-gcflags=all=-d=libfuzzer` against the runtime `xfuzz-cc` ships. Trying it
+during the v0.1 audit, it does not link: Go's libfuzzer mode emits against
+libFuzzer's 8-bit counter interface, and `runtime/csrc/xfuzz-rt.c` implements
+the trace-pc-guard interface, which is a different contract rather than a
+subset of one. A pure-Go target behind a process boundary is `blackbox` in
+v0.1. [ADR-0026](adr/ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)
+records the decision, the measurement, and what the working route would take.
 
 What macOS and Windows get in v0.1 is therefore T3/T4 with `blackbox`, which
 ASR-0003 requires to be a supported mode rather than a failure state, and which
@@ -620,7 +627,11 @@ and a JSON client got an HTML page.
 **`gocov` did not make v0.1**, for the reason recorded in § 1.1 above: Go's
 coverage counters are written in a format no public API decodes, and it would
 not have been the grey-box path on Windows anyway, where there is no coverage
-map to fill.
+map to fill. Writing that deferral up as
+[ADR-0026](adr/ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md) —
+so the ADRs would stop listing a backend the code does not have — caught a
+false claim in this document's own § 1.1, which had offered a Go build
+incantation that does not link.
 
 ---
 
