@@ -131,6 +131,10 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	}
 	defer resp.Body.Close()
 
+	if err := checkAPIVersion(resp.Header.Get("X-Xfuzz-Api")); err != nil {
+		return err
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return err
@@ -154,6 +158,38 @@ func (c *Client) Do(ctx context.Context, method, path string, body, out any) err
 	}
 	return nil
 }
+
+// ErrVersionMismatch is returned when the daemon speaks a different API
+// version than this client understands.
+var ErrVersionMismatch = errors.New("client: the daemon speaks a different API version")
+
+// checkAPIVersion refuses a daemon whose surface this build does not know.
+//
+// This is what the version header is for, and what it was not doing: a client
+// that reads a daemon it does not understand does not fail, it *misreads*, and
+// the failure surfaces somewhere unrelated. Measured when a campaign's seed
+// changed from a JSON number to a string, because 64-bit values do not survive
+// a browser's doubles: a stale CLI reported "cannot unmarshal string into Go
+// struct field Status.seed", which says nothing about the actual problem.
+//
+// An empty header is accepted. It means something other than xfuzzd answered —
+// a proxy's error page, most likely — and the response itself will say so more
+// usefully than a version complaint would.
+func checkAPIVersion(got string) error {
+	if got == "" || got == APIVersion {
+		return nil
+	}
+	return fmt.Errorf("%w: it speaks %s and this build speaks %s; "+
+		"use the xfuzz that shipped with the daemon", ErrVersionMismatch, got, APIVersion)
+}
+
+// APIVersion is the surface this client understands.
+//
+// Declared here rather than imported from internal/api, because that package
+// pulls in the daemon and a client binary has no business carrying one. The
+// two are held equal by a test in internal/api, so drift is a build that fails
+// rather than a mismatch discovered in the field.
+const APIVersion = "1"
 
 // maxResponseBytes bounds a response. Corpus payloads are the largest thing
 // returned and they are inputs, not corpora.

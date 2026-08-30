@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rom/Xfuzz/internal/client"
 	"github.com/rom/Xfuzz/internal/daemon"
 	"github.com/rom/Xfuzz/internal/testenv"
 )
@@ -623,5 +624,18 @@ func TestAStaleSocketIsReclaimed(t *testing.T) {
 	case err := <-errc:
 		t.Fatalf("Serve returned early: %v", err)
 	default:
+	}
+}
+
+// The client declares the API version it understands rather than importing it,
+// because internal/api pulls in the daemon and a client binary has no business
+// carrying one. That leaves two constants which must agree, so they are held
+// equal here: drift becomes a failing test rather than a mismatch discovered
+// by a user whose CLI silently misreads a daemon.
+func TestTheClientAgreesOnTheAPIVersion(t *testing.T) {
+	if client.APIVersion != APIVersion {
+		t.Errorf("the client understands API version %q and the server speaks %q; "+
+			"one of them was changed without the other",
+			client.APIVersion, APIVersion)
 	}
 }
