@@ -35,6 +35,20 @@ type File struct {
 	// Description is free text for whoever reads the file next.
 	Description string `yaml:"description,omitempty" json:"description,omitempty" doc:"Free-text description."`
 
+	// Seed pins the campaign's root RNG seed. Absent or zero draws one and
+	// records it in the store.
+	//
+	// It lives in the file rather than behind a `--seed` flag because
+	// ASR-0008's second acceptance criterion is about "the same campaign file
+	// and seed": if the seed is a flag, the artefact that says what ran is
+	// incomplete, and ADR-0016 exists to prevent exactly that. Pinning it makes
+	// a campaign a replayable experiment rather than one that happens once.
+	//
+	// A uint64 in YAML, where it is exact — the same value crosses the HTTP API
+	// as a string, because a JSON number is an IEEE double and a seed that
+	// loses its low bits produces a campaign that does not replay.
+	Seed uint64 `yaml:"seed,omitempty" json:"seed,omitempty,string" doc:"Root RNG seed. Absent draws one; pinning it makes the campaign reproducible."`
+
 	// Include lists other campaign files merged in before this one, so a house
 	// safety scope or a standard mutator set is reused rather than copied.
 	Include []string `yaml:"include,omitempty" json:"include,omitempty" doc:"Files merged in before this one, in order."`
@@ -55,6 +69,7 @@ type File struct {
 	Safety   *Safety   `yaml:"safety,omitempty" json:"safety,omitempty" doc:"Isolation, resource limits, network scope, authorization."`
 	Storage  *Storage  `yaml:"storage,omitempty" json:"storage,omitempty" doc:"Where the corpus and findings live, and their budgets."`
 	Triage   *Triage   `yaml:"triage,omitempty" json:"triage,omitempty" doc:"How findings are verified, minimised, and bucketed."`
+	Health   *Health   `yaml:"health,omitempty" json:"health,omitempty" doc:"Thresholds the health diagnostics judge against."`
 	Stop     *Stop     `yaml:"stop,omitempty" json:"stop,omitempty" doc:"Termination conditions. A campaign must be able to end."`
 
 	// Extensions are out-of-process plugins. A list rather than a map because
@@ -351,6 +366,38 @@ type Storage struct {
 	// CheckpointInterval is how often resume state is written. It is also how
 	// much a kill costs.
 	CheckpointInterval Duration `yaml:"checkpoint_interval,omitempty" json:"checkpoint_interval,omitempty" doc:"How often resume state is written."`
+}
+
+// Health is where a campaign disagrees with the defaults about what "unhealthy"
+// means.
+//
+// The thresholds behind the diagnostics are judgements, not constants: a target
+// that is legitimately a little non-deterministic, or one so slow that ten
+// executions a second is a good day, is not broken. ASR-0008 requires the
+// stability threshold in particular to be configurable, because a target below
+// it must raise a diagnostic rather than silently corrupt a corpus — and a
+// diagnostic that fires on every run of a known-noisy target is one that gets
+// ignored on the run that mattered.
+//
+// Only the thresholds a campaign has a real reason to move. The rest stay
+// where internal/metrics puts them: a knob for every check would be a
+// configuration surface nobody could reason about, and each one here has an
+// ASR behind it.
+type Health struct {
+	// MinStability is the share of executions that must reproduce their own
+	// coverage before the campaign is judged to be chasing noise (ASR-0008).
+	MinStability float64 `yaml:"min_stability,omitempty" json:"min_stability,omitempty" doc:"Share of executions that must reproduce their coverage. Default 0.90."`
+
+	// MaxOverhead is the share of wall-clock time the fuzzer may spend on its
+	// own bookkeeping rather than on the target (ASR-0007).
+	MaxOverhead float64 `yaml:"max_overhead,omitempty" json:"max_overhead,omitempty" doc:"Share of time the fuzzer may spend on itself. Default 0.10."`
+
+	// MinExecsPerSecond is a rate below which something is wrong with the
+	// executor rather than with the target.
+	MinExecsPerSecond float64 `yaml:"min_execs_per_second,omitempty" json:"min_execs_per_second,omitempty" doc:"Rate below which the executor is judged broken. Default 10."`
+
+	// CoverageStall is how long without new coverage counts as stalled.
+	CoverageStall Duration `yaml:"coverage_stall,omitempty" json:"coverage_stall,omitempty" doc:"How long without new coverage counts as stalled. Default 30m."`
 }
 
 // Triage is how findings are turned into bug reports.

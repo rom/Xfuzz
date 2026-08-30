@@ -151,6 +151,30 @@
       },
       "type": "object"
     },
+    "health": {
+      "additionalProperties": false,
+      "description": "Thresholds the health diagnostics judge against.",
+      "properties": {
+        "coverage_stall": {
+          "description": "How long without new coverage counts as stalled. Default 30m.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "max_overhead": {
+          "description": "Share of time the fuzzer may spend on itself. Default 0.10.",
+          "type": "number"
+        },
+        "min_execs_per_second": {
+          "description": "Rate below which the executor is judged broken. Default 10.",
+          "type": "number"
+        },
+        "min_stability": {
+          "description": "Share of executions that must reproduce their coverage. Default 0.90.",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "include": {
       "description": "Files merged in before this one, in order.",
       "items": {
@@ -344,6 +368,11 @@
         "type": "object"
       },
       "type": "array"
+    },
+    "seed": {
+      "description": "Root RNG seed. Absent draws one; pinning it makes the campaign reproducible.",
+      "minimum": 0,
+      "type": "integer"
     },
     "seeds": {
       "additionalProperties": false,

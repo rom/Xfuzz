@@ -148,10 +148,14 @@ type CampaignRequest struct {
 
 	// Profiles are the overlays to apply.
 	Profiles []string `json:"profiles,omitempty"`
-
-	// Seed pins the campaign's root RNG seed. Zero draws one.
-	Seed uint64 `json:"seed,omitempty"`
 }
+
+// The seed is deliberately not a field here. It was one, as a bare JSON
+// number, and nothing read it: a client that pinned a seed to get a repeatable
+// campaign got a random one and no error. It belongs in the document, where
+// ADR-0016 puts everything that decides what runs and where `xfuzz explain`
+// already shows it, rather than in a request field that makes the artefact
+// incomplete — and where a 64-bit value would have to survive an IEEE double.
 
 // campaignInvalid carries a validation failure with its list intact.
 type campaignInvalid struct {

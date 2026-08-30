@@ -184,7 +184,11 @@ func (d *Daemon) register(ctx context.Context, cfg *campaign.Resolved, st *store
 		Spawner:      spawner,
 		WorkerBinary: d.opts.WorkerBinary,
 		WorkDir:      workDir,
-		Retention:    d.opts.Retention,
+		// The file's seed, or zero to draw one. A pinned seed is what makes a
+		// campaign a repeatable experiment (ASR-0008); a resumed campaign keeps
+		// the seed the store recorded and ignores this, which NewCampaign does.
+		Seed:      cfg.Seed,
+		Retention: d.opts.Retention,
 	})
 	if err != nil {
 		return nil, err

@@ -421,6 +421,14 @@ func defaults(f *File, set KeySet) {
 		f.Triage.Strategy = "chain"
 	}
 
+	// The health block's zeros are deliberately left alone. Unlike every other
+	// block, "unset" here means "use internal/metrics' default", and filling
+	// them in with copies of those defaults would put the numbers in two places
+	// and let them drift apart. Explain reports which ones the file chose.
+	if f.Health == nil {
+		f.Health = &Health{}
+	}
+
 	if f.Stop == nil {
 		f.Stop = &Stop{}
 	}

@@ -72,6 +72,7 @@ func (r *Resolved) Validate() error {
 	r.validateWorkers(add)
 	r.validateSafety(add)
 	r.validateTriage(add)
+	r.validateHealth(add)
 	r.validateStop(add)
 	r.validateSeeds(add)
 	r.validateSession(add)
@@ -305,6 +306,34 @@ func (r *Resolved) validateTriage(add addFunc) {
 			add(fmt.Sprintf("triage.markers[%d]", i), "is empty",
 				"an empty prefix matches every line, so every crash would carry the first line as its bucket")
 		}
+	}
+}
+
+// validateHealth checks the thresholds a campaign chose to move.
+//
+// A share outside [0,1] is the mistake this catches: min_stability: 90 reads as
+// "ninety percent" and means "nine thousand percent", which no campaign can
+// reach, so the diagnostic it configures would never fire again. Silent, and
+// exactly the wrong way round.
+func (r *Resolved) validateHealth(add addFunc) {
+	h := r.Health
+	for _, f := range []struct {
+		key string
+		v   float64
+	}{
+		{"health.min_stability", h.MinStability},
+		{"health.max_overhead", h.MaxOverhead},
+	} {
+		if f.v < 0 || f.v > 1 {
+			add(f.key, fmt.Sprintf("is %g, which is not a share between 0 and 1", f.v),
+				"a percentage goes in as a fraction: 90% is 0.9")
+		}
+	}
+	if h.MinExecsPerSecond < 0 {
+		add("health.min_execs_per_second", "cannot be negative", "")
+	}
+	if h.CoverageStall < 0 {
+		add("health.coverage_stall", "cannot be negative", "")
 	}
 }
 

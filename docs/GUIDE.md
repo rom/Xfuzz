@@ -339,6 +339,43 @@ $ xfuzz corpus import first --dir ./afl-output/queue
 $ xfuzz corpus export first --dir ./out --format afl --favoured
 ```
 
+## Repeating a campaign exactly
+
+Every campaign has a root seed. Left out of the file, one is drawn and recorded;
+`xfuzz status NAME` shows it. Put it in the file and the campaign becomes an
+experiment you can run again:
+
+```yaml
+seed: 12345678901234567
+workers:
+  count: 1
+stop:
+  execs: 20000
+```
+
+All three lines matter. One worker, because with several the corpus each of
+them sees depends on when the others published theirs, and that is wall-clock.
+An execution budget rather than `after:`, because two runs that stop after five
+seconds stop in different places on a machine that is doing anything else. With
+those, two runs find the same inputs by the same route — `xfuzz corpus list`
+shows the derivation of each — which is what makes a fuzzer debuggable at all:
+without it, an engine defect and a flaky target look the same.
+
+A **finding** needs none of this. Its reproducer is bytes plus an invocation, so
+it travels to another machine on its own:
+
+```console
+$ xfuzz findings get first 3 -o repro.bin   # the bytes
+$ cp -a ./store /media/usb/                 # or the whole campaign
+$ xfuzz load first --store /media/usb/store # on the other machine
+$ xfuzz replay first 3 --trials 5
+```
+
+If the target is genuinely non-deterministic, replay says so rather than hiding
+it: a finding that reproduces four times in five is reported as reproducing four
+times in five. Set `health.min_stability` to tell a campaign how much of that is
+normal for its target, so the diagnostic fires on the runs where it is not.
+
 ## Extending a campaign
 
 ### Campaign-local logic

@@ -661,9 +661,37 @@ func (c *Campaign) Status() Status {
 		Reason:    reason,
 		Isolation: c.sandbox.Level().String(),
 		Metrics:   snap,
-		Health:    metrics.Health(snap, elapsed, metrics.DefaultThresholds(), phase),
+		Health:    metrics.Health(snap, elapsed, c.thresholds(), phase),
 		Workers:   c.sup.Status(),
 	}
+}
+
+// thresholds are the boundaries this campaign's diagnostics judge against.
+//
+// The defaults, with whatever the campaign file chose to move. Zero means
+// "unset" rather than "zero" for every one of them, which is why this is an
+// override of the defaults rather than a struct built from the file: a
+// campaign that sets only min_stability must not thereby declare that it will
+// tolerate no bookkeeping overhead at all and expects no executions per second.
+func (c *Campaign) thresholds() metrics.Thresholds {
+	t := metrics.DefaultThresholds()
+	h := c.Config.Health
+	if h == nil {
+		return t
+	}
+	if h.MinStability > 0 {
+		t.MinStability = h.MinStability
+	}
+	if h.MaxOverhead > 0 {
+		t.MaxOverhead = h.MaxOverhead
+	}
+	if h.MinExecsPerSecond > 0 {
+		t.MinExecsPerSecond = h.MinExecsPerSecond
+	}
+	if h.CoverageStall > 0 {
+		t.CoverageStall = time.Duration(h.CoverageStall)
+	}
+	return t
 }
 
 // distinctBuckets counts the buckets findings are currently filed under. The
