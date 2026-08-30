@@ -55,6 +55,17 @@ install-tools: ## Install the external tools CI uses
 test: ## Layers 1-2: unit, property, and round-trip tests
 	$(GO) test -race ./...
 
+.PHONY: console
+console: ## Build the web console bundle into internal/console/dist
+	cd web && npm ci --no-audit --no-fund && npm run build
+
+.PHONY: build-console
+build-console: console ## Build the daemon with the console embedded in it
+	# The console tag is what turns the embed on. Without it `go build` needs
+	# nothing but the Go toolchain, which is what keeps Node out of the path of
+	# everyone who is not working on the console.
+	$(GO) build -tags console -o bin/xfuzzd ./cmd/xfuzzd
+
 .PHONY: test-integration
 test-integration: ## Layers 3, 4, 5, 8, and the milestone exit criteria
 	# -p 1: these packages spawn processes and measure throughput. Running them

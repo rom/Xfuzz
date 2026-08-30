@@ -607,9 +607,16 @@ func (c *Campaign) Scope() *safety.Scope { return c.scope }
 
 // Status is the campaign summary the API returns.
 type Status struct {
-	Name      string               `json:"name"`
-	State     State                `json:"state"`
-	Seed      uint64               `json:"seed"`
+	Name  string `json:"name"`
+	State State  `json:"state"`
+	// Seed is written as a JSON string, not a number.
+	//
+	// It is a 64-bit identifier, and JSON numbers are IEEE doubles in every
+	// browser: 14879488505964903031 arrives as 14879488505964902000. A seed is
+	// half of what a byte-identical replay needs (ASR-0008), so a console
+	// showing one that is close but wrong is worse than one showing none. Go
+	// clients still decode it into a uint64.
+	Seed      uint64               `json:"seed,string"`
 	Profiles  []string             `json:"profiles,omitempty"`
 	Started   time.Time            `json:"started,omitempty"`
 	Stopped   time.Time            `json:"stopped,omitempty"`

@@ -17,10 +17,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/rom/Xfuzz/internal/console"
 	"github.com/rom/Xfuzz/internal/daemon"
 )
 
@@ -82,6 +84,10 @@ type Server struct {
 	// notices.
 	EventQueue int
 
+	// console serves the embedded web console on the paths the API does not
+	// claim. Nil in a server built for tests, which want a bare API.
+	console http.Handler
+
 	// KeepAlive is how often an idle event stream sends a comment, so an
 	// intermediary does not decide the connection is dead.
 	KeepAlive time.Duration
@@ -94,10 +100,16 @@ func NewServer(d *daemon.Daemon) *Server {
 		mux:        http.NewServeMux(),
 		EventQueue: 256,
 		KeepAlive:  20 * time.Second,
+		console:    console.Handler(),
 	}
 	s.register()
 	return s
 }
+
+// ConsoleBuilt reports whether this binary carries the web console, which is
+// what `xfuzz info` answers with and what tells somebody whether the URL the
+// daemon prints will show them anything.
+func ConsoleBuilt() bool { return console.Built() }
 
 // Routes returns the API surface, sorted, for the OpenAPI document and the
 // parity test.
@@ -113,11 +125,20 @@ func (s *Server) Routes() []Route {
 }
 
 // ServeHTTP implements http.Handler.
+//
+// The console shares the listener with the API, which is what makes it a pure
+// API client (ADR-0011): it reaches the daemon the same way `xfuzz` does, over
+// the same socket, with the same authorization, and has no privileged path of
+// its own. Anything outside /v1 that the mux does not claim is the console's.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Xfuzz-Api", APIVersion)
 
 	if err := s.authorize(r); err != nil {
 		writeError(w, http.StatusUnauthorized, err)
+		return
+	}
+	if s.console != nil && !console.IsAPIPath(path.Clean("/"+r.URL.Path)) {
+		s.console.ServeHTTP(w, r)
 		return
 	}
 	s.mux.ServeHTTP(w, r)

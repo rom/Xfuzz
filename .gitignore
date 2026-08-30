@@ -5,9 +5,14 @@
 *.test
 *.out
 
-# Web console build artifacts
+# Web console build artifacts.
+#
+# The bundle is generated and not in the repository: a compiled bundle in git
+# is a diff nobody can review and a merge nobody can resolve. `make
+# build-console` produces it, and the binary that embeds it is built from it.
 /web/node_modules/
 /web/dist/
+/internal/console/dist/
 
 # Local campaign state (never commit corpora, findings, or captures)
 /var/

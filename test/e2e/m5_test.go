@@ -141,7 +141,7 @@ func (e *env) status(name string) campaignStatus {
 type campaignStatus struct {
 	Name    string `json:"name"`
 	State   string `json:"state"`
-	Seed    uint64 `json:"seed"`
+	Seed    uint64 `json:"seed,string"`
 	Metrics struct {
 		Execs       uint64  `json:"execs"`
 		ExecsPerS   float64 `json:"execs_per_second"`

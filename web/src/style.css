@@ -1,0 +1,225 @@
+/* One stylesheet, no framework, no external font.
+ *
+ * The font stack is what the machine already has: an air-gapped install cannot
+ * fetch a webfont, and a console that waits for one it will never get shows
+ * nothing for three seconds before falling back anyway (ASR-0015).
+ *
+ * Both themes are defined from tokens, because a fuzzing console is looked at
+ * for hours and which one somebody wants is not ours to decide. */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: #fbfbfa;
+  --panel: #ffffff;
+  --border: #e2e0dc;
+  --text: #1d1c1a;
+  --muted: #6b6862;
+  --accent: #2d5f8a;
+  --ok: #2c6e49;
+  --warn: #8a6116;
+  --bad: #a03030;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;
+    --panel: #1e1f22;
+    --border: #303237;
+    --text: #e6e4e1;
+    --muted: #96938d;
+    --accent: #7aa8d0;
+    --ok: #6fbf8f;
+    --warn: #d6a350;
+    --bad: #e08585;
+    --shadow: none;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 var(--sans);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, pre, .mono, table { font-family: var(--mono); }
+
+/* --- shell ------------------------------------------------------------- */
+
+.shell { display: grid; grid-template-columns: 190px 1fr; min-height: 100vh; }
+
+nav {
+  border-right: 1px solid var(--border);
+  padding: 1rem .75rem;
+  background: var(--panel);
+}
+nav h1 {
+  font: 600 15px/1 var(--mono);
+  margin: .25rem .5rem 1rem;
+  letter-spacing: .02em;
+}
+nav a {
+  display: block;
+  padding: .35rem .5rem;
+  border-radius: 4px;
+  color: var(--text);
+}
+nav a.on { background: var(--accent); color: #fff; }
+nav a.on:hover { text-decoration: none; }
+nav .group {
+  margin: 1rem .5rem .25rem;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+
+main { padding: 1.25rem 1.5rem 4rem; min-width: 0; }
+
+header.view {
+  display: flex;
+  align-items: baseline;
+  gap: .75rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+header.view h2 { margin: 0; font-size: 18px; font-weight: 600; }
+header.view .sub { color: var(--muted); font-size: 13px; }
+
+/* --- panels and tables -------------------------------------------------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: .9rem 1rem;
+  margin-bottom: 1rem;
+  box-shadow: var(--shadow);
+}
+.panel h3 {
+  margin: 0 0 .6rem;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: .3rem .5rem;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+td { padding: .35rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+tbody tr:last-child td { border-bottom: none; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* --- stats -------------------------------------------------------------- */
+
+.stats { display: flex; flex-wrap: wrap; gap: 1.5rem; }
+.stat .k {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+}
+.stat .v { font: 600 20px/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+.stat .n { font-size: 12px; color: var(--muted); }
+
+/* --- states and badges -------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border-radius: 3px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge.running { color: var(--ok); border-color: currentColor; }
+.badge.failed, .badge.bad { color: var(--bad); border-color: currentColor; }
+.badge.warn { color: var(--warn); border-color: currentColor; }
+.badge.on { background: var(--accent); color: #fff; border-color: transparent; }
+
+.diag { border-left: 3px solid var(--border); padding: .3rem .75rem; margin: .4rem 0; }
+.diag.broken { border-color: var(--bad); }
+.diag.warn { border-color: var(--warn); }
+.diag .summary { font-weight: 600; }
+.diag .remedy { color: var(--muted); font-size: 13px; }
+
+/* --- forms and buttons -------------------------------------------------- */
+
+button, select, input[type="text"], textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .3rem .6rem;
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+textarea, input[type="text"] { width: 100%; font-family: var(--mono); font-size: 13px; }
+/* Inside a row of controls an input sits beside its buttons rather than
+ * pushing them onto their own line. */
+.row input[type="text"] { width: auto; min-width: 12rem; flex: 0 1 22rem; }
+.row select { flex: 0 0 auto; }
+textarea { min-height: 22rem; resize: vertical; line-height: 1.5; }
+.row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+pre.wrap { white-space: pre-wrap; word-break: break-word; }
+
+.muted { color: var(--muted); }
+.err { color: var(--bad); }
+.empty { color: var(--muted); padding: 1.5rem 0; }
+
+/* --- charts -------------------------------------------------------------- */
+
+svg.chart { display: block; width: 100%; height: 140px; overflow: visible; }
+svg.chart .line { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+svg.chart .area { fill: color-mix(in srgb, var(--accent) 14%, transparent); stroke: none; }
+svg.chart .axis { stroke: var(--border); stroke-width: 1; }
+svg.chart text { fill: var(--muted); font: 10px var(--mono); }
+
+/* --- state graph --------------------------------------------------------- */
+
+.graph { display: flex; flex-wrap: wrap; gap: .4rem; }
+.node {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: .3rem .55rem;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.node .n { color: var(--muted); font-size: 11px; margin-left: .4rem; }

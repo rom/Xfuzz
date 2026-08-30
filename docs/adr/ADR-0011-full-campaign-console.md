@@ -33,9 +33,16 @@ Implementation:
 
 - **TypeScript SPA** built with Vite, compiled to static assets and embedded via
   `embed.FS`. No CDN, no runtime asset fetch, no external fonts — air-gap clean.
-- **Live updates over WebSocket**, with server-side **downsampling and
+- **Live updates over server-sent events**, with server-side **downsampling and
   batching**. High-rate events are lossy by design: a 100k exec/s campaign must
   never be able to back-pressure the engine through a browser (ASR-0012).
+
+  This said WebSocket when it was written. ADR-0024, which is later and decided
+  the transport for the whole API, rejected WebSocket for this stream:
+  bidirectional framing for traffic that is server-to-client by design, where
+  SSE reconnects with no client code at all. Corrected here rather than left to
+  contradict it. What would justify revisiting is the console needing to *send*
+  on the same channel, which it does not — every action it takes is a POST.
 - Pure API client (ADR-0003), with no privileged path of its own.
 - Because campaigns are file-defined (ADR-0016), the config editor **round-trips
   the campaign file**, preserving comments and key order, and every console
