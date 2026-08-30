@@ -310,6 +310,17 @@ func (o *OOMObjective) IsFinding(_ []Observer, ek ExitKind) (bool, Finding, erro
 var (
 	sanitizerLine  = regexp.MustCompile(`(?m)^.*?(?:ERROR|WARNING|runtime error): ((?:Address|Leak|Memory|Thread|UndefinedBehavior)Sanitizer:? *)?(.*)$`)
 	sanitizerFrame = regexp.MustCompile(`(?m)^\s*#(\d+) 0x[0-9a-f]+ in ([^\s]+)(?: ([^\s]+))?`)
+
+	// goFrame matches a frame of a Go panic: a call line naming the function,
+	// then an indented line naming the file and line.
+	//
+	// A managed runtime's traceback is not a sanitizer's, and the difference
+	// matters more than it looks. Without this, a Go target's panics carry no
+	// frames at all, so bucketing falls through to the message — and a message
+	// like "slice bounds out of range [:255] with capacity 8" contains the
+	// values, so every crash lands in a bucket of its own. Measured on the
+	// portable target: 78 buckets for two bugs.
+	goFrame = regexp.MustCompile(`(?m)^([\w./\[\]*()-]+\.[\w.\[\]*()-]+)\(.*\)\n\t([^\s:]+):(\d+)`)
 )
 
 // SanitizerObjective recognises a sanitizer diagnostic in a target's output.
@@ -373,8 +384,46 @@ func ParseSanitizer(out string) Finding {
 			f.Frames = append(f.Frames, frame)
 		}
 	}
+	if len(f.Frames) == 0 {
+		if frames := goFrames(out); len(frames) > 0 {
+			f.Frames = frames
+			if goPanic.MatchString(out) {
+				// "sanitizer" would be a lie about where this came from, and
+				// the kind is what a person reads first in a findings list.
+				// Only when the traceback is unmistakably a panic: UBSan also
+				// prints "runtime error:", and calling one of its reports a
+				// panic would be the same lie in the other direction.
+				f.Kind = "panic"
+			}
+		}
+	}
 	return f
 }
+
+// goPanic matches the line a Go runtime prints when a goroutine dies.
+var goPanic = regexp.MustCompile(`(?m)^(?:panic: |fatal error: |goroutine \d+ \[)`)
+
+// goFrames extracts the stack of a Go panic, innermost first.
+//
+// The function and the file:line, and nothing else: the argument values and the
+// instruction offsets on those lines differ between two crashes at the same
+// place, which is exactly what a bucket key must not do.
+func goFrames(out string) []string {
+	ms := goFrame.FindAllStringSubmatch(out, maxGoFrames)
+	if len(ms) == 0 {
+		return nil
+	}
+	frames := make([]string, 0, len(ms))
+	for _, m := range ms {
+		frames = append(frames, m[1]+" "+m[2]+":"+m[3])
+	}
+	return frames
+}
+
+// maxGoFrames bounds how much of a traceback is kept. Bucketing reads the top
+// few; a goroutine dump of a program with ten thousand of them is not more
+// evidence, it is a bigger row in the store.
+const maxGoFrames = 32
 
 // OracleObjective adapts an arbitrary predicate, which is how a campaign
 // expresses a bug that is not a crash: a wrong answer, a violated invariant, an

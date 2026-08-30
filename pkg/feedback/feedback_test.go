@@ -625,3 +625,65 @@ func TestFindFeedbackReachesIntoAStack(t *testing.T) {
 		t.Error("an empty stack produced a feedback")
 	}
 }
+
+// A Go panic is a stack trace like any other, and bucketing depends on getting
+// frames out of it.
+//
+// Without this, a Go target's crashes carry no frames, bucketing falls through
+// to the message, and a message that contains the offending values — "slice
+// bounds out of range [:255] with capacity 8" — puts every crash in a bucket of
+// its own. Measured before the fix on the portable target: 78 buckets for two
+// planted bugs.
+func TestASanitizerReportCanBeAGoPanic(t *testing.T) {
+	out := "len=3 first='A'\n" +
+		"panic: runtime error: index out of range [3] with length 3\n\n" +
+		"goroutine 1 [running]:\n" +
+		"main.parse({0xc000106000, 0x3, 0x200})\n" +
+		"\t/src/portable/main.go:48 +0x49a\n" +
+		"main.main()\n" +
+		"\t/src/portable/main.go:29 +0xb9\n" +
+		"exit status 2\n"
+
+	f := ParseSanitizer(out)
+	if f.Kind != "panic" {
+		t.Errorf("kind = %q, want panic", f.Kind)
+	}
+	if f.Summary != "index out of range [3] with length 3" {
+		t.Errorf("summary = %q", f.Summary)
+	}
+	want := []string{"main.parse /src/portable/main.go:48", "main.main /src/portable/main.go:29"}
+	if len(f.Frames) != len(want) {
+		t.Fatalf("frames = %v, want %v", f.Frames, want)
+	}
+	for i := range want {
+		if f.Frames[i] != want[i] {
+			t.Errorf("frame %d = %q, want %q", i, f.Frames[i], want[i])
+		}
+	}
+
+	// The values differ between two crashes at the same place, and the frames
+	// must not: that is the whole point of bucketing on them.
+	other := strings.ReplaceAll(out, "[3] with length 3", "[97] with length 12")
+	other = strings.ReplaceAll(other, "0xc000106000, 0x3, 0x200", "0xc000200000, 0x61, 0x400")
+	g := ParseSanitizer(other)
+	if len(g.Frames) != len(f.Frames) {
+		t.Fatalf("a crash at the same place produced %v", g.Frames)
+	}
+	for i := range f.Frames {
+		if g.Frames[i] != f.Frames[i] {
+			t.Errorf("frame %d differs between two crashes at the same place: %q and %q",
+				i, f.Frames[i], g.Frames[i])
+		}
+	}
+}
+
+// And a sanitizer report is still a sanitizer report: UBSan prints "runtime
+// error:" too, and calling one of its findings a panic would be the same
+// mistake in the other direction.
+func TestAnUndefinedBehaviourReportIsNotCalledAPanic(t *testing.T) {
+	out := "parse.c:10:5: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type 'int'\n"
+	f := ParseSanitizer(out)
+	if f.Kind == "panic" {
+		t.Errorf("a UBSan report was classified as a Go panic: %+v", f)
+	}
+}

@@ -106,6 +106,28 @@ listed here with its migration path.
   than only the absence of a panic, because "it did not crash" is satisfied by a
   parser that accepts everything and understands nothing.
 
+**Cross-platform (ASR-0003, ASR-0006, ADR-0020)**
+
+- `test/e2e/portable_test.go`: a whole subprocess campaign, black-box, against a
+  Go planted-bug target the test builds itself — so it runs on macOS and Windows
+  where every other end-to-end test skips for want of clang. A CI job runs it on
+  all three platforms.
+- It measures what those platforms actually get: no coverage map (shared memory
+  is a Unix mechanism), no isolation, novelty feedback instead of coverage, and
+  a target that fails the way a managed language fails — exit status 2 and a
+  line on standard error rather than a fatal signal. On Linux: 10,154
+  executions, both planted bugs found, in two buckets.
+- A resume across daemon lifetimes on every platform, because that is where the
+  platform differences bite: file locking, path handling, and whether a process
+  that died released what it held.
+- `xfuzz doctor` is checked against the platform it runs on, so that nobody on
+  Windows reads "isolation: strong" and believes it.
+- **`gocov` is deferred out of v0.1**, with the reason recorded in MVP_PLAN.
+  Go's coverage counters are written in a format no public API decodes;
+  collecting them per execution would cost more than the execution. It was
+  scoped as the grey-box path off Linux and would not have been one on Windows
+  anyway, where there is no coverage map to fill.
+
 ### Fixed — M8
 
 - A plugin's lifetime is the worker's, not the campaign context's. Tying it to
@@ -122,6 +144,13 @@ listed here with its migration path.
   run.
 - One corrupt payload failed the whole corpus read, so a single bad file took
   down a campaign's seed load rather than costing it one entry.
+- A Go panic carried no stack frames into triage, because the frame parser knew
+  only the sanitizer format. Bucketing fell through to the message, and a
+  message that contains the offending values — "slice bounds out of range
+  [:255] with capacity 8" — puts every crash in a bucket of its own. Measured
+  on the portable target: 78 buckets for two planted bugs, now 2. Such findings
+  are also now reported as kind `panic` rather than `sanitizer`, which was a
+  lie about where they came from.
 
 ### Added — M7 Web console (2026-08-30)
 

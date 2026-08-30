@@ -19,7 +19,7 @@ is descoped — never faked.
 | --- | --- | --- |
 | Domains | File formats, CLI tools, one network protocol | APIs, GUI, TUI |
 | Executors | T0, T2, T3, T4, T6 | T1, T5, T7 |
-| Instrumentation | `sancov`, `gocov`, `forkserver`, `blackbox` | `frida`, `qemu`, `intelpt`, `ptrace-bb`, `agent` |
+| Instrumentation | `sancov`, `forkserver`, `blackbox` | `gocov` (see below), `frida`, `qemu`, `intelpt`, `ptrace-bb`, `agent` |
 | IR | Full node set, fixups, byte + structured mutators | — |
 | Grammar | Native `.xfg` DSL, one worked format | protobuf, ASN.1, ABNF, Kaitai, OpenAPI importers |
 | Feedback | Map coverage, state, response, timing; full algebra | Distance (directed), value profile, concolic |
@@ -29,7 +29,27 @@ is descoped — never faked.
 | Parallelism | N worker processes, corpus sync, ensembles | Distributed |
 | Interfaces | Daemon, CLI, console (all v1 views) | Fleet view, RBAC |
 | Extensions | Native complete; plugin + Starlark for feedback/oracles | Full plugin coverage |
-| Platforms | Linux full; macOS/Windows via T3/T4 + `blackbox`/`gocov` | Platform fast paths |
+| Platforms | Linux full; macOS/Windows via T3/T4 + `blackbox` | Platform fast paths |
+
+**`gocov` moved to the deferred column, in M8.** ADR-0002 lists it as a v1
+backend and it does not make v0.1. The reason is concrete rather than a matter
+of effort. Go's coverage counters are written by the instrumented process into
+`GOCOVERDIR` in a format that `internal/coverage` decodes and no public API
+exposes; `runtime/coverage` can emit them but not read them. Collecting
+per-execution coverage from a subprocess would therefore mean either a
+file round-trip and a `go tool covdata` invocation per execution — which would
+cost more than the execution — or a decoder for an unstable internal format.
+
+Neither buys what it appears to. `gocov` was scoped as the grey-box path off
+Linux, and on Windows it would not be one anyway: shared memory is a Unix
+mechanism, so a Windows campaign has no coverage map to fill. On macOS, a Go
+target can already have `sancov` coverage today by building with
+`-gcflags=all=-d=libfuzzer` against the runtime `xfuzz-cc` already ships, which
+is the same instrumentation by a shorter route.
+
+What macOS and Windows get in v0.1 is therefore T3/T4 with `blackbox`, which
+ASR-0003 requires to be a supported mode rather than a failure state, and which
+`test/e2e/portable_test.go` measures on all three platforms in CI.
 
 ### 1.2 The v0.1 proof obligation
 
