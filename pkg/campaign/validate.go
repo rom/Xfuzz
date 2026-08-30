@@ -75,6 +75,7 @@ func (r *Resolved) Validate() error {
 	r.validateStop(add)
 	r.validateSeeds(add)
 	r.validateSession(add)
+	r.validateExtensions(add)
 
 	if len(ps) == 0 {
 		return nil
@@ -582,6 +583,48 @@ func (r *Resolved) validateState(add addFunc) {
 	for _, d := range st.Declare {
 		if _, _, err := ParseTransition(d); err != nil {
 			add("state.declare", err.Error(), `each entry is "from->to"`)
+		}
+	}
+}
+
+// validateExtensions checks the plugin declarations.
+//
+// Everything here is caught before a process is spawned, because the whole
+// value of naming extensions in the campaign file is that a mistake is a
+// refusal rather than a campaign that runs and measures the wrong thing.
+func (r *Resolved) validateExtensions(add addFunc) {
+	seen := map[string]bool{}
+	for i, e := range r.Extensions {
+		field := fmt.Sprintf("extensions[%d]", i)
+
+		switch {
+		case strings.TrimSpace(e.Name) == "":
+			add(field+".name", "is required", "it labels the plugin's extensions and names it in errors")
+		case !validName(e.Name):
+			add(field+".name", fmt.Sprintf("%q contains characters that are not letters, digits, dot, dash or underscore", e.Name),
+				"the name is a prefix on every extension the plugin provides")
+		case seen[e.Name]:
+			add(field+".name", fmt.Sprintf("%q is used by more than one extension", e.Name),
+				"the label qualifies extension names, so two plugins sharing one would be indistinguishable")
+		default:
+			seen[e.Name] = true
+		}
+
+		if strings.TrimSpace(e.Command) == "" {
+			add(field+".command", "is required", "there is no default plugin")
+		}
+		if len(e.Feedbacks) == 0 && len(e.Objectives) == 0 && len(e.Mutators) == 0 {
+			// A plugin that supplies nothing would still be spawned, still be
+			// waited on, and still fail the campaign when it died — for no
+			// benefit anyone asked for.
+			add(field, "names no feedbacks, objectives or mutators",
+				"list what to take from the plugin, or remove it")
+		}
+		if e.Timeout < 0 {
+			add(field+".timeout", "is negative", "it is how long one call may take")
+		}
+		if e.Batch < 0 {
+			add(field+".batch", "is negative", "it is how many variants a mutator produces per call")
 		}
 	}
 }

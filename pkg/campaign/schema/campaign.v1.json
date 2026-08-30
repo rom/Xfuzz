@@ -8,6 +8,87 @@
       "description": "Free-text description.",
       "type": "string"
     },
+    "extensions": {
+      "description": "Out-of-process plugins and the extension points each supplies.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "description": "Arguments after the program name.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "batch": {
+            "description": "Variants a plugin mutator produces per call.",
+            "type": "integer"
+          },
+          "command": {
+            "description": "Path to the plugin program.",
+            "type": "string"
+          },
+          "config": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Settings handed to the plugin at startup.",
+            "type": "object"
+          },
+          "dir": {
+            "description": "Working directory for the plugin.",
+            "type": "string"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Environment variables for the plugin.",
+            "type": "object"
+          },
+          "feedbacks": {
+            "description": "Feedbacks to take from this plugin.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "input": {
+            "description": "Send the executed bytes to this plugin.",
+            "type": "boolean"
+          },
+          "mutators": {
+            "description": "Mutators to take from this plugin.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Label for this plugin, used to qualify its extensions.",
+            "type": "string"
+          },
+          "objectives": {
+            "description": "Objectives to take from this plugin.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "timeout": {
+            "description": "Bound on one call to the plugin.",
+            "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command",
+          "name"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "feedback": {
       "additionalProperties": false,
       "description": "What counts as interesting.",

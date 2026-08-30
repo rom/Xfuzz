@@ -17,8 +17,10 @@ import (
 	"sync"
 
 	"github.com/rom/Xfuzz/internal/engine"
+	"github.com/rom/Xfuzz/internal/extension"
 	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/safety"
+	"github.com/rom/Xfuzz/internal/version"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/codec"
 	"github.com/rom/Xfuzz/pkg/corpus"
@@ -53,6 +55,15 @@ type built struct {
 
 	// state is the protocol guidance, nil on a stateless campaign.
 	state *state.Guidance
+
+	// extensions are the campaign's out-of-process plugins. Always non-nil;
+	// empty is the common case and costs nothing.
+	extensions *extension.Set
+
+	// input carries the executed bytes to the extensions that asked to see
+	// them. Nil when none did, because copying every input is the largest cost
+	// on that path and nobody should pay it for an observer nothing reads.
+	input *feedback.InputObserver
 
 	closers []closer
 	closed  sync.Once
@@ -120,6 +131,11 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 	if err := b.buildSafety(ctx, cfg); err != nil {
 		return nil, err
 	}
+	// Plugins start before the executor, so a campaign whose extension will not
+	// load fails before a target process exists rather than after.
+	if err := b.buildExtensions(ctx, cfg, seed); err != nil {
+		return nil, err
+	}
 	if err := b.buildFeedback(cfg); err != nil {
 		return nil, err
 	}
@@ -139,7 +155,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 	if err != nil {
 		return nil, err
 	}
-	mutators, err := mutatorsFor(cfg, strategy)
+	mutators, err := mutatorsFor(cfg, strategy, b.extensions)
 	if err != nil {
 		return nil, err
 	}
@@ -154,7 +170,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		Executor:      b.executor,
 		Observers:     b.observers(),
 		Feedback:      b.feedbackStack(cfg),
-		Objective:     objectivesFor(cfg, b.output),
+		Objective:     objectivesFor(cfg, b.output, b.extensions),
 		Corpus:        corpus.New(),
 		Schedule:      scheduleFor(cfg, strategy),
 		Mutators:      mutators,
@@ -328,7 +344,40 @@ func (b *built) observers() []feedback.Observer {
 		// accumulates across every session the worker ever runs.
 		obs = append(obs, b.state.Observer)
 	}
+	if b.input != nil {
+		obs = append(obs, b.input)
+	}
 	return obs
+}
+
+// buildExtensions starts the campaign's plugins, confined by the same sandbox
+// the target runs under.
+//
+// The same sandbox, deliberately. An extension is untrusted by construction —
+// that is why it runs out of process at all (ADR-0010) — so a campaign that
+// asked for strong isolation gets it for the plugin too.
+func (b *built) buildExtensions(ctx context.Context, cfg *campaign.Resolved, seed uint64) error {
+	spawner := safety.NewSpawner()
+	spawner.Sandbox = b.sandbox
+
+	// Not the campaign's context. Cancelling that is how a campaign *ends*,
+	// and a plugin killed at the first sign of the end has no chance to be
+	// told that the last judgement stood — the commit the host still owes it
+	// is written during Close, on a pipe the cancellation would already have
+	// shut. The set's lifetime belongs to the worker's close path, which
+	// always runs and always kills.
+	set, err := extension.Load(context.WithoutCancel(ctx), spawner, cfg, seed, version.Version)
+	if err != nil {
+		return err
+	}
+	b.extensions = set
+	if !set.Empty() {
+		b.closers = append(b.closers, closer{"plugins", set.Close})
+	}
+	if set.WantsInput() {
+		b.input = feedback.NewInputObserver("input")
+	}
+	return nil
 }
 
 // feedbackStack decides what counts as interesting.
@@ -347,6 +396,11 @@ func (b *built) feedbackStack(cfg *campaign.Resolved) feedback.Feedback {
 		// of the protocol — the code was already covered.
 		stack = append(stack, state.NewFeedback("state", b.state.Observer, b.state.Model))
 	}
+	// A plugin feedback joins the stack as a peer, not as a special case. The
+	// engine cannot tell the tiers apart and must not be able to: that is what
+	// makes a plugin a real extension rather than a hook (ADR-0010).
+	stack = append(stack, b.extensions.Feedbacks()...)
+
 	switch len(stack) {
 	case 0:
 		// Validation refuses this combination, so reaching it means something
@@ -476,7 +530,7 @@ func codecFor(cfg *campaign.Resolved) (codec.Codec, error) {
 // mutatorsFor builds the operator set, applying the campaign's weights and then
 // the strategy's, so a strategy adjusts what the campaign chose rather than
 // replacing it.
-func mutatorsFor(cfg *campaign.Resolved, strategy string) (*mutate.Scheduler, error) {
+func mutatorsFor(cfg *campaign.Resolved, strategy string, ext *extension.Set) (*mutate.Scheduler, error) {
 	s := mutate.Default()
 
 	if len(cfg.Mutation.Operators) > 0 {
@@ -489,6 +543,13 @@ func mutatorsFor(cfg *campaign.Resolved, strategy string) (*mutate.Scheduler, er
 			filtered.Add(op, 0)
 		}
 		s = filtered
+	}
+
+	// Plugin mutators are added after the operator filter, not through it: the
+	// filter names built-in operators, and a plugin the campaign file already
+	// asked for by name should not have to be named twice.
+	for _, m := range ext.Mutators() {
+		s.Add(m, 0)
 	}
 
 	apply := func(weights map[string]int) error {
@@ -568,7 +629,7 @@ func suppressFor(cfg *campaign.Resolved) ir.Suppress {
 }
 
 // objectivesFor builds what counts as a finding.
-func objectivesFor(cfg *campaign.Resolved, out *feedback.OutputObserver) feedback.Objective {
+func objectivesFor(cfg *campaign.Resolved, out *feedback.OutputObserver, ext *extension.Set) feedback.Objective {
 	var objs []feedback.Objective
 	for _, name := range cfg.Feedback.Objectives {
 		switch name {
@@ -582,6 +643,8 @@ func objectivesFor(cfg *campaign.Resolved, out *feedback.OutputObserver) feedbac
 			objs = append(objs, feedback.NewSanitizerObjective("sanitizer", out))
 		}
 	}
+	objs = append(objs, ext.Objectives()...)
+
 	if len(objs) == 1 {
 		return objs[0]
 	}

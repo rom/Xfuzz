@@ -62,6 +62,18 @@ type Snapshot struct {
 	// ASR-0007 caps it at 10%.
 	Overhead float64 `json:"overhead"`
 
+	// PluginCalls and PluginSeconds are how often the campaign crossed the
+	// process boundary into an out-of-process extension and how long it waited
+	// there in total.
+	//
+	// First class rather than folded into Overhead, because ADR-0010 promises
+	// that a slow plugin is diagnosable rather than mysterious. Overhead alone
+	// says the fuzzer is spending its time somewhere other than the target; it
+	// does not say which extension, and "your campaign is slow" is not a
+	// finding anyone can act on.
+	PluginCalls   uint64  `json:"plugin_calls,omitempty"`
+	PluginSeconds float64 `json:"plugin_seconds,omitempty"`
+
 	// LastNewCoverage is when the campaign last learned something. It is the
 	// number that says whether it is still working or merely still running.
 	LastNewCoverage time.Time `json:"last_new_coverage"`
@@ -184,6 +196,12 @@ func (c *Collector) recompute() {
 		// centrally, refines it.
 		total.Findings += s.Findings
 		total.Buckets = max(total.Buckets, s.Buckets)
+
+		// Summed, like findings and unlike coverage: each worker runs its own
+		// plugin process, so the campaign's cost of crossing the boundary is
+		// what all of them paid, not what the busiest one did.
+		total.PluginCalls += s.PluginCalls
+		total.PluginSeconds += s.PluginSeconds
 
 		if s.LastNewCoverage.After(total.LastNewCoverage) {
 			total.LastNewCoverage = s.LastNewCoverage

@@ -55,6 +55,11 @@ type File struct {
 	Storage  *Storage  `yaml:"storage,omitempty" json:"storage,omitempty" doc:"Where the corpus and findings live, and their budgets."`
 	Triage   *Triage   `yaml:"triage,omitempty" json:"triage,omitempty" doc:"How findings are verified, minimised, and bucketed."`
 	Stop     *Stop     `yaml:"stop,omitempty" json:"stop,omitempty" doc:"Termination conditions. A campaign must be able to end."`
+
+	// Extensions are out-of-process plugins. A list rather than a map because
+	// order is what decides which of two feedbacks judges first, and a map's
+	// order is whatever the parser felt like.
+	Extensions []Extension `yaml:"extensions,omitempty" json:"extensions,omitempty" doc:"Out-of-process plugins and the extension points each supplies."`
 }
 
 // Target is what the campaign fuzzes.
@@ -464,4 +469,51 @@ func ParseDuration(s string) (Duration, error) {
 		return 0, fmt.Errorf("campaign: %q is not a duration (want something like 30s, 10m, 2h, or 7d)", s)
 	}
 	return Duration(td), nil
+}
+
+// Extension is one plugin process and the extension points it supplies.
+//
+// The command is named here rather than discovered, and the extensions are
+// listed rather than taken wholesale. Both are deliberate: a campaign file is
+// the complete description of what a campaign does (ADR-0016), and "whatever
+// that program happens to provide" is not a description. Listing them is also
+// what makes a typo a refusal at startup rather than a feedback that silently
+// never fires.
+type Extension struct {
+	// Name labels the plugin. It qualifies every extension the plugin
+	// provides, so two plugins may offer the same extension name.
+	Name string `yaml:"name" json:"name" doc:"Label for this plugin, used to qualify its extensions."`
+
+	// Command is the plugin executable.
+	Command string `yaml:"command" json:"command" doc:"Path to the plugin program."`
+
+	// Args is the complete argv, including argv[0], following the same
+	// convention as target.args.
+	Args []string `yaml:"args,omitempty" json:"args,omitempty" doc:"Arguments after the program name."`
+
+	// Env and Dir are the plugin's environment and working directory.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty" doc:"Environment variables for the plugin."`
+	Dir string            `yaml:"dir,omitempty" json:"dir,omitempty" doc:"Working directory for the plugin."`
+
+	// Config is passed to the plugin at startup, uninterpreted. It is how a
+	// campaign configures a plugin without this file knowing what the settings
+	// mean.
+	Config map[string]string `yaml:"config,omitempty" json:"config,omitempty" doc:"Settings handed to the plugin at startup."`
+
+	// Feedbacks, Objectives and Mutators name what to take from this plugin.
+	Feedbacks  []string `yaml:"feedbacks,omitempty" json:"feedbacks,omitempty" doc:"Feedbacks to take from this plugin."`
+	Objectives []string `yaml:"objectives,omitempty" json:"objectives,omitempty" doc:"Objectives to take from this plugin."`
+	Mutators   []string `yaml:"mutators,omitempty" json:"mutators,omitempty" doc:"Mutators to take from this plugin."`
+
+	// Timeout bounds one call. A plugin that exceeds it is killed, because a
+	// synchronous protocol has no other answer to a peer that stopped talking.
+	Timeout Duration `yaml:"timeout,omitempty" json:"timeout,omitempty" doc:"Bound on one call to the plugin."`
+
+	// Batch is how many variants a plugin mutator is asked for at once.
+	Batch int `yaml:"batch,omitempty" json:"batch,omitempty" doc:"Variants a plugin mutator produces per call."`
+
+	// Input sends the executed bytes with each judgement. Off by default: it
+	// is the largest cost on the path and most extensions judge what an
+	// execution did rather than what it was.
+	Input bool `yaml:"input,omitempty" json:"input,omitempty" doc:"Send the executed bytes to this plugin."`
 }

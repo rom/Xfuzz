@@ -326,7 +326,12 @@ func (h *Host) Close() error {
 		return nil
 	}
 
-	if h.Err() == nil {
+	// Whatever had already gone wrong is what Close reports. A failure that
+	// happens *during* the shutdown is not the campaign's failure: the pipes
+	// are being torn down, and "write: file already closed" from the goodbye
+	// exchange would turn every clean stop into a reported error.
+	failed := h.Err()
+	if failed == nil {
 		h.flush()
 		var resp Response
 		h.exchange(&Request{Op: OpBye}, &resp, h.opts.CallTimeout)
@@ -337,10 +342,5 @@ func (h *Host) Close() error {
 	if k := h.opts.Transport.Kill; k != nil {
 		k()
 	}
-	// A host closed cleanly has no error to report; one that failed keeps it,
-	// because the campaign's outcome depends on knowing the plugin died.
-	if err := h.Err(); err != nil {
-		return err
-	}
-	return nil
+	return failed
 }

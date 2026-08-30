@@ -99,6 +99,16 @@ type Thresholds struct {
 	// Longer than Grace, because a campaign is judged well before it takes
 	// this long to build a corpus and get a sandboxed target listening.
 	StartupGrace time.Duration
+
+	// MaxPluginShare is the share of wall-clock time a campaign may spend
+	// waiting inside its out-of-process extensions.
+	//
+	// Generous compared with MaxOverhead, because a campaign that chose a
+	// plugin chose to pay for it, and the point of naming it is not to forbid
+	// the cost but to attribute it: a slow campaign whose time is going into a
+	// plugin looks identical to any other slow campaign until something says so
+	// (ADR-0010).
+	MaxPluginShare float64
 }
 
 // DefaultThresholds are the boundaries used when a campaign does not set its own.
@@ -112,6 +122,7 @@ func DefaultThresholds() Thresholds {
 		MinExecsPerSecond:   10,
 		Grace:               30 * time.Second,
 		StartupGrace:        90 * time.Second,
+		MaxPluginShare:      0.25,
 	}
 }
 
@@ -205,6 +216,16 @@ func Health(s Snapshot, elapsed time.Duration, t Thresholds, phase Phase) []Diag
 			fmt.Sprintf("%.0f%% of wall-clock time is spent outside the target", 100*s.Overhead),
 			"the executor tier is probably too slow for this target; a fork server is "+
 				"several times faster than a subprocess")
+	}
+	if s.PluginSeconds > 0 && elapsed > 0 && t.MaxPluginShare > 0 {
+		if share := s.PluginSeconds / elapsed.Seconds(); share > t.MaxPluginShare {
+			add("plugin-slow", SeverityWarn,
+				fmt.Sprintf("%.0f%% of wall-clock time is spent inside plugins, over %d calls",
+					100*share, s.PluginCalls),
+				"an out-of-process extension is costing more than the target; raise its "+
+					"batch size, or move the logic to a native feedback if it needs to run "+
+					"on every execution")
+		}
 	}
 	if s.MapDensity > t.MaxMapDensity {
 		add("map-saturated", SeverityWarn,

@@ -265,6 +265,16 @@ func (w *Worker) loop(ctx context.Context) error {
 		slice.MaxTime = w.opts.ReportInterval
 
 		stats, err := w.built.engine.Run(ctx, slice)
+		if err == nil {
+			// A plugin mutator cannot report a failure through Mutate, and a
+			// plugin feedback that failed between slices has nothing to return
+			// it to either. So the campaign asks, once a slice, and the answer
+			// is an atomic load per plugin. A dead plugin ends the campaign
+			// here with the plugin's own words, rather than leaving it running
+			// with an extension that has silently stopped contributing
+			// (ADR-0010).
+			err = w.built.extensions.Err()
+		}
 		if err != nil {
 			w.report("error", err.Error())
 			w.finish("engine error: " + err.Error())
@@ -378,6 +388,7 @@ func (w *Worker) coverageSnapshot() []byte {
 }
 
 func (w *Worker) sendMetrics(stats engine.Stats, elapsed time.Duration) {
+	pluginCalls, pluginTime := w.built.extensions.Stats()
 	snap := metrics.Snapshot{
 		At:              time.Now(),
 		Execs:           stats.Execs,
@@ -395,6 +406,8 @@ func (w *Worker) sendMetrics(stats engine.Stats, elapsed time.Duration) {
 		HarnessError:    stats.HarnessError,
 		Stability:       stats.Stability,
 		Overhead:        stats.Overhead(),
+		PluginCalls:     uint64(pluginCalls),
+		PluginSeconds:   pluginTime.Seconds(),
 		WorkersHealthy:  1,
 		LastNewCoverage: time.Now(),
 	}

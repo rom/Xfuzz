@@ -11,6 +11,62 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M8 Extensions and hardening (in progress)
+
+**The external plugin tier (ADR-0010, ADR-0025, ASR-0009)**
+
+- `pkg/plugin`: a versioned protocol for extensions written in any language.
+  Four big-endian length bytes and a JSON object, over the plugin's own standard
+  input and output. No dependency, no code generation, no toolchain requirement
+  — a plugin is implementable in an afternoon, which is the difference between
+  an extension point that exists and one that gets used.
+- Feedbacks, mutators and objectives, each satisfying the same Go interface the
+  native tier does. The engine cannot tell the tiers apart, and must not be able
+  to: that is what makes a plugin an extension rather than a hook.
+- Batching where batching is real. A feedback must answer about the execution
+  that just happened; a mutator asked for one variant can produce thirty-two,
+  and the engine wants them all within the next thirty-two iterations from that
+  parent. Measured at eight mutations per round trip in the unit tests.
+- A feedback's `Append`/`Discard` rides on that extension's next call rather
+  than costing a round trip of its own, so the hot path pays one exchange per
+  execution. `Close` flushes what is still owed.
+- Failure is sticky and contained. A protocol error, a timeout, or the death of
+  the process takes that plugin permanently out of service, kills it, and fails
+  its campaign with the first error — a timeout rather than the end-of-file that
+  killing then produces — plus whatever the plugin wrote on its standard error.
+  A plugin that merely *declines* a call is not dead and is not treated as dead.
+- `Mutate` cannot return an error, which is how a plugin mutator would otherwise
+  fail silently for the rest of a campaign. The host holds it behind an atomic
+  load and the worker asks once per slice.
+- `pkg/plugin`'s server half is the reference implementation of the wire format,
+  so writing a plugin in Go is filling in a function. `examples/plugins/reference`
+  is a worked example of all three extension points in about 130 lines.
+
+**Wiring (ADR-0012, ADR-0016)**
+
+- `internal/safety.StartPeer`: the spawn boundary now covers long-lived protocol
+  peers as well as targets. A plugin is confined exactly as a target is, because
+  an extension is untrusted by construction — that is why it runs out of process.
+- `internal/extension` resolves a campaign's `extensions:` block into running
+  plugins. It exists because two rules meet: `pkg/plugin` may not spawn and
+  `internal/safety` should not know a protocol.
+- Campaign files gained `extensions:` — a plugin's command, settings, and the
+  named feedbacks, objectives and mutators to take from it. A name the plugin
+  does not provide is a refusal before the first execution, rather than an
+  extension that silently never fires.
+- `plugin_calls` and `plugin_seconds` on every metrics snapshot, with a
+  `plugin-slow` health diagnostic past 25% of wall clock. ADR-0010 promises a
+  slow plugin is diagnosable rather than mysterious; "your campaign is slow" is
+  not a finding anyone can act on.
+
+### Fixed — M8
+
+- A plugin's lifetime is the worker's, not the campaign context's. Tying it to
+  the context meant the plugin was killed at the first sign of the campaign
+  ending, on the pipe the final commit still had to be written to.
+- `Host.Close` reported failures caused by its own shutdown. Every clean stop
+  was ending with "write: file already closed" against the plugin's name.
+
 ### Added — M7 Web console (2026-08-30)
 
 A campaign is configurable, launchable, monitorable and triageable from a

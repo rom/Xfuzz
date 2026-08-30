@@ -89,6 +89,46 @@ func BuildTarget(t testing.TB, name string) string {
 	return out
 }
 
+// BuildAt compiles the package in src to out and returns out.
+//
+// For fixtures a test writes on the fly, which is how the fault-injection
+// cases get a plugin that dies on purpose: the misbehaviour is the point, so
+// it does not belong in examples/ where someone might copy it.
+func BuildAt(t testing.TB, out, src string) string {
+	t.Helper()
+	cmd := exec.Command("go", "build", "-o", out, src)
+	cmd.Dir = RepoRoot(t)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building %s: %v\n%s", src, err, b)
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// BuildPlugin compiles one of the example plugins into dir and returns its
+// path.
+//
+// Built rather than faked, because the claim under test is that a *process*
+// speaking the protocol works — spawned through the safety layer, confined,
+// talking over its own standard input and output. A fake would test the
+// framing, which the unit tests already do, and nothing that only a real
+// process can get wrong.
+func BuildPlugin(t testing.TB, dir, name string) string {
+	t.Helper()
+	out := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", out, "./examples/plugins/"+name)
+	cmd.Dir = RepoRoot(t)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the %s plugin: %v\n%s", name, err, b)
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // BuildBinary compiles one of Xfuzz's own commands into dir and returns its
 // path.
 func BuildBinary(t testing.TB, dir, command string) string {

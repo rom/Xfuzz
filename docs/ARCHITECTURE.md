@@ -69,12 +69,16 @@ github.com/rom/Xfuzz
 │   ├── corpusio/           AFL and libFuzzer corpus import/export
 │   ├── state/              state model, inference, state feedback, scheduling
 │   ├── campaign/           campaign config schema, resolution, validation
-│   └── plugin/             external plugin protocol + Starlark host
+│   └── plugin/             external plugin protocol (ADR-0025) + Starlark host
 ├── internal/
 │   ├── engine/             the fuzz loop, stages, worker runtime
 │   ├── store/              SQL metadata + CAS blob store, migrations
 │   ├── triage/             classify, bucket, minimise, verify
 │   ├── safety/             sandbox, scope guard, audit log
+│   ├── extension/          turns a campaign's plugin declarations into running,
+│   │                       confined processes — the one place that may, because
+│   │                       pkg/plugin cannot spawn and internal/safety must not
+│   │                       know the protocol
 │   ├── api/                HTTP/JSON services + SSE event stream (ADR-0024)
 │   ├── client/             the API client the CLI is built on
 │   ├── daemon/             campaign manager, supervision, event bus
@@ -664,7 +668,22 @@ ADR-0012).
 
 Native is the reference tier; plugin and script bindings are generated from and
 validated against the same interfaces so semantics cannot drift (ADR-0010).
-Time spent inside extensions is reported as a first-class metric.
+Time spent inside extensions is reported as a first-class metric —
+`plugin_calls` and `plugin_seconds` on every metrics snapshot, with a
+`plugin-slow` diagnostic when a campaign is spending more of its wall clock
+inside an extension than in its target.
+
+The plugin tier speaks the protocol in ADR-0025: framed JSON over the plugin's
+own standard input and output, spawned and confined by `internal/safety` like
+any other untrusted process, resolved from the campaign file by
+`internal/extension`. A campaign names its plugins and the extensions it takes
+from each; a name the plugin does not provide is a refusal at startup rather
+than an extension that silently never fires.
+
+**v1 scope.** The plugin column above is the design; what M8 delivers is the
+protocol and the three extension points ADR-0020 scoped for v1 — feedbacks,
+mutators and objectives. The rest are the same protocol with more message
+types, and each needs its own wire representation of what it operates on.
 
 ## 11. Traceability
 
