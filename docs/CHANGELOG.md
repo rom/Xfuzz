@@ -106,6 +106,21 @@ listed here with its migration path.
   than only the absence of a panic, because "it did not crash" is satisfied by a
   parser that accepts everything and understands nothing.
 
+**The schema-driven codec (ADR-0005, ASR-0014)**
+
+- `codec.Schema` decodes any format a `.xfg` grammar describes: total,
+  best-effort, and byte-exact on re-encode, with lengths and element counts
+  resolved from the sibling fields that declare them.
+- Wired in, which is the point. `format.grammar` used to generate seeds and
+  nothing else — `codecFor` returned `codec.Raw` whatever the grammar said — so
+  a campaign with a grammar mutated bytes and the fixup pass never ran, because
+  there was no structure to fix. Writing a grammar bought a better starting
+  corpus and none of the thing a grammar is for. An explicit `codec: raw` beside
+  a grammar still means byte-level, which is the control arm when measuring what
+  structure buys.
+- Found by the v0.1 proof obligation, whose two arms were the same campaign run
+  twice until this landed.
+
 **Cross-platform (ASR-0003, ASR-0006, ADR-0020)**
 
 - `test/e2e/portable_test.go`: a whole subprocess campaign, black-box, against a

@@ -54,10 +54,19 @@ type WorkerStatus struct {
 	State    WorkerState `json:"state"`
 	Pid      int         `json:"pid,omitempty"`
 	Strategy string      `json:"strategy,omitempty"`
-	Restarts int         `json:"restarts"`
-	Started  time.Time   `json:"started,omitempty"`
-	LastSeen time.Time   `json:"last_seen,omitempty"`
-	Err      string      `json:"error,omitempty"`
+
+	// Executor and Isolation are what this worker actually got, which is not
+	// always what the campaign asked for: "auto" picks a tier by probing, and
+	// isolation is capped by what the host can provide. Both are announced
+	// once in the ready message and kept here, because a campaign that fell
+	// back to a slower tier or a weaker sandbox should be answerable at any
+	// moment rather than only in the second it started.
+	Executor  string    `json:"executor,omitempty"`
+	Isolation string    `json:"isolation,omitempty"`
+	Restarts  int       `json:"restarts"`
+	Started   time.Time `json:"started,omitempty"`
+	LastSeen  time.Time `json:"last_seen,omitempty"`
+	Err       string    `json:"error,omitempty"`
 }
 
 // Healthy reports whether the worker is running and has been heard from
@@ -348,8 +357,12 @@ func (s *Supervisor) pump(w *worker, handle executor.Handle) error {
 
 		s.mu.Lock()
 		w.status.LastSeen = time.Now()
-		if m.Type == MsgReady && m.Ready != nil && m.Ready.Strategy != "" {
-			w.status.Strategy = m.Ready.Strategy
+		if m.Type == MsgReady && m.Ready != nil {
+			if m.Ready.Strategy != "" {
+				w.status.Strategy = m.Ready.Strategy
+			}
+			w.status.Executor = m.Ready.Executor
+			w.status.Isolation = m.Ready.Isolation
 		}
 		s.mu.Unlock()
 

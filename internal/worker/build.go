@@ -28,6 +28,7 @@ import (
 	"github.com/rom/Xfuzz/pkg/feedback"
 	"github.com/rom/Xfuzz/pkg/ir"
 	"github.com/rom/Xfuzz/pkg/mutate"
+	"github.com/rom/Xfuzz/pkg/schema"
 	"github.com/rom/Xfuzz/pkg/state"
 )
 
@@ -515,6 +516,25 @@ func deliveryFor(cfg *campaign.Resolved) executor.Delivery {
 }
 
 func codecFor(cfg *campaign.Resolved) (codec.Codec, error) {
+	// A grammar chooses the codec unless the campaign named one itself.
+	//
+	// Without this a grammar produced seeds and nothing more: the campaign
+	// decoded them as opaque bytes, mutated them blindly, and the fixup pass —
+	// the entire argument of ADR-0005 — never ran, because there was no
+	// structure to fix. Writing a grammar bought a better starting corpus and
+	// none of the thing it is for.
+	//
+	// An explicit codec still wins, and `codec: raw` beside a grammar is a
+	// meaningful thing to ask for: it is grammar-generated seeds mutated at the
+	// byte level, which is the control arm when measuring what structure buys.
+	if cfg.Format.Grammar != "" && !cfg.WasSet("format.codec") {
+		sch, err := schema.ParseFile(cfg.Format.Grammar)
+		if err != nil {
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		return codec.NewSchema(sch), nil
+	}
+
 	switch cfg.Format.Codec {
 	case "", "raw":
 		return codec.Raw{}, nil

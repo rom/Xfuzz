@@ -77,7 +77,13 @@ test-integration: ## Layers 3, 4, 5, 8, and the milestone exit criteria
 	# one of them budgets for the tail of a distribution rather than its median.
 	# A suite that runs out of time reports nothing at all, which is worse than
 	# a suite that takes a while.
-	$(GO) test -race -p 1 -tags integration -timeout 75m ./...
+	#
+	# -count=1 because test/e2e measures the *binaries*, not the packages it
+	# imports. Go's test cache keys on a package's own sources and inputs, so a
+	# change in internal/worker leaves the e2e result cached and the suite
+	# reports a pass for code it never ran. Measured, exactly once, and it is
+	# the kind of thing that would be believed.
+	$(GO) test -count=1 -race -p 1 -tags integration -timeout 75m ./...
 
 .PHONY: test-security
 test-security: ## Layer 12: sandbox escape, scope guard, audit integrity

@@ -232,6 +232,7 @@ continuously in CI with a persisted corpus (see [SECURITY.md](SECURITY.md) § 3.
 | Parser | Untrusted source | Target |
 | --- | --- | --- |
 | `codec.Decode` (per format) | Corpus files | `pkg/codec.FuzzPNGDecode` |
+| The schema-driven codec | Shared grammars **and** corpus files | `pkg/codec.FuzzSchemaDecode` |
 | `.xfg` grammar parser | Shared grammars | `pkg/schema.FuzzParse` |
 | Campaign file parser | Shared campaign files | `pkg/campaign.FuzzParse` |
 | AFL/libFuzzer corpus import | Downloaded corpora | `pkg/corpusio.FuzzImport` |
@@ -253,6 +254,10 @@ understands nothing:
 - A grammar that parses must **validate**, and its root must be a type it
   declares — otherwise the failure has moved somewhere with no source line to
   point at.
+- A schema-driven decode must be **total and byte-exact**: every input decodes,
+  and re-encoding reproduces it. A codec that loses a byte silently changes what
+  every campaign built on it is fuzzing. Fuzzed over the grammar and the input
+  together, because they are two untrusted parsers that meet.
 - A campaign document that parses must have **no includes left in it**: that
   refusal is what stops a document arriving over a socket from naming a path on
   the daemon's filesystem.

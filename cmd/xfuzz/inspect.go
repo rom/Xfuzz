@@ -448,9 +448,16 @@ func runWorkers(ctx context.Context, args []string) error {
 	if opts.jsonOut {
 		return printJSON(resp)
 	}
-	fmt.Printf("%4s %-10s %8s %9s  %s\n", "ID", "STATE", "PID", "RESTARTS", "STRATEGY")
+	// The tier and the isolation are here rather than only in the startup log
+	// because neither is always what the campaign asked for: "auto" picks a
+	// tier by probing, and isolation is capped by what the host can provide.
+	// A campaign quietly running on a slower tier is a campaign doing a
+	// fraction of the work somebody thinks it is.
+	fmt.Printf("%4s %-10s %8s %9s %-12s %-10s  %s\n",
+		"ID", "STATE", "PID", "RESTARTS", "EXECUTOR", "ISOLATION", "STRATEGY")
 	for _, w := range resp.Workers {
-		fmt.Printf("%4d %-10s %8d %9d  %s", w.ID, w.State, w.Pid, w.Restarts, w.Strategy)
+		fmt.Printf("%4d %-10s %8d %9d %-12s %-10s  %s",
+			w.ID, w.State, w.Pid, w.Restarts, dash(w.Executor), dash(w.Isolation), w.Strategy)
 		if w.Err != "" {
 			fmt.Printf("  (%s)", w.Err)
 		}
@@ -719,3 +726,12 @@ func runGrammar(ctx context.Context, args []string) error {
 // sampleHeadBytes is how much of a generated input the workbench shows. Enough
 // to recognise a format's header and the shape of what follows it.
 const sampleHeadBytes = 128
+
+// dash renders an empty field as a dash, so a column of blanks does not read as
+// a column that is missing.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
