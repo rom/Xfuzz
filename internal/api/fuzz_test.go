@@ -33,6 +33,12 @@ func FuzzRequest(f *testing.F) {
 	f.Add("GET", "/v1/campaigns/%2e%2e%2f/findings", "")
 	f.Add("POST", "/v1/campaigns/c/findings/999999999999999999999/triage", `{"as":"confirmed"}`)
 	f.Add("POST", "/v1/grammar/sample", `{"grammar":"format m { a: u8 }","count":-1}`)
+	// A 64-bit seed in each of the forms a client sends one, and a seed in the
+	// place it no longer belongs. All three go through a hand-written decoder,
+	// which is the part of this surface most likely to mishandle an edge.
+	f.Add("POST", "/v1/grammar/sample", `{"grammar":"format m { a: u8 }","seed":"14879488505964903031"}`)
+	f.Add("POST", "/v1/grammar/sample", `{"grammar":"format m { a: u8 }","seed":-1}`)
+	f.Add("POST", "/v1/campaigns", `{"document":"name: c\n","seed":42}`)
 	f.Add("GET", "/v1/", "")
 	f.Add("PATCH", "/v1//////", "{")
 
