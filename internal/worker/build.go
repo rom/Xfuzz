@@ -177,7 +177,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		Codec:         cdc,
 		Dict:          dict,
 		Suppress:      suppressFor(cfg),
-		MaxInputBytes: cfg.Format.MaxInputBytes,
+		MaxInputBytes: int(cfg.Format.MaxInputBytes),
 		MaxChildren:   maxChildrenFor(cfg),
 		TrimBudget:    cfg.Mutation.TrimBudget,
 		State:         b.state,
@@ -317,14 +317,14 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 		return errors.New("worker: shared memory is unavailable, so coverage cannot be collected; " +
 			"set feedback.coverage to none and feedback.novelty to true for a black-box campaign")
 	}
-	shm, err := provider.Create(cfg.Feedback.MapSize)
+	shm, err := provider.Create(int(cfg.Feedback.MapSize))
 	if err != nil {
 		return fmt.Errorf("worker: creating the coverage region: %w", err)
 	}
 	b.shm = shm
 	b.closers = append(b.closers, closer{"coverage region", shm.Close})
 
-	b.coverage = feedback.NewCoverageMap("coverage", cfg.Feedback.MapSize)
+	b.coverage = feedback.NewCoverageMap("coverage", int(cfg.Feedback.MapSize))
 	b.coverage.SetBuffer(shm.Bytes())
 	b.coverage.SetBackend(cfg.Feedback.Coverage)
 	b.mapFB = feedback.NewMapFeedback("coverage", b.coverage)

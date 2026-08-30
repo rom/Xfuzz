@@ -148,7 +148,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		Executor:        b.describe(),
 		Isolation:       b.sandbox.Level().String(),
 		Seeds:           seeds,
-		CoverageMapSize: w.opts.Config.Feedback.MapSize,
+		CoverageMapSize: int(w.opts.Config.Feedback.MapSize),
 	}})
 
 	if w.opts.Control != nil {

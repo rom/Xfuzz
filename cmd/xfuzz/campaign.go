@@ -743,8 +743,9 @@ feedback:
   objectives: [crash, hang, oom, sanitizer]
 
 workers:
-  # One per core by default.
-  count: 0
+  # One per core. Set it lower to leave the machine usable, or higher only if
+  # the target spends its time waiting rather than computing.
+  # count: 4
 
 safety:
   # The campaign refuses to start if the host cannot provide this much.

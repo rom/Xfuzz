@@ -53,6 +53,12 @@ func schemaOf(t reflect.Type, seen map[string]bool) map[string]any {
 	// written and parsed as a string, and a schema that called it a number
 	// would have editors offering integers for a field the parser refuses to
 	// read as one.
+	if t == reflect.TypeOf(Size(0)) {
+		return map[string]any{
+			"type":        []any{"string", "integer"},
+			"description": "A byte count, plain or with a unit: 4096, 512KB, 64MB, 2GB.",
+		}
+	}
 	if t == reflect.TypeOf(Duration(0)) {
 		return map[string]any{
 			"type":        "string",

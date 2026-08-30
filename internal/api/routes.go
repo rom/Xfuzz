@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/rom/Xfuzz/internal/daemon"
@@ -18,6 +21,7 @@ import (
 	"github.com/rom/Xfuzz/internal/version"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpusio"
+	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/generate"
 	"github.com/rom/Xfuzz/pkg/ir"
 	"github.com/rom/Xfuzz/pkg/rng"
@@ -962,6 +966,16 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 	cs = append(cs, foundTool(daemon.WorkerBinaryName, "runs a campaign's workers"))
 	cs = append(cs, foundTool("clang", "builds instrumented targets through xfuzz-cc"))
 
+	// The three things a new install gets wrong that the mechanism checks
+	// above do not cover. Each is something someone hits on their first
+	// campaign and cannot diagnose from the failure it produces.
+	cs = append(cs,
+		writableDir(s.daemon.DataDir()),
+		spawnWorks(r.Context()),
+		Capability{Name: "web-console", Available: ConsoleBuilt(),
+			Detail: consoleDetail()},
+	)
+
 	writeJSON(w, http.StatusOK, CapabilitiesResponse{
 		Platform:     runtime.GOOS + "/" + runtime.GOARCH,
 		Version:      version.Get(),
@@ -1010,4 +1024,86 @@ func (s *Server) metricsStates(w http.ResponseWriter, r *http.Request) {
 		"illegal":     m.Illegal,
 		"count":       len(m.States),
 	})
+}
+
+// writableDir reports whether the daemon can write where it keeps everything.
+//
+// A data directory that is read-only, or on a filesystem with nothing left,
+// fails a campaign at its first corpus write — several minutes in, with an
+// error about a blob rather than about the directory.
+func writableDir(dir string) Capability {
+	c := Capability{Name: "data-directory", Detail: dir}
+	if dir == "" {
+		c.Detail = "no data directory is configured"
+		return c
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		c.Detail = dir + "; cannot be created: " + err.Error()
+		return c
+	}
+	probe := filepath.Join(dir, ".xfuzz-doctor")
+	if err := os.WriteFile(probe, []byte("ok"), 0o600); err != nil {
+		c.Detail = dir + "; not writable: " + err.Error()
+		return c
+	}
+	os.Remove(probe)
+	c.Available = true
+	c.Detail = dir + "; stores, sockets and worker working directories live here"
+	return c
+}
+
+// spawnWorks launches one confined process and waits for it.
+//
+// The single most useful check here, because it exercises the whole path a
+// campaign depends on — the spawner, the sandbox, the helper where one is used,
+// the process group — rather than the mechanisms it is built from. A host where
+// every capability above is present and this fails is a host where no campaign
+// will run, and knowing that in a second beats discovering it in a campaign.
+//
+// The daemon's own binary is the subject, because it is the one executable that
+// certainly exists, certainly runs on this platform, and certainly exits.
+func spawnWorks(ctx context.Context) Capability {
+	c := Capability{Name: "execution"}
+
+	self, err := os.Executable()
+	if err != nil {
+		c.Detail = "cannot find this daemon's own binary to test with: " + err.Error()
+		return c
+	}
+	// An explicit sandbox rather than the spawner's lazy default, so that this
+	// check owns it and can release it. A namespace or a cgroup left behind by
+	// a diagnostic would be a leak on every call to `xfuzz doctor`.
+	sb := &safety.Sandbox{}
+	defer sb.Close()
+
+	sp := safety.NewSpawner()
+	sp.Sandbox = sb
+	sp.DefaultTimeout = 10 * time.Second
+
+	res, err := sp.Run(ctx, executor.ProcSpec{
+		Path: self, Args: []string{self, "--version"},
+		CaptureOutput: true, Timeout: 10 * time.Second,
+	})
+	switch {
+	case err != nil:
+		c.Detail = "a confined process could not be launched: " + err.Error()
+	case res.TimedOut:
+		c.Detail = "a confined process was launched and did not exit within ten seconds"
+	case res.ExitCode != 0 || res.Signal != 0:
+		c.Detail = fmt.Sprintf("a confined process exited %d (signal %d): %s",
+			res.ExitCode, res.Signal, strings.TrimSpace(string(res.Stderr)))
+	default:
+		c.Available = true
+		c.Detail = fmt.Sprintf("a confined process ran and exited cleanly in %s", res.Duration.Round(time.Millisecond))
+	}
+	return c
+}
+
+// consoleDetail says what a build without the console means and how to get one.
+func consoleDetail() string {
+	if ConsoleBuilt() {
+		return "this daemon serves the web console on its own listener"
+	}
+	return "this daemon was built without the console; rebuild with `make build-console` " +
+		"or use the CLI, which reaches every route the console does"
 }

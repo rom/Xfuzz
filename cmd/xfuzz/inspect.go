@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/rom/Xfuzz/internal/daemon"
 )
@@ -339,11 +340,43 @@ func findingsBuckets(ctx context.Context, args []string) error {
 	if *strategy != "" {
 		path += "?strategy=" + *strategy
 	}
-	var resp map[string]any
+	var resp struct {
+		Buckets []struct {
+			ID        int64     `json:"id"`
+			Strategy  string    `json:"strategy"`
+			Signature string    `json:"signature"`
+			Kind      string    `json:"kind"`
+			Summary   string    `json:"summary"`
+			Count     int64     `json:"count"`
+			FirstSeen time.Time `json:"first_seen"`
+		} `json:"buckets"`
+		Count int `json:"count"`
+	}
 	if err := c.Do(ctx, "GET", path, nil, &resp); err != nil {
 		return err
 	}
-	return printJSON(resp)
+	if opts.jsonOut {
+		return printJSON(resp)
+	}
+	if len(resp.Buckets) == 0 {
+		fmt.Println("no buckets")
+		return nil
+	}
+
+	// A table, like every other listing. A bucket count is the number that
+	// says how many *bugs* a campaign found, as against how many times it
+	// found them, so it is the one a person reads most often — and answering
+	// it in raw JSON made the most-read command the least readable.
+	fmt.Printf("%6s %8s %-10s %-16s  %s\n", "ID", "FINDINGS", "KIND", "SIGNATURE", "SUMMARY")
+	for _, b := range resp.Buckets {
+		sig := b.Signature
+		if len(sig) > 16 {
+			sig = sig[:16]
+		}
+		fmt.Printf("%6d %8d %-10s %-16s  %s\n", b.ID, b.Count, b.Kind, sig, b.Summary)
+	}
+	fmt.Printf("\n%d bucket(s)\n", len(resp.Buckets))
+	return nil
 }
 
 func runMetrics(ctx context.Context, args []string) error {

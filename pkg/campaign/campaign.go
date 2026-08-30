@@ -13,6 +13,7 @@ package campaign
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -110,7 +111,7 @@ type Seeds struct {
 	Inline []string `yaml:"inline,omitempty" json:"inline,omitempty" doc:"Literal seed inputs, as strings."`
 
 	// MaxFileSize caps an imported seed.
-	MaxFileSize int64 `yaml:"max_file_size,omitempty" json:"max_file_size,omitempty" doc:"Largest seed file to import, in bytes."`
+	MaxFileSize Size `yaml:"max_file_size,omitempty" json:"max_file_size,omitempty" doc:"Largest seed file to import, in bytes."`
 
 	// Generate asks the grammar for this many seeds when no corpus is supplied.
 	// A campaign with a grammar and no seeds is not stuck; it generates.
@@ -130,7 +131,7 @@ type Format struct {
 	Dictionary string `yaml:"dictionary,omitempty" json:"dictionary,omitempty" doc:"Path to an AFL-format dictionary."`
 
 	// MaxInputBytes bounds how far mutation may inflate an input.
-	MaxInputBytes int `yaml:"max_input_bytes,omitempty" json:"max_input_bytes,omitempty" doc:"Largest input mutation may produce."`
+	MaxInputBytes Size `yaml:"max_input_bytes,omitempty" json:"max_input_bytes,omitempty" doc:"Largest input mutation may produce."`
 
 	// Suppress leaves chosen derivations inconsistent on purpose, so the
 	// campaign also reaches the target's validation code (ASR-0014).
@@ -160,7 +161,7 @@ type Feedback struct {
 
 	// MapSize is the coverage map size in bytes. It must match what the target
 	// was instrumented against.
-	MapSize int `yaml:"map_size,omitempty" json:"map_size,omitempty" doc:"Coverage map size in bytes."`
+	MapSize Size `yaml:"map_size,omitempty" json:"map_size,omitempty" doc:"Coverage map size in bytes."`
 
 	// Novelty adds output-novelty feedback, for a target with no
 	// instrumentation but informative output.
@@ -301,9 +302,9 @@ type Safety struct {
 	Writable []string `yaml:"writable,omitempty" json:"writable,omitempty" doc:"Extra writable paths under the read-only root."`
 
 	// MemoryLimit, ProcessLimit, FileSizeLimit and CPULimit bound one target.
-	MemoryLimit   int64    `yaml:"memory_limit,omitempty" json:"memory_limit,omitempty" doc:"Per-target memory cap in bytes."`
+	MemoryLimit   Size     `yaml:"memory_limit,omitempty" json:"memory_limit,omitempty" doc:"Per-target memory cap in bytes."`
 	ProcessLimit  int      `yaml:"process_limit,omitempty" json:"process_limit,omitempty" doc:"Per-target process cap."`
-	FileSizeLimit int64    `yaml:"file_size_limit,omitempty" json:"file_size_limit,omitempty" doc:"Largest file the target may write."`
+	FileSizeLimit Size     `yaml:"file_size_limit,omitempty" json:"file_size_limit,omitempty" doc:"Largest file the target may write."`
 	CPULimit      Duration `yaml:"cpu_limit,omitempty" json:"cpu_limit,omitempty" doc:"Per-target CPU time cap."`
 
 	// Scope is the network allowlist. A campaign that leaves the host without
@@ -343,7 +344,7 @@ type Storage struct {
 
 	// MaxCorpusBytes and MaxCorpusEntries cap the corpus. Culling is reported,
 	// never silent.
-	MaxCorpusBytes   int64 `yaml:"max_corpus_bytes,omitempty" json:"max_corpus_bytes,omitempty" doc:"Corpus size cap in bytes. 0 is unlimited."`
+	MaxCorpusBytes   Size  `yaml:"max_corpus_bytes,omitempty" json:"max_corpus_bytes,omitempty" doc:"Corpus size cap in bytes. 0 is unlimited."`
 	MaxCorpusEntries int64 `yaml:"max_corpus_entries,omitempty" json:"max_corpus_entries,omitempty" doc:"Corpus entry cap. 0 is unlimited."`
 
 	// CheckpointInterval is how often resume state is written. It is also how
@@ -480,6 +481,118 @@ func ParseDuration(s string) (Duration, error) {
 		return 0, fmt.Errorf("campaign: %q is not a duration (want something like 30s, 10m, 2h, or 7d)", s)
 	}
 	return Duration(td), nil
+}
+
+// Size is a byte count that may be written with a unit.
+//
+// A campaign file is read and edited by people, and "2147483648" is a number
+// nobody checks. It is also a number people get wrong by a factor of a thousand
+// in either direction, which for a memory limit is the difference between a
+// campaign that works and one that dies on its first execution.
+//
+// A plain number is still accepted and still means bytes, so every campaign
+// file written before this keeps working.
+type Size int64
+
+// Bytes returns the count.
+func (z Size) Bytes() int64 { return int64(z) }
+
+// String renders a size in the largest unit that divides it exactly, so a
+// round-trip through the file does not turn 2GB into 2147483648.
+func (z Size) String() string {
+	n := int64(z)
+	if n == 0 {
+		return "0"
+	}
+	for _, u := range sizeUnits {
+		if n%u.scale == 0 {
+			return strconv.FormatInt(n/u.scale, 10) + u.suffix
+		}
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+// sizeUnits are the suffixes, largest first. Powers of 1024 throughout: a
+// memory limit and a file size are both measured that way, and mixing the two
+// conventions in one file is how a limit ends up 7% wrong for no reason anybody
+// can see.
+var sizeUnits = []struct {
+	suffix string
+	scale  int64
+}{
+	{"TB", 1 << 40}, {"GB", 1 << 30}, {"MB", 1 << 20}, {"KB", 1 << 10},
+}
+
+// ParseSize reads a byte count, with or without a unit.
+func ParseSize(s string) (Size, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, nil
+	}
+	upper := strings.ToUpper(s)
+	for _, u := range sizeUnits {
+		// Both "2GB" and "2G", because both are what people type.
+		for _, suffix := range []string{u.suffix, u.suffix[:1]} {
+			rest, ok := strings.CutSuffix(upper, suffix)
+			if !ok {
+				continue
+			}
+			n, err := strconv.ParseFloat(strings.TrimSpace(rest), 64)
+			if err != nil {
+				return 0, sizeError(s)
+			}
+			return Size(n * float64(u.scale)), nil
+		}
+	}
+	rest := strings.TrimSuffix(upper, "B")
+	n, err := strconv.ParseInt(strings.TrimSpace(rest), 10, 64)
+	if err != nil {
+		return 0, sizeError(s)
+	}
+	return Size(n), nil
+}
+
+func sizeError(s string) error {
+	return fmt.Errorf("campaign: %q is not a size (want a number of bytes, or one with a unit such as 512KB, 64MB or 2GB)", s)
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler.
+func (z *Size) UnmarshalYAML(unmarshal func(any) error) error {
+	var n int64
+	if err := unmarshal(&n); err == nil {
+		*z = Size(n)
+		return nil
+	}
+	var str string
+	if err := unmarshal(&str); err != nil {
+		return err
+	}
+	parsed, err := ParseSize(str)
+	if err != nil {
+		return err
+	}
+	*z = parsed
+	return nil
+}
+
+// MarshalYAML implements yaml.Marshaler.
+func (z Size) MarshalYAML() (any, error) { return z.String(), nil }
+
+// MarshalJSON implements json.Marshaler.
+//
+// A string, like Duration, so that the API and the console show what the file
+// says rather than a number the reader has to divide.
+func (z Size) MarshalJSON() ([]byte, error) { return []byte(`"` + z.String() + `"`), nil }
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (z *Size) UnmarshalJSON(b []byte) error {
+	str := strings.Trim(string(b), `"`)
+	parsed, err := ParseSize(str)
+	if err != nil {
+		return err
+	}
+	*z = parsed
+	return nil
 }
 
 // Extension is one plugin process and the extension points it supplies.

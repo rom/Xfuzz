@@ -1031,7 +1031,7 @@ func (c *Campaign) importSeeds(ctx context.Context) error {
 		}
 		rep, err := c.store.ImportCorpus(ctx, c.id, dir, corpusio.ImportOptions{
 			Format:      format,
-			MaxFileSize: s.MaxFileSize,
+			MaxFileSize: s.MaxFileSize.Bytes(),
 		})
 		if err != nil {
 			return err

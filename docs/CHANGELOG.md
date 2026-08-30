@@ -128,6 +128,28 @@ listed here with its migration path.
   scoped as the grey-box path off Linux and would not have been one on Windows
   anyway, where there is no coverage map to fill.
 
+**Documentation (definition of done, clause 10)**
+
+- [GUIDE.md](GUIDE.md): install to first finding, then findings, triage,
+  reproduction, the console, black-box targets, protocol campaigns, making a
+  campaign faster, safety, storage, and the two extension tiers.
+- [GRAMMAR.md](GRAMMAR.md): writing a `.xfg` grammar — the type vocabulary,
+  derived fields and references, how to build one for a real format outside in,
+  and when to suppress a derivation so the consistency checks themselves become
+  the target.
+- `test/e2e/guide_test.go` walks the guide's first-campaign section literally,
+  and checks that every YAML block in both documents validates. A guide is a
+  claim about the tool, and a claim nobody checks stops being true.
+- `xfuzz doctor` gained the three checks a new install actually fails on: is the
+  data directory writable, can a confined process be launched at all, and is the
+  console in this build. The second is the valuable one — it exercises the whole
+  spawn path rather than the mechanisms it is built from, so a host where every
+  capability is present and this fails is diagnosed in a second rather than in a
+  campaign.
+- Byte counts in a campaign file take units: `512KB`, `64MB`, `2GB`. A plain
+  number still means bytes, so every file written before this keeps working, and
+  `xfuzz explain` now reports `64KB` where it used to report `65536`.
+
 ### Fixed — M8
 
 - A plugin's lifetime is the worker's, not the campaign context's. Tying it to
@@ -144,6 +166,14 @@ listed here with its migration path.
   run.
 - One corrupt payload failed the whole corpus read, so a single bad file took
   down a campaign's seed load rather than costing it one entry.
+- `xfuzz init` wrote a campaign file that `xfuzz validate` rejected: the
+  template set `workers.count: 0` with a comment saying "one per core by
+  default", and validation refuses an explicit zero. Two commands into the
+  documented path, and it did not work. Found by the test that walks the guide,
+  on its first run.
+- `xfuzz findings buckets` answered in raw JSON without being asked. A bucket
+  count is how many *bugs* a campaign found, as against how many times it found
+  them, so it is the most-read listing there is — and it was the least readable.
 - A Go panic carried no stack frames into triage, because the frame parser knew
   only the sanitizer format. Bucketing fell through to the message, and a
   message that contains the offending values — "slice bounds out of range

@@ -768,3 +768,73 @@ func validateBody(t *testing.T, body string) error {
 	}
 	return cfg.Validate()
 }
+
+func TestASizeMayBeWrittenWithAUnit(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want int64
+	}{
+		{"4096", 4096},
+		{"4096B", 4096},
+		{"512KB", 512 << 10},
+		{"512K", 512 << 10},
+		{"64MB", 64 << 20},
+		{"2GB", 2 << 30},
+		{"1TB", 1 << 40},
+		{"1.5GB", 3 << 29},
+		{" 8 MB ", 8 << 20},
+		{"", 0},
+	} {
+		got, err := ParseSize(tc.in)
+		if err != nil {
+			t.Errorf("ParseSize(%q): %v", tc.in, err)
+			continue
+		}
+		if got.Bytes() != tc.want {
+			t.Errorf("ParseSize(%q) = %d, want %d", tc.in, got.Bytes(), tc.want)
+		}
+	}
+
+	for _, bad := range []string{"lots", "2GBB", "-", "MB", "2.2.2MB"} {
+		if got, err := ParseSize(bad); err == nil {
+			t.Errorf("ParseSize(%q) = %d, want an error", bad, got.Bytes())
+		}
+	}
+}
+
+func TestASizeRoundTripsThroughTheFileInTheUnitItWasWritten(t *testing.T) {
+	// A campaign file is edited by people. A size that went in as 2GB and came
+	// back as 2147483648 would make `xfuzz edit` rewrite a line nobody touched.
+	for _, tc := range []struct {
+		bytes int64
+		want  string
+	}{
+		{2 << 30, "2GB"}, {64 << 20, "64MB"}, {512 << 10, "512KB"}, {4096, "4KB"},
+		{4097, "4097"}, {0, "0"},
+	} {
+		if got := Size(tc.bytes).String(); got != tc.want {
+			t.Errorf("Size(%d) = %q, want %q", tc.bytes, got, tc.want)
+		}
+	}
+}
+
+func TestAPlainByteCountStillWorks(t *testing.T) {
+	// Every campaign file written before sizes had units keeps working, which
+	// is the reason a bare number is still accepted.
+	body := "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\n" +
+		"safety:\n  memory_limit: 2147483648\nstorage:\n  max_corpus_bytes: 1GB\n"
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("loading: %v", err)
+	}
+	if got := cfg.Safety.MemoryLimit.Bytes(); got != 2<<30 {
+		t.Errorf("memory_limit = %d, want %d", got, 2<<30)
+	}
+	if got := cfg.Storage.MaxCorpusBytes.Bytes(); got != 1<<30 {
+		t.Errorf("max_corpus_bytes = %d, want %d", got, 1<<30)
+	}
+}

@@ -99,7 +99,10 @@
         },
         "map_size": {
           "description": "Coverage map size in bytes.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         },
         "novelty": {
           "description": "Treat novel output as interesting.",
@@ -133,7 +136,10 @@
         },
         "max_input_bytes": {
           "description": "Largest input mutation may produce.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         },
         "suppress": {
           "description": "Derivations to leave inconsistent: length, count, offset, checksum.",
@@ -227,7 +233,10 @@
         },
         "file_size_limit": {
           "description": "Largest file the target may write.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         },
         "isolation": {
           "description": "Minimum isolation level: none, minimal, moderate, strong.",
@@ -235,7 +244,10 @@
         },
         "memory_limit": {
           "description": "Per-target memory cap in bytes.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         },
         "network": {
           "description": "Leave the target in the host network namespace.",
@@ -361,7 +373,10 @@
         },
         "max_file_size": {
           "description": "Largest seed file to import, in bytes.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         }
       },
       "type": "object"
@@ -502,7 +517,10 @@
         },
         "max_corpus_bytes": {
           "description": "Corpus size cap in bytes. 0 is unlimited.",
-          "type": "integer"
+          "type": [
+            "string",
+            "integer"
+          ]
         },
         "max_corpus_entries": {
           "description": "Corpus entry cap. 0 is unlimited.",

@@ -6,6 +6,8 @@ Documentation for Xfuzz, a universal fuzzing platform.
 
 | Document | What it covers |
 | --- | --- |
+| [GUIDE.md](GUIDE.md) | Using Xfuzz: install, a first campaign, reading findings, safety, extensions |
+| [GRAMMAR.md](GRAMMAR.md) | Writing a `.xfg` grammar so mutation respects a format's structure |
 | [DESIGN.md](DESIGN.md) | What Xfuzz is, the problem it solves, design principles, core model, campaign format |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Components, packages, interfaces, data flow, storage, concurrency, traceability |
 | [MVP_PLAN.md](MVP_PLAN.md) | Milestones M0–M8 to v0.1, dependencies, exit criteria, risks, roadmap |
@@ -18,13 +20,15 @@ Documentation for Xfuzz, a universal fuzzing platform.
 | Directory | Contents |
 | --- | --- |
 | [asr/](asr/README.md) | 15 Architecturally Significant Requirements — the constraints |
-| [adr/](adr/README.md) | 21 Architecture Decision Records — the decisions, with rejected alternatives |
+| [adr/](adr/README.md) | 25 Architecture Decision Records — the decisions, with rejected alternatives |
 
 ASRs are the *inputs* to architecture; ADRs are the *decisions* made in response.
 Every ADR names the ASRs it serves; the matrix is in
 [ARCHITECTURE.md § 11](ARCHITECTURE.md#11-traceability) and is linted in CI.
 
 ## Reading paths
+
+**Using it** → GUIDE.md → GRAMMAR.md when your format has checks worth passing.
 
 **Evaluating the design** → DESIGN.md → ARCHITECTURE.md § 1–5 → adr/ADR-0005,
 ADR-0007, ADR-0009 (the three decisions that shape everything else).
