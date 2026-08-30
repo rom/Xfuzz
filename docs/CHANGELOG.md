@@ -181,6 +181,16 @@ listed here with its migration path.
   run.
 - One corrupt payload failed the whole corpus read, so a single bad file took
   down a campaign's seed load rather than costing it one entry.
+- M6's stateful criterion was bounded by the clock, which made it a coin flip
+  on a busy host: 24,405 sessions at 52/s found three of four planted bugs and
+  17,773 at 38/s found one, on identical code. A campaign that reaches the
+  handshake compounds — the authenticated state was visited 174 times in one run
+  and once in the other — so it is now bounded by sessions, which is what the
+  criterion is about, with the clock kept as a backstop.
+- A grammar took the codec on a session campaign, where the codec's job is to
+  split an input into the messages of a conversation. It would have turned a
+  conversation into a single blob and the campaign would have stopped being
+  stateful without saying so.
 - `xfuzz init` wrote a campaign file that `xfuzz validate` rejected: the
   template set `workers.count: 0` with a comment saying "one per core by
   default", and validation refuses an explicit zero. Two commands into the
