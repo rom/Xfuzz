@@ -61,6 +61,18 @@ type ProcPool struct {
 	warm   []Peer
 	closed bool
 	execs  uint64
+
+	// life bounds every warm process, and is not the context of whichever
+	// execution happened to trigger the spawn.
+	//
+	// The distinction is the whole correctness of the pool. A warm process
+	// outlives the execution that asked for it — that is the point — so
+	// spawning it against a per-execution context would have it killed the
+	// moment that execution ended, leaving the pool permanently dry and this
+	// tier a subprocess executor with extra machinery. Nothing would report it:
+	// the campaign would run, and be three times slower than it should be.
+	life   context.Context
+	endure context.CancelFunc
 }
 
 // DefaultPoolSize is how many processes a pool keeps warm.
@@ -108,8 +120,23 @@ func (e *ProcPool) Start(ctx context.Context) error {
 	if e.Delivery != DeliverStdin {
 		return ErrPoolDelivery
 	}
+	e.mu.Lock()
+	if e.life == nil {
+		// Rooted at the caller's context so that cancelling a campaign still
+		// takes the pool with it, but with a cancel of its own so that Close
+		// ends the warm processes even when the caller's context never does.
+		e.life, e.endure = context.WithCancel(context.WithoutCancel(ctx))
+		if ctx != nil && ctx.Done() != nil {
+			go func(done <-chan struct{}, stop context.CancelFunc) {
+				<-done
+				stop()
+			}(ctx.Done(), e.endure)
+		}
+	}
+	e.mu.Unlock()
+
 	for i := 0; i < e.size(); i++ {
-		p, err := e.spawn(ctx)
+		p, err := e.spawn(e.lifetime())
 		if err != nil {
 			e.Close()
 			return err
@@ -119,6 +146,16 @@ func (e *ProcPool) Start(ctx context.Context) error {
 		e.mu.Unlock()
 	}
 	return nil
+}
+
+// lifetime returns the context every warm process is spawned against.
+func (e *ProcPool) lifetime() context.Context {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.life == nil {
+		return context.Background()
+	}
+	return e.life
 }
 
 func (e *ProcPool) size() int {
@@ -159,7 +196,12 @@ func (e *ProcPool) take(ctx context.Context) (Peer, error) {
 	// Dry. That means the previous replacement has not finished being created,
 	// so this execution pays for a spawn — exactly what T4 does, which is the
 	// right floor to degrade to.
-	return e.spawn(ctx)
+	//
+	// Spawned against the pool's lifetime rather than this execution's, like
+	// every other process here: this one is consumed immediately, but a process
+	// whose lifetime depends on which code path created it is a process that
+	// behaves differently on a busy machine.
+	return e.spawn(e.lifetime())
 }
 
 // refill starts a replacement without waiting for it.
@@ -167,9 +209,10 @@ func (e *ProcPool) take(ctx context.Context) (Peer, error) {
 // Asynchronous on purpose: the cost of creating a process is meant to be paid
 // while the target runs, and doing it inline would make this tier a subprocess
 // executor with extra steps.
-func (e *ProcPool) refill(ctx context.Context) {
+func (e *ProcPool) refill() {
+	life := e.lifetime()
 	go func() {
-		p, err := e.spawn(ctx)
+		p, err := e.spawn(life)
 		if err != nil {
 			// The next take() spawns inline and reports the failure to a caller
 			// that can do something with it. Failing here would mean failing on
@@ -197,7 +240,7 @@ func (e *ProcPool) Run(ctx context.Context, in Input, obs []feedback.Observer) (
 	if err != nil {
 		return feedback.ExitError, err
 	}
-	e.refill(ctx)
+	e.refill()
 
 	if err := Arm(obs, in); err != nil {
 		p.Kill()
@@ -227,7 +270,15 @@ func (e *ProcPool) Run(ctx context.Context, in Input, obs []feedback.Observer) (
 	return ek, nil
 }
 
-// deliver writes the input, closes the pipe, and waits for the process.
+// deliver writes the input, closes the pipe, and waits for the process — for
+// no longer than the spec's timeout.
+//
+// The bound has to be here. A Peer is a long-lived process the fuzzer talks to
+// over its whole life, so internal/safety gives it no per-execution deadline;
+// on this tier the process's life *is* one execution, and without a bound a
+// target that hangs parks the worker that ran it for the rest of the campaign.
+// That is worse than slow: a hang is a finding, and the tier would be losing
+// the findings it was pointed at while reporting nothing wrong.
 func (e *ProcPool) deliver(ctx context.Context, p Peer, input []byte) (ProcResult, error) {
 	// Written on a goroutine because a target that reads nothing — or reads
 	// less than it is given — fills the pipe buffer and would block the fuzzer
@@ -250,7 +301,40 @@ func (e *ProcPool) deliver(ctx context.Context, p Peer, input []byte) (ProcResul
 		close(done)
 	}()
 
-	res, err := p.Wait()
+	waited := make(chan outcome, 1)
+	go func() {
+		r, err := p.Wait()
+		waited <- outcome{r, err}
+	}()
+
+	timeout := e.spec.Timeout
+	if timeout <= 0 {
+		timeout = defaultPoolTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	var res ProcResult
+	var err error
+	select {
+	case o := <-waited:
+		res, err = o.res, o.err
+	case <-timer.C:
+		// Killed, then waited for — but not indefinitely. TimedOut is what
+		// makes this a hang rather than a crash; reporting it as a crash would
+		// file a finding against the wrong bug.
+		p.Kill()
+		reaped := reapWithin(waited, reapGrace)
+		res, err = reaped, nil
+		res.TimedOut, res.Signal = true, 0
+		if res.Duration == 0 {
+			res.Duration = timeout
+		}
+	case <-ctx.Done():
+		p.Kill()
+		reapWithin(waited, reapGrace)
+		return ProcResult{}, ctx.Err()
+	}
 	<-done
 	if err != nil {
 		p.Kill()
@@ -267,9 +351,51 @@ func (e *ProcPool) deliver(ctx context.Context, p Peer, input []byte) (ProcResul
 	return res, nil
 }
 
+// outcome is one process's exit, carried off the goroutine that waited for it.
+type outcome struct {
+	res ProcResult
+	err error
+}
+
 // maxPoolOutput bounds what is read from one process, so a target that writes
 // without stopping cannot exhaust memory.
 const maxPoolOutput = 1 << 20
+
+// reapWithin waits for a killed process to be reaped, and gives up.
+//
+// Killing is not the same as being able to wait for it. A wait goes through
+// os/exec, which waits for its own output-copying goroutines as well as for the
+// process, and those finish only when every holder of the pipe has let go —
+// including a grandchild that escaped the process group by starting a session
+// of its own. Blocking here on that would defeat the entire point of the
+// timeout above: the worker would still be parked, one layer further down.
+//
+// So the reap is best-effort. The goroutine behind it is not leaked — it is
+// blocked on a channel with a buffer, so it finishes whenever the process
+// finally does — and what is lost is only the exit status of something that has
+// already been declared a hang.
+func reapWithin(waited <-chan outcome, grace time.Duration) ProcResult {
+	t := time.NewTimer(grace)
+	defer t.Stop()
+	select {
+	case o := <-waited:
+		return o.res
+	case <-t.C:
+		return ProcResult{}
+	}
+}
+
+// reapGrace is how long a killed process is given to be reaped before the
+// execution reports its timeout anyway.
+const reapGrace = 2 * time.Second
+
+// defaultPoolTimeout bounds an execution whose spec set no timeout.
+//
+// A default rather than "wait forever", because the campaign file's timeout is
+// optional and the failure mode of not having one here is a worker that stops
+// for good. Generous enough that it is the campaign's own timeout that
+// normally decides, and it is reported as a hang either way.
+const defaultPoolTimeout = 30 * time.Second
 
 // Reset implements Executor. Every execution gets a fresh process, so there is
 // nothing to restore.
@@ -281,7 +407,11 @@ func (e *ProcPool) Close() error {
 	e.closed = true
 	warm := e.warm
 	e.warm = nil
+	stop := e.endure
 	e.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
 
 	var errs []error
 	for _, p := range warm {

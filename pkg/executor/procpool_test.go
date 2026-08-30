@@ -63,6 +63,22 @@ func (poolSpawner) StartPeer(ctx context.Context, spec ProcSpec) (Peer, error) {
 		p.err = cmd.Wait()
 		close(p.done)
 	}()
+	// The context kills the peer, exactly as internal/safety's does.
+	//
+	// This is the whole reason the fake exists in this shape. A fake that
+	// ignored the context would pass every test in this file while the real
+	// spawner killed each replacement the moment its execution ended — which
+	// is the defect the warm-process test is here to catch, and which it did
+	// not catch until the fake behaved like the thing it stands in for.
+	if ctx != nil && ctx.Done() != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+				p.Kill()
+			case <-p.done:
+			}
+		}()
+	}
 	return p, nil
 }
 
@@ -287,5 +303,114 @@ func TestThePoolKeepsProcessesWarmAndCleansThemUp(t *testing.T) {
 	// ends and is closed by its owner.
 	if err := p.Close(); err != nil {
 		t.Errorf("the second Close: %v", err)
+	}
+}
+
+func TestAPooledTargetThatHangsIsATimeoutNotAWedgedWorker(t *testing.T) {
+	// The tier claims TimeoutEnforced, and until this test it did not enforce
+	// one. internal/safety gives a Peer no deadline — a peer is a process the
+	// fuzzer talks to over its whole life, and a plugin is not on a clock — so
+	// nothing bounded a pooled execution and a target that never exits parked
+	// the worker that ran it for the rest of the campaign.
+	//
+	// Silent, and the wrong way round: a hang is a finding, so the tier would
+	// have been losing exactly the bugs it was pointed at while reporting
+	// nothing wrong.
+	target := shellTarget(t, `read line; sleep 60`)
+	p := NewProcPool("pool", poolSpawner{}, ProcSpec{
+		Path: target, Args: []string{target}, Timeout: 300 * time.Millisecond,
+	})
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatalf("starting the pool: %v", err)
+	}
+	defer p.Close()
+
+	start := time.Now()
+	ek, err := p.Run(context.Background(), Input{Bytes: []byte("go\n")}, nil)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("a hanging target is an execution that timed out, not a harness failure: %v", err)
+	}
+	if ek != feedback.ExitTimeout {
+		t.Errorf("exit = %v, want timeout; a hang reported as anything else files a finding against the wrong bug", ek)
+	}
+	if elapsed > 5*time.Second {
+		t.Errorf("the execution took %s against a 300ms timeout; the bound is not being applied", elapsed)
+	}
+
+	// And the pool still works afterwards. A timeout that left the pool in a
+	// state where the next execution failed would turn one bad input into the
+	// end of the campaign.
+	if _, err := p.Run(context.Background(), Input{Bytes: []byte("go\n")}, nil); err != nil {
+		t.Errorf("the pool did not survive a timeout: %v", err)
+	}
+}
+
+func TestWarmProcessesOutliveTheExecutionThatSpawnedThem(t *testing.T) {
+	// Run takes a per-execution context, and the replacement it spawns is for
+	// the execution *after* it. Binding the replacement to the caller's context
+	// would have it killed the moment that execution ended, leaving the pool
+	// permanently dry — and nothing would say so: the campaign would run, at
+	// the speed of the T4 tier this one exists to beat.
+	target := shellTarget(t, `read line; echo ok`)
+	p := NewProcPool("pool", poolSpawner{}, ProcSpec{Path: target, Args: []string{target}})
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatalf("starting the pool: %v", err)
+	}
+	defer p.Close()
+
+	// A context that is cancelled as soon as the execution returns, which is
+	// what any caller with a per-execution deadline gives it.
+	for i := 0; i < 4; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		if _, err := p.Run(ctx, Input{Bytes: []byte("x\n")}, nil); err != nil {
+			cancel()
+			t.Fatalf("run %d: %v", i, err)
+		}
+		cancel()
+	}
+
+	// Counting the warm processes would not catch it: a killed peer stays in
+	// the slice and satisfies the count. What a dead warm process actually
+	// does is worse and is what this asserts on. It has already exited, by a
+	// signal, so the next execution to take it reports a *crash* — a finding
+	// against a target that did nothing wrong, produced by the fuzzer's own
+	// bookkeeping. A campaign would fill up with them.
+	time.Sleep(200 * time.Millisecond) // let the replacements arrive
+	for i := 0; i < 6; i++ {
+		ek, err := p.Run(context.Background(), Input{Bytes: []byte("x\n")}, nil)
+		if err != nil {
+			t.Fatalf("execution %d after the cancellations: %v", i, err)
+		}
+		if ek != feedback.ExitOK {
+			t.Fatalf("execution %d reported %v against a target that exits cleanly; "+
+				"a warm process was killed with the execution that spawned it, and "+
+				"the fuzzer is now finding its own dead processes", i, ek)
+		}
+	}
+}
+
+func TestAPoolExecutionHonoursACancelledContext(t *testing.T) {
+	// Cancelling mid-execution has to return rather than wait out the timeout:
+	// stopping a campaign should not take as long as its slowest input.
+	target := shellTarget(t, `read line; sleep 60`)
+	p := NewProcPool("pool", poolSpawner{}, ProcSpec{
+		Path: target, Args: []string{target}, Timeout: time.Minute,
+	})
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatalf("starting the pool: %v", err)
+	}
+	defer p.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	if _, err := p.Run(ctx, Input{Bytes: []byte("go\n")}, nil); err == nil {
+		t.Error("a cancelled execution must report the cancellation, not a result")
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("cancelling took %s; the execution waited for its timeout instead", elapsed)
 	}
 }
