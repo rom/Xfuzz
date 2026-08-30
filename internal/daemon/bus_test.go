@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -199,4 +200,108 @@ func drain(ch <-chan Event, n int, wait time.Duration) []Event {
 		}
 	}
 	return out
+}
+
+// M7's memory criterion, measured at the mechanism rather than by staging a
+// 100k exec/s campaign this host cannot produce.
+//
+// What the criterion is really about is that a browser can never make the
+// engine wait, and can never make the daemon hold work on its behalf
+// (ASR-0012). Both follow from one property: what a subscriber is *delivered*
+// is bounded by the coalescing interval, not by how fast the campaign
+// publishes. Publish an unreasonable number of metrics events and the
+// subscriber should see a handful — one per interval — with the rest collapsed
+// into the newest, and the queue behind it should never grow.
+func TestDeliveryIsBoundedByTheIntervalNotThePublishRate(t *testing.T) {
+	const interval = 20 * time.Millisecond
+	b := NewBus(interval)
+
+	sub := b.Subscribe(64)
+	defer sub.Close()
+
+	// A reader that keeps up, so that anything the subscriber does not receive
+	// was collapsed by the server rather than left in a queue.
+	var received atomic.Int64
+	var newest atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for e := range sub.Events() {
+			received.Add(1)
+			if n, ok := e.Data.(int); ok {
+				newest.Store(int64(n))
+			}
+		}
+	}()
+
+	const published = 20_000
+	start := time.Now()
+	for i := 1; i <= published; i++ {
+		b.Publish(Event{Kind: EventMetrics, Data: i})
+	}
+	elapsed := time.Since(start)
+
+	// Long enough for the last coalesced batch to flush.
+	time.Sleep(4 * interval)
+	sub.Close()
+	<-done
+
+	got := received.Load()
+	// One per interval, plus slack for the first event through and the final
+	// flush. The point is the shape — bounded by time — not an exact count.
+	ceiling := int64(elapsed/interval) + 8
+	if got > ceiling {
+		t.Errorf("a subscriber was delivered %d of %d events published in %s; "+
+			"delivery is tracking the publish rate rather than the %s interval, "+
+			"which is how a browser comes to back-pressure the engine",
+			got, published, elapsed.Round(time.Millisecond), interval)
+	}
+	if got == 0 {
+		t.Error("a subscriber that kept up was delivered nothing")
+	}
+
+	// And what it did get is the newest value, not the oldest: a coalescing
+	// bus that delivered the first of each batch would be showing a number
+	// that is not merely late but wrong.
+	if n := newest.Load(); n < published/2 {
+		t.Errorf("the newest value delivered was %d of %d published; "+
+			"coalescing is keeping the stale event rather than the fresh one", n, published)
+	}
+	t.Logf("%d events published in %s, %d delivered, newest %d",
+		published, elapsed.Round(time.Millisecond), got, newest.Load())
+}
+
+// A finding is the one event nobody can reconstruct from a later one, so it is
+// never coalesced away however fast the campaign is publishing around it.
+func TestFindingsAreNeverCollapsed(t *testing.T) {
+	b := NewBus(5 * time.Millisecond)
+	sub := b.Subscribe(64)
+	defer sub.Close()
+
+	var findings atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for e := range sub.Events() {
+			if e.Kind == EventFinding {
+				findings.Add(1)
+			}
+		}
+	}()
+
+	const want = 5
+	for i := 0; i < want; i++ {
+		for j := 0; j < 200; j++ {
+			b.Publish(Event{Kind: EventMetrics, Data: j})
+		}
+		b.Publish(Event{Kind: EventFinding, Data: i})
+	}
+	time.Sleep(200 * time.Millisecond)
+	sub.Close()
+	<-done
+
+	if got := findings.Load(); got != want {
+		t.Errorf("%d of %d findings reached the subscriber; a lost finding is the "+
+			"one event nobody can reconstruct", got, want)
+	}
 }

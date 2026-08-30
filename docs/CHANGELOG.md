@@ -11,6 +11,76 @@ listed here with its migration path.
 
 ## [Unreleased]
 
+### Added — M7 Web console (2026-08-30)
+
+A campaign is configurable, launchable, monitorable and triageable from a
+browser, and the console is a page in the same binary rather than a service
+beside it.
+
+**The console (ADR-0011, ASR-0015)**
+
+- A TypeScript SPA built with Vite, compiled to static files and embedded via
+  `embed.FS`. No CDN, no runtime asset fetch, no external font, and a test that
+  walks the bundle looking for any of them: an air-gapped install cannot fetch
+  what is missing, and a console that half-loads is worse than one that says it
+  is absent.
+- Nine views: campaigns, campaign detail, coverage, state machine, findings,
+  one finding, corpus, one entry, campaign file, grammar workbench, safety and
+  audit.
+- No framework. Nine views of tables, numbers and forms do not need one, and a
+  large runtime dependency with a permanent upgrade obligation is the cost
+  ADR-0011 names for having a console at all. What replaces it is about eighty
+  lines of DOM helper; the bundle is 24 kB of JavaScript and 4.6 kB of CSS.
+- Behind the `console` build tag, so `go build ./...` needs nothing but the Go
+  toolchain and a build without it serves a page saying how to get one.
+- It shares the daemon's listener: same socket, same authorization, no
+  privileged path of its own. Everything it can do is a route `xfuzz` reaches.
+
+**What building it added to the API**
+
+- `campaign.load` opens a finished campaign from its store. The store recorded
+  a configuration *digest* — enough to detect that a file changed, not enough
+  to say what it was — so schema 2 keeps the resolved document beside it and a
+  campaign is reachable with its file deleted.
+- `finding.triage` records a person's judgement: confirmed, duplicate, wontfix,
+  invalid, and a note. Kept in its own column, because the triage state is the
+  machine's verdict and is rewritten on every re-triage.
+- `campaign.edit` applies edits to a campaign document and hands it back with
+  its comments, key order, paragraphs and indentation intact.
+- `grammar.sample` compiles a grammar and shows what it writes. Pure: no
+  campaign, no store, no target, so a grammar can be written before there is
+  anything to fuzz with it.
+
+Each has a CLI counterpart — `xfuzz load`, `triage`, `edit`, `grammar` —
+because the parity test refuses to let either interface hold a capability the
+other lacks (ASR-0005).
+
+### Fixed
+
+- **`seeds.generate` was validated and then ignored.** The campaign file
+  refused a generate count without a grammar and refused a negative one, and
+  nothing ever acted on it: a campaign with a grammar and no seed files was
+  accepted, imported nothing, and started with an empty corpus.
+- **A person had nowhere to record a judgement.** Every triage state was the
+  machine's verdict. Worse, triage's own account — "5 of 5 runs reproduced" —
+  was written into `notes`, the field a person would write in, and the daemon
+  read notes back and passed them through `UpdateTriage` to preserve them: a
+  read-modify-write is a judgement waiting to be lost to whoever saved theirs
+  in between.
+- **A 64-bit seed did not survive JSON.** It arrived in the browser as
+  14879488505964902000 where the CLI said …903031, because JSON numbers are
+  IEEE doubles. A seed is half of what a byte-identical replay needs
+  (ASR-0008), so one shown nearly right is worse than one not shown; it is a
+  string on the wire now.
+- **The API's own root was answered by the console.** `path.Clean` turns
+  `/v1/` into `/v1`, which a prefix test does not catch, so a client asking for
+  the API root got a web page. Both callers share one rule for it now.
+- **The API version was advertised and compared by nobody.** Changing the
+  seed's wire type left a stale CLI reporting "cannot unmarshal string into Go
+  struct field Status.seed" rather than saying it was older than the daemon.
+- **The event bus could panic instead of dropping an event** — see M6's entry;
+  found by the race detector while this milestone's work was in flight.
+
 ### Added — M6 Stateful protocol fuzzing (2026-08-29)
 
 The second half of the proof obligation. A campaign can now fuzz a conversation

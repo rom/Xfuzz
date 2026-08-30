@@ -496,7 +496,7 @@ comparison this milestone did not need.
 
 ---
 
-### M7 — Web console *(4–5 weeks)*
+### M7 — Web console ✅ *delivered*
 
 - Loading a finished campaign from its store, so its findings can be read and
   re-triaged without running it again (the half of ADR-0003's "triage tomorrow"
@@ -505,13 +505,51 @@ comparison this milestone did not need.
 - All v1 views (ARCHITECTURE.md § 9, ADR-0011): campaigns, campaign detail,
   coverage, state machine, findings triage, corpus browser, config editor,
   grammar workbench, safety and audit.
-- WebSocket live updates with server-side downsampling and batching.
+- Live updates over server-sent events with server-side downsampling and
+  batching. ADR-0011 said WebSocket; ADR-0024 is later, decided the transport
+  for the whole API, and rejected it for a stream that is server-to-client by
+  design. The ADR is corrected rather than left to contradict itself.
 - Comment-preserving campaign-file round-trip.
 
-**Exit:** A campaign is configurable, launchable, monitorable, and triageable
-entirely from the console; the console operates against a 100k exec/s campaign
-without unbounded memory growth in browser or daemon; edited configs round-trip
-with comments intact.
+**Exit criteria met**
+
+| Criterion | Result |
+| --- | --- |
+| Configurable, launchable, monitorable and triageable entirely from the console | Driven over the daemon's own socket the way the console's `fetch` does: edit a document, create, start, watch it reach 2,974 executions and 18 edges, read health, history, workers, safety and corpus, then judge a finding and confirm a re-triage does not erase the judgement |
+| No unbounded memory growth in browser or daemon under a high-rate campaign | 20,000 metrics events published in 5 ms are delivered to a keeping-up subscriber as **one** event carrying the newest value. Delivery is bounded by the coalescing interval, not the publish rate — and findings, which nobody can reconstruct from a later event, are never collapsed |
+| Edited configs round-trip with comments intact | Asserted in the console's own path: comments, key order, paragraphs and indentation survive an edit made through `campaign.edit` |
+
+**What the console is a client of, and why that matters.** It shares the
+daemon's listener and has no privileged path of its own, so "can this be done
+from the console" is exactly "is this a route". That made the criteria testable
+without a browser — and it is also why building the console added four
+capabilities to the *API* rather than to the console: loading a campaign from a
+store, judging a finding, editing a document, sampling a grammar. Each has a
+CLI counterpart, because the parity test refuses to let either interface hold a
+capability the other lacks (ASR-0005).
+
+**Building a view is how you find out what the API does not say.** Three
+defects surfaced from looking at the rendered page rather than from any test. A
+campaign's seed arrived as 14879488505964902000 where the CLI said
+…903031, because JSON numbers are IEEE doubles in every browser and a seed is
+half of what a byte-identical replay needs (ASR-0008). A throughput peak
+rendered as 209.94420193630316. And `/v1/` — the API's own root — was answered
+by the console, because `path.Clean` turns it into `/v1` and a prefix test does
+not catch that.
+
+**Two features were configured and never implemented.** `seeds.generate` was
+validated — the file refused a count without a grammar, and refused a negative
+one — and nothing acted on it, so a campaign with a grammar and no seed files
+started with an empty corpus. And a person had nowhere to record a judgement:
+every triage state was the machine's verdict, rewritten on each re-triage.
+Both were found by building the view that would have shown them, which is the
+argument for building views.
+
+**The version header meant nothing until something depended on it.**
+`APIVersion` was advertised on every response and compared by nobody, so
+changing the seed's wire type left a stale CLI reporting "cannot unmarshal
+string into Go struct field Status.seed". A client that reads a daemon it does
+not understand does not fail, it misreads.
 
 ---
 

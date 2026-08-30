@@ -358,6 +358,23 @@ are generous relative to the median run and a failure is read as a regression
 only when it repeats. The one criterion that is not statistical is the
 negative: no finding may be attributable to the harness.
 
+M7's criteria are about the console, which is a pure API client with no
+privileged path of its own — so "can this be done from the console" is exactly
+"is this a route, and does it work over the daemon's own listener". The tests
+drive that listener the way the console's `fetch` does, over the Unix socket as
+JSON, rather than through the CLI: what they prove is the console's reach and
+not the CLI's. What they cannot prove is that it *renders*, which was checked by
+driving a browser against a live campaign and reading the result.
+
+Its memory criterion is measured at the mechanism rather than by staging the
+100k exec/s campaign the plan names, which no test host here can produce. What
+the criterion is about is that a browser can never make the engine wait, and
+that follows from one property: what a subscriber is delivered is bounded by the
+coalescing interval and not by the publish rate. Measured: 20,000 metrics events
+published in 5 ms reach a keeping-up subscriber as one event carrying the newest
+value — and findings, which nobody can reconstruct from a later event, are never
+collapsed.
+
 ## 12. Security tests
 
 Security properties from [SECURITY.md](SECURITY.md) are executable tests, not
