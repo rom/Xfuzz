@@ -129,6 +129,13 @@ listed here with its migration path.
   the only reason this was latent.
 - **`make ci` claimed to be "what CI runs on every push"** while running four
   of the ten jobs, and section 10 of TESTS.md listed seven of them.
+- **The grammar workbench took its seed as a bare JSON number**, the last place
+  one did. Pasting a campaign's own seed to see what that campaign was
+  generating — the obvious thing to do with one — sampled a different campaign's
+  grammar and looked right doing it: 14879488505964903031 arrives as
+  14879488505964902000. The API now takes a seed as a string or a number and
+  always writes a string, so an existing console keeps working and nothing new
+  loses its low bits.
 
 ### Added — M8 Extensions and hardening (2026-08-30)
 

@@ -685,3 +685,55 @@ func TestAPathThatDoesNotSurviveCleaningIsRedirectedRatherThanReroutedToTheConso
 		t.Fatalf("/v1/info answered %d: %s", resp.StatusCode, body)
 	}
 }
+
+func TestASeedSurvivesJSONInEveryFormAClientMightSendIt(t *testing.T) {
+	// The value that started this: 14879488505964903031 is what a campaign's
+	// seed looks like, and as a JSON number it arrives as 14879488505964902000.
+	// A workbench sample generated from that answers a question about a
+	// different campaign, silently and plausibly.
+	const big = 14879488505964903031
+
+	for _, c := range []struct {
+		name string
+		body string
+		want Seed64
+	}{
+		{"a quoted 64-bit seed", `"14879488505964903031"`, big},
+		{"a small number, as the console has always sent", `42`, 42},
+		{"a quoted small number", `"42"`, 42},
+		{"absent", `null`, 0},
+		{"empty", `""`, 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var got Seed64
+			if err := json.Unmarshal([]byte(c.body), &got); err != nil {
+				t.Fatalf("decoding %s: %v", c.body, err)
+			}
+			if got != c.want {
+				t.Errorf("decoded %s as %d, want %d", c.body, got, c.want)
+			}
+		})
+	}
+
+	// Round trip: what comes back out is always a string, so a client that
+	// re-sends what it was given loses nothing.
+	out, err := json.Marshal(Seed64(big))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != `"14879488505964903031"` {
+		t.Errorf("encoded as %s, want a quoted string", out)
+	}
+	var back Seed64
+	if err := json.Unmarshal(out, &back); err != nil || back != big {
+		t.Errorf("round trip gave %d (%v), want %d", back, err, uint64(big))
+	}
+
+	// And a number that is not a seed is refused rather than becoming one.
+	for _, bad := range []string{`"twelve"`, `1.5`, `-1`} {
+		var got Seed64
+		if err := json.Unmarshal([]byte(bad), &got); err == nil {
+			t.Errorf("%s was accepted as the seed %d", bad, got)
+		}
+	}
+}

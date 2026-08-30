@@ -232,7 +232,9 @@ export const service = {
     api.post<{ text: string; yaml: string }>("/v1/campaigns/explain", { document, name }),
   create: (document: string, name: string) =>
     api.post<CampaignStatus>("/v1/campaigns", { document, name }),
-  sample: (grammar: string, count: number, seed: number) =>
+  // seed is a string: see the note on CampaignStatus.seed above. The server
+  // accepts a number too, for older bundles, but nothing new should send one.
+  sample: (grammar: string, count: number, seed: string) =>
     api.post<{
       valid: boolean;
       error?: string;

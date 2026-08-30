@@ -279,7 +279,7 @@ func (s *Server) grammarSample(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Grammar string `json:"grammar"`
 		Count   int    `json:"count,omitempty"`
-		Seed    uint64 `json:"seed,omitempty"`
+		Seed    Seed64 `json:"seed,omitempty"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -302,7 +302,7 @@ func (s *Server) grammarSample(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gen := generate.New(sch)
-	rand := rng.Derive(req.Seed, 0, rng.StreamGenerate)
+	rand := rng.Derive(uint64(req.Seed), 0, rng.StreamGenerate)
 	arena := ir.NewArena()
 	samples := make([]sampleView, 0, req.Count)
 	for i := 0; i < req.Count; i++ {

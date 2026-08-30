@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -277,4 +278,44 @@ func constantTimeEqual(a, b string) bool {
 		diff |= a[i] ^ b[i]
 	}
 	return diff == 0
+}
+
+// Seed64 is a 64-bit seed on the wire, accepted as a JSON string or a number.
+//
+// A seed is an identifier, not a quantity, and JSON numbers are IEEE doubles in
+// every browser: 14879488505964903031 arrives as 14879488505964902000. The
+// campaign status has crossed as a string since M5 for that reason. This is the
+// last place a seed crossed as a bare number — the grammar workbench, where the
+// natural thing to do with a campaign's seed is paste it in and see what that
+// campaign was generating, and where a silently truncated one answers a
+// question about a different campaign.
+//
+// Both forms are accepted rather than only the correct one, because the console
+// has been sending a number since M7 and an API that rejected it would break a
+// working client to fix a precision bug it does not have. What is written is
+// always a string.
+type Seed64 uint64
+
+// UnmarshalJSON accepts 12345, "12345", "" and null.
+func (s *Seed64) UnmarshalJSON(b []byte) error {
+	text := strings.TrimSpace(string(b))
+	if text == "null" || text == `""` {
+		*s = 0
+		return nil
+	}
+	if len(text) >= 2 && text[0] == '"' && text[len(text)-1] == '"' {
+		text = text[1 : len(text)-1]
+	}
+	v, err := strconv.ParseUint(text, 10, 64)
+	if err != nil {
+		return fmt.Errorf("seed %s: a seed is a whole number, and above 2^53 it must be quoted "+
+			"so it survives JSON", text)
+	}
+	*s = Seed64(v)
+	return nil
+}
+
+// MarshalJSON writes the seed as a string, always.
+func (s Seed64) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + strconv.FormatUint(uint64(s), 10) + `"`), nil
 }

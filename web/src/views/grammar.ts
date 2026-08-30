@@ -26,8 +26,12 @@ export function grammarView(root: HTMLElement): void {
   const status = el("div", { class: "row" });
 
   const sample = async () => {
-    let n = Number(seed.value);
-    if (Number.isNaN(n)) n = 0;
+    // Sent as a string, never as a number. A seed is a 64-bit identifier and a
+    // JSON number is an IEEE double, so pasting a campaign's own seed here —
+    // the obvious thing to do with one — would sample a different campaign's
+    // grammar and look right while doing it.
+    const typed = seed.value.trim();
+    const n = /^[0-9]+$/.test(typed) ? typed : "0";
     try {
       const r = await service.sample(text.value, 6, n);
       if (!r.valid) {
