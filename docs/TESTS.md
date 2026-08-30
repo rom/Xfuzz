@@ -149,6 +149,33 @@ Enforces ASR-0008:
 - **Non-determinism detection.** A deliberately non-deterministic target is
   detected and reported, not silently absorbed.
 
+The first two are checked at both levels, because they can fail at either. In
+process, `internal/engine.TestCampaignIsDeterministic` compares an execution
+trace line by line and names the first execution where two runs diverge. Through
+the shipped binaries, `test/e2e/determinism_test.go` runs two campaigns under
+separate daemons in separate data directories and compares the corpus each
+found — by derivation as well as by digest, since two runs that diverge and
+reconverge are lucky rather than deterministic — and requires a third run with
+a different seed to differ, or the pair would pass on a fuzzer that ignored its
+seed entirely.
+
+That second test could not exist until the campaign file gained a `seed:` field
+during the v0.1 audit. The engine had always been deterministic; there was no
+way to ask the *daemon* for a particular seed, so the property was real and
+unreachable.
+
+Cross-host replay is approximated as literally as one machine allows: a second
+set of binaries, a second data directory, a second daemon, a target rebuilt at
+its own path, and the store carried across with `cp -a`. What deliberately does
+not travel is the seed — a finding whose replay needed the seed that produced it
+would not be one anybody else could act on.
+
+One asymmetry in those two tests is deliberate and is the sort of thing worth
+stating: the replay campaign carries a wall-clock backstop and the determinism
+campaigns must not. A campaign that stops on a clock stops in a different place
+on every host, which is exactly the property the first test measures and exactly
+the failure the second must not suffer on a slow runner.
+
 ## 6. Layer 5 — Differential tests
 
 Each instrumentation backend and executor tier is otherwise an unverifiable

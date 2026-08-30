@@ -41,8 +41,20 @@ import (
 // wall-clock one because two runs that stop after five seconds stop at
 // different places on any machine that is doing anything else, and the
 // difference would look exactly like non-determinism.
-func seededCampaign(t *testing.T, e *env, name string, seed uint64, execs int) string {
+//
+// backstop is the exception, and it is available rather than default for that
+// reason. A campaign that stops on a clock is not reproducible, so the
+// determinism test must not have one; the replay test must, because it only
+// needs *a* finding and a slow runner would otherwise spend its whole client
+// timeout still executing. Passing a backstop where determinism is being
+// measured would make this test's own subject unreachable, so the two callers
+// are deliberately not sharing a default.
+func seededCampaign(t *testing.T, e *env, name string, seed uint64, execs int, backstop time.Duration) string {
 	t.Helper()
+	stop := fmt.Sprintf("  execs: %d\n", execs)
+	if backstop > 0 {
+		stop += fmt.Sprintf("  after: %s\n", backstop)
+	}
 	body := fmt.Sprintf(`
 name: %s
 seed: %d
@@ -62,8 +74,7 @@ triage:
   enabled: true
   trials: 3
 stop:
-  execs: %d
-`, name, seed, e.target, filepath.Join(e.dataDir, "store-"+name), execs)
+%s`, name, seed, e.target, filepath.Join(e.dataDir, "store-"+name), stop)
 
 	path := filepath.Join(e.dataDir, name+".yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -113,7 +124,9 @@ func TestTheSameSeedAndFileGiveTheSameCampaign(t *testing.T) {
 	// is being compared is the campaign file and the seed and nothing else.
 	run := func(name string, seed uint64) map[string]string {
 		e := newEnv(t)
-		file := seededCampaign(t, e, name, seed, execs)
+		// No clock backstop: a campaign that stops on time is not reproducible,
+		// which is the property under test.
+		file := seededCampaign(t, e, name, seed, execs, 0)
 		e.mustRun(6*time.Minute, "run", file)
 		st := e.status(name)
 		if st.Seed != seed {
@@ -188,7 +201,11 @@ func TestAFindingReplaysOnAnotherHost(t *testing.T) {
 	// Host A: find something.
 	a := newEnv(t)
 	const name = "travelling"
-	file := seededCampaign(t, a, name, 0xA1DE57, 300000)
+	// A backstop here, unlike above: this test needs a finding rather than a
+	// particular sequence, and a runner slow enough to still be executing when
+	// the client gives up would fail for the machine's reasons rather than the
+	// code's.
+	file := seededCampaign(t, a, name, 0xA1DE57, 300000, 3*time.Minute)
 	a.mustRun(6*time.Minute, "run", file)
 
 	found := findingsOf(t, a, name)
