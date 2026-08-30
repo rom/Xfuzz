@@ -66,6 +66,20 @@ func newStatefulEnv(t *testing.T) *statefulEnv {
 
 // campaignFile writes a stateful campaign and returns its path.
 func (e *statefulEnv) campaignFile(name string, workers int, after time.Duration, extra string) string {
+	return e.campaignFileFor(name, workers, 0, after, extra)
+}
+
+// campaignFileFor is campaignFile with a session budget as well as a clock.
+//
+// A criterion about what a fuzzer explores has to be bounded by how much it
+// explored, not by how long it was allowed to. Measured on the machine this was
+// developed on: the same campaign completed 24,405 sessions when the host was
+// idle and found the sequence bug, and 17,773 when the host was busy and did
+// not — a 27% difference in rate turning a criterion into a coin flip, which is
+// exactly what the comment on that assertion says a criterion must not be. The
+// clock stays as a backstop so a host slow enough to make the budget
+// unreachable fails in minutes rather than never.
+func (e *statefulEnv) campaignFileFor(name string, workers, sessions int, after time.Duration, extra string) string {
 	e.t.Helper()
 	// A socket per worker: each worker runs its own copy of the server, and a
 	// shared address means the second binds what the first holds. Under the
@@ -95,13 +109,21 @@ workers:
   count: %d
 stop:
   after: %s
-%s`, name, e.target, sock, e.dict, e.seeds, workers, after, extra)
+%s%s`, name, e.target, sock, e.dict, e.seeds, workers, after, sessionBudget(sessions), extra)
 
 	path := filepath.Join(e.dataDir, name+".yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		e.t.Fatal(err)
 	}
 	return path
+}
+
+// sessionBudget renders a session count as a stop condition, or nothing.
+func sessionBudget(sessions int) string {
+	if sessions <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("  execs: %d\n", sessions)
 }
 
 // stateModel is the protocol graph as the API reports it.
@@ -224,10 +246,24 @@ func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 	// protocol suggests; measured, a mutation of that message reaches the
 	// length about one time in forty-five, so the budget has to buy enough
 	// mutations of that message rather than enough executions.
-	const budget = 8 * time.Minute
-	path := e.campaignFile("proto", 4, budget, "")
+	//
+	// Counted in sessions rather than seconds. The budget was a clock until it
+	// failed on a busy host: 17,773 sessions at 38/s found only the shallow
+	// bug, and 24,405 at 52/s on the same code found three of the four. A
+	// campaign that reaches the handshake compounds — an admitted session that
+	// authenticates seeds many more — so a rate difference of a quarter is the
+	// difference between one visit to the authenticated state and a hundred
+	// and seventy-four. Twenty thousand sessions is above where the sequence
+	// bug is reliably reached; the clock stays as a backstop so a host too slow
+	// to complete them fails in minutes rather than never, and the failure says
+	// how many it managed so a reader can tell that from a regression.
+	const (
+		budget   = 20000
+		backstop = 20 * time.Minute
+	)
+	path := e.campaignFileFor("proto", 4, budget, backstop, "")
 
-	e.mustRun(budget+4*time.Minute, "run", path)
+	e.mustRun(backstop+4*time.Minute, "run", path)
 
 	s := e.status("proto")
 	model := e.states("proto")
@@ -259,8 +295,9 @@ func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 	// *transitions* reaches it, which is what state-then-message scheduling is
 	// for and what a fuzzer without it cannot do however long it runs.
 	if !found["4"] {
-		t.Errorf("the bug that lives in a transition pair was not found in %s; "+
-			"the campaign authenticated but never explored past the handshake", budget)
+		t.Errorf("the bug that lives in a transition pair was not found in %d sessions "+
+			"(%d completed); the campaign authenticated but never explored past the handshake",
+			budget, s.Metrics.Execs)
 	}
 	// Bugs 2 and 3 are recorded rather than required. Both are behind the
 	// handshake too, but what makes them hard is a value grown past a length
@@ -272,7 +309,7 @@ func TestStatefulCampaignReachesBugsBehindTheHandshake(t *testing.T) {
 	// people to re-run it rather than to read it.
 	if !found["2"] && !found["3"] {
 		t.Logf("neither bug 2 nor bug 3 was reached this run; both are tail events "+
-			"at %s and the sequence criterion above is the one under test", budget)
+			"at %d sessions and the sequence criterion above is the one under test", budget)
 	}
 
 	// Two bugs the target itself distinguishes must not share a bucket. They

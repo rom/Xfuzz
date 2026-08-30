@@ -527,7 +527,13 @@ func codecFor(cfg *campaign.Resolved) (codec.Codec, error) {
 	// An explicit codec still wins, and `codec: raw` beside a grammar is a
 	// meaningful thing to ask for: it is grammar-generated seeds mutated at the
 	// byte level, which is the control arm when measuring what structure buys.
-	if cfg.Format.Grammar != "" && !cfg.WasSet("format.codec") {
+	//
+	// Not on a session campaign. There the codec's job is to split an input
+	// into the messages of a conversation, and a grammar describes one message
+	// rather than a sequence of them; taking it would silently turn a
+	// conversation into a single blob. Composing the two — a session of
+	// grammar-described messages — is a real thing to want and is not v0.1.
+	if cfg.Format.Grammar != "" && cfg.Session == nil && !cfg.WasSet("format.codec") {
 		sch, err := schema.ParseFile(cfg.Format.Grammar)
 		if err != nil {
 			return nil, fmt.Errorf("worker: %w", err)
