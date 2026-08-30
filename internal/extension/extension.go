@@ -21,11 +21,19 @@ import (
 	"github.com/rom/Xfuzz/pkg/feedback"
 	"github.com/rom/Xfuzz/pkg/mutate"
 	"github.com/rom/Xfuzz/pkg/plugin"
+	"github.com/rom/Xfuzz/pkg/plugin/script"
 )
 
 // Set is every plugin one campaign uses, and what each supplies.
 type Set struct {
 	plugins []*loaded
+
+	// scripts are the campaign's Starlark modules, and scriptErrs are the
+	// sticky-error accessors of everything resolved from them. A script
+	// extension has no process to die, so its failure lives on the adapter
+	// rather than on a host, and the campaign has to ask each one.
+	scripts    []*script.Script
+	scriptErrs []func() error
 
 	feedbacks  []feedback.Feedback
 	objectives []feedback.Objective
@@ -47,11 +55,11 @@ type loaded struct {
 // The alternative is a campaign that runs for six hours and measured something
 // other than what its file says.
 func Load(ctx context.Context, spawner *safety.Spawner, cfg *campaign.Resolved, seed uint64, engine string) (*Set, error) {
-	if len(cfg.Extensions) == 0 {
-		return &Set{}, nil
+	s := &Set{}
+	if len(cfg.Extensions) == 0 && len(cfg.Scripts) == 0 {
+		return s, nil
 	}
 
-	s := &Set{}
 	for _, e := range cfg.Extensions {
 		if err := s.start(ctx, spawner, e, seed, engine); err != nil {
 			// Whatever did start is stopped: a half-loaded set would leave
@@ -59,6 +67,10 @@ func Load(ctx context.Context, spawner *safety.Spawner, cfg *campaign.Resolved, 
 			s.Close()
 			return nil, err
 		}
+	}
+	if err := s.loadScripts(cfg, seed); err != nil {
+		s.Close()
+		return nil, err
 	}
 	return s, nil
 }
@@ -144,9 +156,9 @@ func (s *Set) Feedbacks() []feedback.Feedback   { return s.feedbacks }
 func (s *Set) Objectives() []feedback.Objective { return s.objectives }
 func (s *Set) Mutators() []mutate.Mutator       { return s.mutators }
 
-// Empty reports whether the campaign has no plugins at all, which is the
+// Empty reports whether the campaign has no extensions at all, which is the
 // common case and the one that must cost nothing.
-func (s *Set) Empty() bool { return len(s.plugins) == 0 }
+func (s *Set) Empty() bool { return len(s.plugins) == 0 && len(s.scripts) == 0 }
 
 // WantsInput reports whether any plugin asked to see the executed bytes. The
 // observer that carries them is only wired when something reads it.
@@ -161,6 +173,11 @@ func (s *Set) Err() error {
 	for _, l := range s.plugins {
 		if err := l.host.Err(); err != nil {
 			return err
+		}
+	}
+	for _, err := range s.scriptErrs {
+		if e := err(); e != nil {
+			return e
 		}
 	}
 	return nil

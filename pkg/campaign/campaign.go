@@ -60,6 +60,11 @@ type File struct {
 	// order is what decides which of two feedbacks judges first, and a map's
 	// order is whatever the parser felt like.
 	Extensions []Extension `yaml:"extensions,omitempty" json:"extensions,omitempty" doc:"Out-of-process plugins and the extension points each supplies."`
+
+	// Scripts are campaign-local Starlark. Separate from extensions because
+	// they are not processes: nothing is spawned, nothing is confined, and the
+	// isolation is the interpreter's rather than the operating system's.
+	Scripts []Script `yaml:"scripts,omitempty" json:"scripts,omitempty" doc:"Campaign-local Starlark and the extension points each supplies."`
 }
 
 // Target is what the campaign fuzzes.
@@ -232,6 +237,12 @@ type State struct {
 	// little and every nonce is a state; too much and distinct states merge
 	// (ADR-0006).
 	Normalise []string `yaml:"normalise,omitempty" json:"normalise,omitempty" doc:"What fingerprinting removes before hashing: digits, quoted, space."`
+
+	// Script names the Starlark state function to use, as NAME:FUNCTION, when
+	// fn is "script". A protocol nobody has heard of still has a shape, and
+	// someone who knows it can write "the third byte is the status" faster
+	// than they can explain it to an inference heuristic.
+	Script string `yaml:"script,omitempty" json:"script,omitempty" doc:"Starlark state function as NAME:FUNCTION, when fn is script."`
 
 	// Guide adds state and transition novelty to the feedback stack. On by
 	// default for a session campaign: it is the reason ADR-0006 exists.
@@ -516,4 +527,39 @@ type Extension struct {
 	// is the largest cost on the path and most extensions judge what an
 	// execution did rather than what it was.
 	Input bool `yaml:"input,omitempty" json:"input,omitempty" doc:"Send the executed bytes to this plugin."`
+}
+
+// Script is one Starlark file and the extension points it supplies.
+//
+// The third tier (ADR-0010), for the logic that is true of this target and no
+// other. An oracle that says "the length field must match what was read" is
+// four lines and belongs in the campaign, not in a plugin someone has to build.
+type Script struct {
+	// Name labels the script. It qualifies the extensions it provides and
+	// names it in errors.
+	Name string `yaml:"name" json:"name" doc:"Label for this script, used to qualify its extensions."`
+
+	// Path is the .star file, relative to the campaign file or absolute.
+	Path string `yaml:"path" json:"path" doc:"Path to the Starlark file."`
+
+	// Config is readable inside the script as the config dict.
+	Config map[string]string `yaml:"config,omitempty" json:"config,omitempty" doc:"Settings the script reads as config."`
+
+	// Objectives and Mutators name the functions to take from this script.
+	//
+	// No feedbacks. A feedback's value is the novelty state it accumulates,
+	// and Starlark freezes a module's globals after it loads, so a script
+	// cannot accumulate anything. That is not a gap to fill later with a
+	// workaround — it is what makes the tier hermetic, and a feedback that
+	// needs memory belongs to the plugin tier, where a process can remember.
+	Objectives []string `yaml:"objectives,omitempty" json:"objectives,omitempty" doc:"Oracle functions to take from this script."`
+	Mutators   []string `yaml:"mutators,omitempty" json:"mutators,omitempty" doc:"Mutator functions to take from this script."`
+
+	// Steps and Allocs bound one call. A hermetic language can still loop
+	// forever and still build a gigabyte string; these are what stop it.
+	Steps  uint64 `yaml:"steps,omitempty" json:"steps,omitempty" doc:"Computation steps one call may take."`
+	Allocs int64  `yaml:"allocs,omitempty" json:"allocs,omitempty" doc:"Bytes one call may allocate."`
+
+	// Batch is how many variants a script mutator produces per call.
+	Batch int `yaml:"batch,omitempty" json:"batch,omitempty" doc:"Variants a script mutator produces per call."`
 }

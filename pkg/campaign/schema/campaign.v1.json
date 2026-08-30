@@ -277,6 +277,62 @@
       },
       "type": "object"
     },
+    "scripts": {
+      "description": "Campaign-local Starlark and the extension points each supplies.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "allocs": {
+            "description": "Bytes one call may allocate.",
+            "type": "integer"
+          },
+          "batch": {
+            "description": "Variants a script mutator produces per call.",
+            "type": "integer"
+          },
+          "config": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Settings the script reads as config.",
+            "type": "object"
+          },
+          "mutators": {
+            "description": "Mutator functions to take from this script.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "name": {
+            "description": "Label for this script, used to qualify its extensions.",
+            "type": "string"
+          },
+          "objectives": {
+            "description": "Oracle functions to take from this script.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "path": {
+            "description": "Path to the Starlark file.",
+            "type": "string"
+          },
+          "steps": {
+            "description": "Computation steps one call may take.",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
     "seeds": {
       "additionalProperties": false,
       "description": "Where the starting corpus comes from.",
@@ -393,6 +449,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "script": {
+          "description": "Starlark state function as NAME:FUNCTION, when fn is script.",
+          "type": "string"
         },
         "tail_bias": {
           "description": "How often an aimed mutation lands at or after the target state, 0..1.",

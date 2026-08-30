@@ -204,3 +204,90 @@ func TestAPluginThatDiesEndsTheCampaignWithItsOwnWords(t *testing.T) {
 		t.Error("the set does not report the failure the worker will ask it for")
 	}
 }
+
+// --- the script tier --------------------------------------------------------
+
+func TestTheWorkedExampleScriptSuppliesAnOracleAMutatorAndAStateFunction(t *testing.T) {
+	cfg := &campaign.Resolved{Path: filepath.Join(testenv.RepoRoot(t), "campaign.yaml")}
+	cfg.Scripts = []campaign.Script{{
+		Name:       "oracle",
+		Path:       "examples/scripts/oracle.star",
+		Config:     map[string]string{"forbidden": "root:x:0:0"},
+		Objectives: []string{"leaked_secret"},
+		Mutators:   []string{"flip_high_bit"},
+	}}
+	cfg.State = &campaign.State{Fn: "script", Script: "oracle:label"}
+
+	set, err := Load(context.Background(), safety.NewSpawner(), cfg, 0xabcdef, "test")
+	if err != nil {
+		t.Fatalf("loading the script: %v", err)
+	}
+	t.Cleanup(func() { set.Close() })
+
+	if got := len(set.Objectives()); got != 1 {
+		t.Fatalf("objectives = %d, want 1", got)
+	}
+	is, found, err := set.Objectives()[0].IsFinding(
+		observed("", "leaked root:x:0:0 from the config file"), feedback.ExitOK)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !is {
+		t.Fatal("the oracle did not fire on the string the campaign forbade")
+	}
+	if !strings.Contains(found.Summary, "echoed") {
+		t.Errorf("finding = %+v", found)
+	}
+
+	// The mutator produces something, from the seed and nothing else.
+	a := ir.NewArena()
+	n := a.Alloc(ir.KindBytes, "payload")
+	n.Raw = a.CopyBytes([]byte("hello world"))
+	if !set.Mutators()[0].Mutate(mutate.NewCtx(3, 0, a), n) {
+		t.Fatal("the script mutator produced nothing")
+	}
+	if string(n.Raw) == "hello world" {
+		t.Error("the mutator returned the input unchanged")
+	}
+
+	// And the state function labels a response.
+	fn, err := set.StateFn("oracle:label")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fn.Label([]byte{7, 0, 0}); got != "status-7" {
+		t.Errorf("label = %q, want status-7", got)
+	}
+
+	if err := set.Err(); err != nil {
+		t.Errorf("the set reports a failure after a clean run: %v", err)
+	}
+}
+
+func TestAScriptThatIsNotThereFailsTheCampaignAtStartup(t *testing.T) {
+	cfg := &campaign.Resolved{}
+	cfg.Scripts = []campaign.Script{{
+		Name: "gone", Path: "/nonexistent/oracle.star", Objectives: []string{"check"},
+	}}
+	_, err := Load(context.Background(), safety.NewSpawner(), cfg, 1, "test")
+	if err == nil {
+		t.Fatal("a campaign naming a script that does not exist started anyway")
+	}
+	if !strings.Contains(err.Error(), "gone") {
+		t.Errorf("the failure does not name the script: %v", err)
+	}
+}
+
+func TestAFunctionTheScriptDoesNotDefineStopsTheCampaign(t *testing.T) {
+	cfg := &campaign.Resolved{Path: filepath.Join(testenv.RepoRoot(t), "campaign.yaml")}
+	cfg.Scripts = []campaign.Script{{
+		Name: "oracle", Path: "examples/scripts/oracle.star", Objectives: []string{"leaked_secrets"},
+	}}
+	_, err := Load(context.Background(), safety.NewSpawner(), cfg, 1, "test")
+	if err == nil {
+		t.Fatal("a campaign asking for a function the script does not define started anyway")
+	}
+	if !strings.Contains(err.Error(), "leaked_secret") {
+		t.Errorf("the failure does not say what is available: %v", err)
+	}
+}

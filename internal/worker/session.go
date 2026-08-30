@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/rom/Xfuzz/internal/daemon"
+	"github.com/rom/Xfuzz/internal/extension"
 	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/executor"
@@ -77,7 +78,7 @@ func (b *built) buildSession(ctx context.Context, cfg *campaign.Resolved) error 
 	b.closers = append(b.closers, closer{"session target", sess.Close})
 
 	if cfg.State != nil && cfg.State.Guide != nil && *cfg.State.Guide {
-		g, gerr := guidanceFor(cfg)
+		g, gerr := guidanceFor(cfg, b.extensions)
 		if gerr != nil {
 			return gerr
 		}
@@ -126,10 +127,22 @@ func serverSpecFor(cfg *campaign.Resolved, addr string) executor.ProcSpec {
 }
 
 // guidanceFor assembles the state model, observer and scheduler.
-func guidanceFor(cfg *campaign.Resolved) (*state.Guidance, error) {
+func guidanceFor(cfg *campaign.Resolved, ext *extension.Set) (*state.Guidance, error) {
 	st := cfg.State
 
-	fn := state.FnNamed(st.Fn)
+	var fn state.StateFn
+	if st.Fn == "script" {
+		// A protocol nobody has heard of still has a shape, and someone who
+		// knows it can write down where the status lives faster than they can
+		// explain it to an inference heuristic (ADR-0006, ADR-0010).
+		f, err := ext.StateFn(st.Script)
+		if err != nil {
+			return nil, err
+		}
+		fn = f
+	} else {
+		fn = state.FnNamed(st.Fn)
+	}
 	if fp, ok := fn.(*state.FingerprintFn); ok && len(st.Normalise) > 0 {
 		ns := make([]state.Normaliser, 0, len(st.Normalise))
 		for _, name := range st.Normalise {

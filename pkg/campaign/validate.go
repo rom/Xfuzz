@@ -76,6 +76,7 @@ func (r *Resolved) Validate() error {
 	r.validateSeeds(add)
 	r.validateSession(add)
 	r.validateExtensions(add)
+	r.validateScripts(add)
 
 	if len(ps) == 0 {
 		return nil
@@ -550,9 +551,24 @@ func (r *Resolved) validateState(add addFunc) {
 
 	switch st.Fn {
 	case "status", "http", "fingerprint", "constant", "none":
+	case "script":
+		if st.Script == "" {
+			add("state.script", "is required when state.fn is script",
+				`name the function as "SCRIPT:FUNCTION"`)
+		} else if name, _, ok := strings.Cut(st.Script, ":"); !ok || name == "" {
+			add("state.script", fmt.Sprintf("%q is not a script reference", st.Script),
+				`it is "SCRIPT:FUNCTION", naming an entry under scripts`)
+		} else if !r.hasScript(name) {
+			add("state.script", fmt.Sprintf("no script named %q", name),
+				"add it under scripts, or correct the name")
+		}
 	default:
 		add("state.fn", fmt.Sprintf("%q is not a state function", st.Fn),
-			"one of status, http, fingerprint, constant")
+			"one of status, http, fingerprint, constant, script")
+	}
+	if st.Script != "" && st.Fn != "script" && r.WasSet("state.script") {
+		add("state.script", fmt.Sprintf("is set but state.fn is %q", st.Fn),
+			`set state.fn to script, or remove state.script`)
 	}
 	for _, n := range st.Normalise {
 		switch n {
@@ -627,4 +643,63 @@ func (r *Resolved) validateExtensions(add addFunc) {
 			add(field+".batch", "is negative", "it is how many variants a mutator produces per call")
 		}
 	}
+}
+
+// hasScript reports whether the campaign declares a script by this name.
+func (r *Resolved) hasScript(name string) bool {
+	for _, sc := range r.Scripts {
+		if sc.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// validateScripts checks the Starlark declarations.
+//
+// Only the shape here. Whether the file parses, and whether it defines the
+// functions the campaign named, is checked when the worker loads it — with a
+// line number, which this cannot produce.
+func (r *Resolved) validateScripts(add addFunc) {
+	seen := map[string]bool{}
+	for i, sc := range r.Scripts {
+		field := fmt.Sprintf("scripts[%d]", i)
+
+		switch {
+		case strings.TrimSpace(sc.Name) == "":
+			add(field+".name", "is required", "it labels the script's extensions and names it in errors")
+		case !validName(sc.Name):
+			add(field+".name", fmt.Sprintf("%q contains characters that are not letters, digits, dot, dash or underscore", sc.Name),
+				"the name is a prefix on every extension the script provides")
+		case seen[sc.Name]:
+			add(field+".name", fmt.Sprintf("%q is used by more than one script", sc.Name),
+				"the label qualifies function names, so two scripts sharing one would be indistinguishable")
+		default:
+			seen[sc.Name] = true
+		}
+
+		if strings.TrimSpace(sc.Path) == "" {
+			add(field+".path", "is required", "there is no default script")
+		}
+		if len(sc.Objectives) == 0 && len(sc.Mutators) == 0 && !r.usesScriptState(sc.Name) {
+			add(field, "names no objectives or mutators, and no state function refers to it",
+				"list what to take from the script, or remove it")
+		}
+		if sc.Allocs < 0 {
+			add(field+".allocs", "is negative", "it is how many bytes one call may allocate")
+		}
+		if sc.Batch < 0 {
+			add(field+".batch", "is negative", "it is how many variants a mutator produces per call")
+		}
+	}
+}
+
+// usesScriptState reports whether the state block draws its function from this
+// script, which is a use like any other and must not read as an unused script.
+func (r *Resolved) usesScriptState(name string) bool {
+	if r.State == nil || r.State.Fn != "script" {
+		return false
+	}
+	got, _, _ := strings.Cut(r.State.Script, ":")
+	return got == name
 }

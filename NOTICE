@@ -42,6 +42,7 @@ Reimplementation from published papers and specifications is the required path.
 | github.com/mattn/go-isatty | v0.0.24 | MIT | Transitive: terminal detection in modernc.org/sqlite |
 | github.com/ncruces/go-strftime | v1.0.0 | MIT | Transitive: `strftime` for SQLite's date functions |
 | github.com/remyoudompheng/bigfft | v0.0.0-20230129092748-24d4a6f8daec | BSD-3-Clause | Transitive: big-integer multiplication in modernc.org/mathutil |
+| go.starlark.net | v0.0.0-20260828210309-6dd8f160a37f | BSD-3-Clause | The script extension tier: hermetic, deterministic campaign-local logic (ADR-0010) |
 | gopkg.in/yaml.v3 | v3.0.1 | MIT AND Apache-2.0 | Campaign files: YAML parsing with comments and key order preserved (ADR-0016, ADR-0011) |
 | golang.org/x/sys | v0.47.0 | BSD-3-Clause | Namespace, seccomp, rlimit, and cgroup syscalls in `internal/platform` (ADR-0012); also transitive for modernc.org/libc |
 | modernc.org/libc | v1.74.4 | BSD-3-Clause | Transitive: the C runtime modernc.org/sqlite is transpiled against |

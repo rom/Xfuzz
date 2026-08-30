@@ -69,7 +69,8 @@ github.com/rom/Xfuzz
 │   ├── corpusio/           AFL and libFuzzer corpus import/export
 │   ├── state/              state model, inference, state feedback, scheduling
 │   ├── campaign/           campaign config schema, resolution, validation
-│   └── plugin/             external plugin protocol (ADR-0025) + Starlark host
+│   ├── plugin/             external plugin protocol (ADR-0025)
+│   │   └── script/         Starlark host: hermetic, bounded, campaign-local
 ├── internal/
 │   ├── engine/             the fuzz loop, stages, worker runtime
 │   ├── store/              SQL metadata + CAS blob store, migrations
@@ -680,10 +681,25 @@ any other untrusted process, resolved from the campaign file by
 from each; a name the plugin does not provide is a refusal at startup rather
 than an extension that silently never fires.
 
-**v1 scope.** The plugin column above is the design; what M8 delivers is the
-protocol and the three extension points ADR-0020 scoped for v1 — feedbacks,
-mutators and objectives. The rest are the same protocol with more message
-types, and each needs its own wire representation of what it operates on.
+The script tier is Starlark, chosen for hermeticity rather than familiarity: no
+filesystem, no network, no clock, no imports, and deterministic execution, which
+is what lets an untrusted campaign file carry logic without forfeiting replay
+(ASR-0008, ASR-0010). A hermetic language can still loop forever and still build
+a gigabyte string, so every call is bounded by a step budget and an allocation
+budget, and a script that exceeds either is cancelled with a message naming
+which.
+
+**v1 scope.** The columns above are the design. What M8 delivers is the plugin
+protocol with the three extension points ADR-0020 scoped for v1 — feedbacks,
+mutators and objectives — and the script tier with objectives, mutators and
+state functions. The remaining plugin points are the same protocol with more
+message types, each needing its own wire representation of what it operates on.
+
+A script has no feedbacks, and that is a property rather than a gap. Starlark
+freezes a module's globals after it loads, so a script cannot accumulate
+anything between calls — and a feedback's whole value is the novelty state it
+accumulates. A feedback that needs memory belongs to the plugin tier, where a
+process can remember.
 
 ## 11. Traceability
 

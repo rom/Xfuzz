@@ -701,3 +701,70 @@ profiles:
 		t.Error("a key nothing set is recorded as set")
 	}
 }
+
+func TestAScriptStateFunctionMustNameAScriptTheCampaignDeclares(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, want string
+	}{
+		{
+			name: "no script named",
+			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: nope:label\n",
+			want: "no script named",
+		},
+		{
+			name: "no reference at all",
+			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n",
+			want: "is required when state.fn is script",
+		},
+		{
+			name: "not a reference",
+			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: label\n" +
+				"scripts:\n  - name: s\n    path: s.star\n    objectives: [check]\n",
+			want: "is not a script reference",
+		},
+		{
+			name: "set without the function",
+			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: status\n  script: s:label\n" +
+				"scripts:\n  - name: s\n    path: s.star\n    objectives: [check]\n",
+			want: "is set but state.fn is",
+		},
+		{
+			name: "a script nothing uses",
+			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\n" +
+				"scripts:\n  - name: s\n    path: s.star\n",
+			want: "names no objectives or mutators",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateBody(t, tc.body)
+			if err == nil {
+				t.Fatalf("accepted:\n%s", tc.body)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error does not mention %q: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestAScriptStateFunctionIsAcceptedWhenItsScriptExists(t *testing.T) {
+	body := "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: s:label\n" +
+		"scripts:\n  - name: s\n    path: s.star\n"
+	if err := validateBody(t, body); err != nil {
+		t.Fatalf("a campaign whose state function comes from a declared script was refused: %v", err)
+	}
+}
+
+// validateBody loads a campaign from a literal and returns its validation error.
+func validateBody(t *testing.T, body string) error {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "c.yaml")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	return cfg.Validate()
+}

@@ -11,5 +11,10 @@
 // Go's standard library plugin package is deliberately not used: it is
 // Linux-only, toolchain-version-locked, and offers no isolation.
 //
-// See docs/adr/ADR-0010-three-tier-extensibility.md.
+// This package is the out-of-process half; the Starlark host is the script
+// subpackage. They deliberately share the observation and finding types, so
+// that what an oracle sees is the same whichever tier it is written in.
+//
+// See docs/adr/ADR-0010-three-tier-extensibility.md and
+// docs/adr/ADR-0025-length-prefixed-json-over-stdio-for-plugins.md.
 package plugin

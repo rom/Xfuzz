@@ -42,6 +42,33 @@ listed here with its migration path.
   so writing a plugin in Go is filling in a function. `examples/plugins/reference`
   is a worked example of all three extension points in about 130 lines.
 
+**The script tier (ADR-0010, ASR-0008, ASR-0010)**
+
+- `pkg/plugin/script`: campaign-local logic in Starlark. Oracles, mutators and
+  state functions, from a file beside the campaign.
+- Starlark for hermeticity rather than familiarity: no filesystem, no network,
+  no clock, no imports, and deterministic execution. A campaign file may be
+  untrusted, and a campaign that is required to replay cannot afford a language
+  that can read the time.
+- Bounded, because hermetic is not the same as cheap. A step budget stops a
+  script that loops; an allocation budget stops one that builds. Starlark's own
+  guard is a hard gigabyte per single operation, which catches `"x" * 10**12`
+  and nothing else — a loop that concatenates stays under it on every step and
+  passes it in total. The budget is checked every few thousand steps against the
+  runtime's allocation counter, and a script that exceeds either is cancelled
+  naming which.
+- An oracle sees the same observation a plugin does, so the two tiers cannot
+  drift. A misspelled field is an error naming the ones that exist rather than
+  `None` flowing quietly through a comparison and making the oracle always say
+  no.
+- No script feedbacks, and that is a property rather than a gap: Starlark
+  freezes module globals after load, so a script cannot accumulate the novelty
+  state a feedback exists to keep. That belongs to the plugin tier, where a
+  process can remember.
+- `scripts:` in the campaign file, and `state.fn: script` for a protocol whose
+  shape someone knows and an inference heuristic does not.
+- `examples/scripts/oracle.star` is a worked example of all four uses.
+
 **Wiring (ADR-0012, ADR-0016)**
 
 - `internal/safety.StartPeer`: the spawn boundary now covers long-lived protocol
