@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,10 +69,116 @@ func init() {
 		Usage: "forget NAME", API: []string{"campaign.forget"}, Run: runForget,
 	})
 	register(&Command{
+		Name: "edit", Group: "campaign files",
+		Short: "Change fields in a campaign file, keeping its comments and layout",
+		Usage: "edit FILE [--set path=value]... [--unset path]... [-o FILE|-i]",
+		API:   []string{"campaign.edit"},
+		Run:   runEdit,
+	})
+	register(&Command{
 		Name: "load", Group: "campaigns", Short: "Open a campaign that already exists in a store",
 		Usage: "load NAME [--store DIR]", API: []string{"campaign.load"}, Run: runLoad,
 	})
 }
+
+// runEdit changes fields in a campaign file without rewriting it.
+//
+// The same operation the console's config editor performs, over the same route,
+// so that neither can do something to a campaign file the other cannot — and so
+// that a scripted edit keeps the comments a team wrote rather than replacing
+// the file with what the tool understood it to mean.
+func runEdit(ctx context.Context, args []string) error {
+	fs, opts := flags(commands["edit"])
+	var sets, unsets stringList
+	fs.Var(&sets, "set", "field to set, as path=value (repeatable)")
+	fs.Var(&unsets, "unset", "field to remove (repeatable)")
+	out := fs.String("o", "", "write to this file instead of standard output")
+	inPlace := fs.Bool("i", false, "write the file back in place")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	path, err := onePath(fs.Args())
+	if err != nil {
+		return err
+	}
+	doc, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	values := map[string]any{}
+	for _, s := range sets {
+		k, v, ok := strings.Cut(s, "=")
+		if !ok {
+			return fmt.Errorf("--set %q is not path=value", s)
+		}
+		values[strings.TrimSpace(k)] = scalarOf(strings.TrimSpace(v))
+	}
+
+	c, err := opts.connect(ctx)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Document string `json:"document"`
+		Valid    bool   `json:"valid"`
+		Error    string `json:"error"`
+	}
+	err = c.Do(ctx, "POST", "/v1/campaigns/edit", map[string]any{
+		"document": string(doc), "name": path,
+		"set": values, "unset": []string(unsets),
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	if opts.jsonOut {
+		return printJSON(resp)
+	}
+
+	dest := *out
+	if *inPlace {
+		dest = path
+	}
+	if dest == "" {
+		fmt.Print(resp.Document)
+	} else if err := os.WriteFile(dest, []byte(resp.Document), 0o644); err != nil {
+		return err
+	}
+	if !resp.Valid {
+		// Written, and reported. An edit that leaves a file invalid is a normal
+		// step between two valid ones, and refusing to write it would mean no
+		// change needing two edits could ever be made.
+		fmt.Fprintf(os.Stderr, "%s: the edited file is not yet a valid campaign:\n%s\n",
+			name, resp.Error)
+	}
+	return nil
+}
+
+// scalarOf reads a command-line value as the YAML type it looks like, so that
+// --set workers.count=8 writes a number and not the string "8".
+func scalarOf(s string) any {
+	switch s {
+	case "true":
+		return true
+	case "false":
+		return false
+	case "null", "~":
+		return nil
+	}
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
+}
+
+// stringList collects a repeatable flag.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ",") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
 
 // runLoad opens a finished campaign for reading and re-triage.
 //

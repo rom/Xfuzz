@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"sort"
 	"strconv"
 	"time"
 
@@ -38,6 +39,9 @@ func (s *Server) register() {
 	s.route(Route{Method: "POST", Path: "/v1/campaigns", Service: ServiceCampaign,
 		Name: "campaign.create", Summary: "Create a campaign from a document", Mutating: true,
 		handler: s.campaignCreate})
+	s.route(Route{Method: "POST", Path: "/v1/campaigns/edit", Service: ServiceCampaign,
+		Name: "campaign.edit", Summary: "Apply edits to a campaign document, preserving its comments",
+		handler: s.campaignEdit})
 	s.route(Route{Method: "POST", Path: "/v1/campaigns/load", Service: ServiceCampaign,
 		Name: "campaign.load", Summary: "Load a campaign that already exists in a store",
 		Mutating: true, handler: s.campaignLoad})
@@ -243,6 +247,78 @@ func (s *Server) campaignList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, c.Status())
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"campaigns": out})
+}
+
+// campaignEdit applies field edits to a campaign document and hands it back.
+//
+// Not a store, and not a launch: the console edits campaigns by editing their
+// file (ADR-0011), so what this returns is the file, for the client to save or
+// to submit like any other. The daemon never becomes the place a campaign
+// definition lives, which is what keeps a console launch equivalent to
+// committing the file and running the CLI.
+//
+// The edited document is resolved before it is returned, so the answer says
+// whether it is a campaign as well as what it now reads — and it is resolved by
+// the same code path a file is, rather than by a second implementation that
+// could come to disagree with it.
+func (s *Server) campaignEdit(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Document string         `json:"document"`
+		Name     string         `json:"name,omitempty"`
+		Set      map[string]any `json:"set,omitempty"`
+		Unset    []string       `json:"unset,omitempty"`
+		Profiles []string       `json:"profiles,omitempty"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	doc, err := campaign.ParseDocument([]byte(req.Document))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	for _, path := range sortedKeys(req.Set) {
+		if err := doc.Set(path, req.Set[path]); err != nil {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
+	}
+	for _, path := range req.Unset {
+		doc.Unset(path)
+	}
+
+	out, err := doc.Bytes()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	name := req.Name
+	if name == "" {
+		name = "edited campaign"
+	}
+	resp := map[string]any{"document": string(out), "valid": true}
+	if _, rerr := doc.Resolved(name, req.Profiles...); rerr != nil {
+		// The document still comes back. An editor that threw away the text
+		// because it does not yet validate would be an editor nobody could
+		// make two changes in.
+		resp["valid"] = false
+		resp["error"] = rerr.Error()
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// sortedKeys orders the edits so that applying the same set twice produces the
+// same document, whatever order the client's JSON happened to serialise in.
+func sortedKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // campaignLoad opens a campaign the daemon does not hold, from its store.
