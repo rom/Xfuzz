@@ -86,10 +86,11 @@ type Target struct {
 	// identity the sandbox gives the target.
 	Dir string `yaml:"dir,omitempty" json:"dir,omitempty" doc:"Working directory for the target."`
 
-	// Executor selects the delivery tier: forkserver, subprocess, or inproc.
+	// Executor selects the delivery tier: forkserver, pool, subprocess, or
+	// inproc.
 	// Empty picks the fastest tier the target supports, which is what a person
 	// wants and would otherwise have to work out themselves.
-	Executor string `yaml:"executor,omitempty" json:"executor,omitempty" doc:"Delivery tier: auto, forkserver, subprocess, or inproc."`
+	Executor string `yaml:"executor,omitempty" json:"executor,omitempty" doc:"Delivery tier: auto, forkserver, pool, subprocess, or inproc."`
 
 	// Input selects how the input reaches the target: stdin, file, or arg.
 	Input string `yaml:"input,omitempty" json:"input,omitempty" doc:"How input is delivered: stdin, file, or arg."`

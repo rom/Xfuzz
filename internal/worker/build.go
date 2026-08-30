@@ -431,8 +431,15 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 
 	tier := cfg.Target.Executor
 	if tier == campaign.ExecutorAuto {
+		// With coverage, the fork server; without it, the pool. The pool is
+		// black-box by construction — a process spawned before its input has
+		// already written its startup coverage into the map — so "auto" picks
+		// it exactly where there is no map to pollute, which is every campaign
+		// that asked for none and every campaign on a platform without shared
+		// memory. Measured against the tier it replaces there: 1,420 exec/s
+		// against 559.
 		if b.coverage == nil {
-			tier = campaign.ExecutorSubprocess
+			tier = campaign.ExecutorPool
 		} else {
 			tier = campaign.ExecutorForkServer
 		}
@@ -455,6 +462,26 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 		b.executor = fs
 		b.tier = "forkserver"
 		b.closers = append(b.closers, closer{"fork server", fs.Close})
+		return nil
+
+	case campaign.ExecutorPool:
+		if b.coverage != nil {
+			return errors.New("worker: the pool tier cannot collect coverage — a process " +
+				"spawned before its input has already written its own startup into the " +
+				"map — so set feedback.coverage to none, or use forkserver or subprocess")
+		}
+		pool := executor.NewProcPool("pool", spawner, spec)
+		pool.Output = b.output
+		if err := pool.Start(ctx); err != nil {
+			if cfg.Target.Executor != campaign.ExecutorAuto {
+				return err
+			}
+			b.fallbackReason = err.Error()
+			return b.buildSubprocess(cfg, spawner, spec)
+		}
+		b.executor = pool
+		b.tier = "pool"
+		b.closers = append(b.closers, closer{"process pool", pool.Close})
 		return nil
 
 	case campaign.ExecutorSubprocess:

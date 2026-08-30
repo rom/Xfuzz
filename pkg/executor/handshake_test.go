@@ -76,6 +76,13 @@ func (s *scriptedSpawner) Start(context.Context, ProcSpec) (Handle, error) {
 }
 func (s *scriptedSpawner) IsolationLevel() string { return "none" }
 
+// StartPeer implements Spawner. The pooled tier is not what these tests
+// exercise, and a fake that pretended to hand over a live process would be a
+// fake of the part most worth running for real.
+func (s *scriptedSpawner) StartPeer(context.Context, ProcSpec) (Peer, error) {
+	return nil, errors.New("this spawner does not start peers")
+}
+
 func startWithReply(t *testing.T, reply []byte) (*ForkServer, *scriptedHandle, error) {
 	t.Helper()
 	h := newScriptedHandle(t, reply)

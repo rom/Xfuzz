@@ -45,7 +45,7 @@ type Set struct {
 type loaded struct {
 	label string
 	host  *plugin.Host
-	peer  *safety.Peer
+	peer  executor.Peer
 }
 
 // Load starts every plugin the campaign declares and resolves its extensions.

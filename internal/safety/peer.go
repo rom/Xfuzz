@@ -32,7 +32,11 @@ type Peer struct {
 }
 
 // StartPeer launches a protocol peer and returns its streams.
-func (s *Spawner) StartPeer(ctx context.Context, spec executor.ProcSpec) (*Peer, error) {
+//
+// The return type is the interface rather than *Peer, so that this satisfies
+// executor.Spawner: pkg/executor names the primitive it needs and this package
+// is the only thing that can provide it.
+func (s *Spawner) StartPeer(ctx context.Context, spec executor.ProcSpec) (executor.Peer, error) {
 	inRead, inWrite, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("safety: creating the peer's input pipe: %w", err)

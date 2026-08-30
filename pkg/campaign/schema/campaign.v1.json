@@ -552,7 +552,7 @@
           "type": "object"
         },
         "executor": {
-          "description": "Delivery tier: auto, forkserver, subprocess, or inproc.",
+          "description": "Delivery tier: auto, forkserver, pool, subprocess, or inproc.",
           "type": "string"
         },
         "input": {

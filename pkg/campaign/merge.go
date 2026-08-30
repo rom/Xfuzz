@@ -10,6 +10,7 @@ import (
 const (
 	ExecutorAuto       = "auto"
 	ExecutorForkServer = "forkserver"
+	ExecutorPool       = "pool"
 	ExecutorSubprocess = "subprocess"
 	ExecutorInProc     = "inproc"
 

@@ -259,6 +259,13 @@ func (f *fakeSpawner) Start(context.Context, ProcSpec) (Handle, error) {
 }
 func (f *fakeSpawner) IsolationLevel() string { return "none" }
 
+// StartPeer implements Spawner. The pooled tier is not what these tests
+// exercise, and a fake that pretended to hand over a live process would be a
+// fake of the part most worth running for real.
+func (f *fakeSpawner) StartPeer(context.Context, ProcSpec) (Peer, error) {
+	return nil, errors.New("this spawner does not start peers")
+}
+
 func TestSubprocessDeliversByStdin(t *testing.T) {
 	sp := &fakeSpawner{}
 	e := NewSubprocess("sub", sp, ProcSpec{Path: "/bin/true", Args: []string{"/bin/true"}})

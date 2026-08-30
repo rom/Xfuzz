@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -305,11 +306,38 @@ type Spawner interface {
 	// Start launches a long-lived process and returns a handle to it.
 	Start(ctx context.Context, spec ProcSpec) (Handle, error)
 
+	// StartPeer launches a process whose standard input and output are pipes,
+	// so the fuzzer can hand it an input after it already exists.
+	//
+	// That is the whole of the T3 tier: the cost of creating a process is paid
+	// while the previous one is still running, rather than in front of every
+	// execution. It is also how a plugin is spawned (ADR-0025), which is why
+	// the primitive is stdio rather than the fork server's descriptors 3 and 4
+	// — those do not exist on Windows, which is the platform T3 is for.
+	StartPeer(ctx context.Context, spec ProcSpec) (Peer, error)
+
 	// IsolationLevel reports the confinement actually in force: strong,
 	// moderate, or minimal. A campaign may require a minimum and refuse to run
 	// below it, so that "supported on this platform" never silently means
 	// "unprotected on this platform".
 	IsolationLevel() string
+}
+
+// Peer is a process the fuzzer talks to over its standard input and output,
+// rather than one it runs an input through and waits for.
+type Peer interface {
+	// Stdin is written to; Stdout is read from.
+	Stdin() io.WriteCloser
+	Stdout() io.Reader
+
+	// Pid identifies the process, and Diagnose returns whatever it wrote to
+	// its standard error.
+	Pid() int
+	Diagnose() string
+
+	// Wait blocks until it exits; Kill ends it.
+	Wait() (ProcResult, error)
+	Kill() error
 }
 
 // SharedMemory is a region a target writes coverage into.

@@ -65,7 +65,8 @@ github.com/rom/Xfuzz
 │   ├── mutate/             mutators, mutator scheduling
 │   ├── generate/           grammar-driven generation
 │   ├── feedback/           Observer, Feedback, Objective + algebra
-│   ├── executor/           Executor interface + tiers T0–T7, incl. T6 sessions
+│   ├── executor/           Executor interface + tiers T0-T7: T0 in-process,
+│   │                       T2 fork server, T3 pool, T4 subprocess, T6 sessions
 │   ├── corpus/             corpus, testcase, provenance, scheduler
 │   ├── corpusio/           AFL and libFuzzer corpus import/export
 │   ├── state/              state model, inference, state feedback, scheduling

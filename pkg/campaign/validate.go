@@ -102,10 +102,10 @@ func (r *Resolved) validateTarget(add addFunc) {
 	}
 
 	switch t.Executor {
-	case ExecutorAuto, ExecutorForkServer, ExecutorSubprocess, ExecutorInProc:
+	case ExecutorAuto, ExecutorForkServer, ExecutorPool, ExecutorSubprocess, ExecutorInProc:
 	default:
 		add("target.executor", fmt.Sprintf("%q is not a delivery tier", t.Executor),
-			"one of auto, forkserver, subprocess, inproc")
+			"one of auto, forkserver, pool, subprocess, inproc")
 	}
 	switch t.Input {
 	case InputStdin, InputFile, InputArg:

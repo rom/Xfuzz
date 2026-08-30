@@ -82,7 +82,8 @@ name: %s
 target:
   path: %s
   input: stdin
-  executor: subprocess
+  # auto, so the test exercises the tier a user actually gets. With no
+  # coverage map to pollute, that is the pool.
   timeout: 5s
 seeds:
   inline: ["A", "AB", "B", "BC", "C", "hello"]
@@ -127,6 +128,16 @@ func TestASubprocessCampaignRunsEndToEndOnEveryPlatform(t *testing.T) {
 	if final.State != "finished" {
 		t.Fatalf("the campaign ended in state %q, not finished:\n%s", final.State, out)
 	}
+
+	// The criterion says "a subprocess campaign", meaning one that gives every
+	// input its own process, and the tier that does that on a platform without
+	// a fork server is the pool (ADR-0009's T3). Asserting which one ran is
+	// what stops this quietly measuring a fallback.
+	if tier := executorOf(t, e, "portable"); tier != "pool" {
+		t.Errorf("the campaign ran on the %q tier; with no coverage configured, "+
+			"auto should have chosen the pool", tier)
+	}
+
 	if final.Metrics.Execs < 500 {
 		t.Errorf("only %d executions in a minute; the subprocess tier is not delivering inputs",
 			final.Metrics.Execs)
