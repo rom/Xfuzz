@@ -18,6 +18,10 @@ import (
 	"github.com/rom/Xfuzz/pkg/corpus"
 	"github.com/rom/Xfuzz/pkg/corpusio"
 	"github.com/rom/Xfuzz/pkg/feedback"
+	"github.com/rom/Xfuzz/pkg/generate"
+	"github.com/rom/Xfuzz/pkg/ir"
+	"github.com/rom/Xfuzz/pkg/rng"
+	"github.com/rom/Xfuzz/pkg/schema"
 )
 
 // State is where a campaign is in its life.
@@ -1037,6 +1041,63 @@ func (c *Campaign) importSeeds(ctx context.Context) error {
 		if err := c.store.SaveTestcases(ctx, c.id, tcs); err != nil {
 			return err
 		}
+	}
+	if s.Generate > 0 {
+		if err := c.generateSeeds(ctx, s.Generate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// generateSeeds fills the corpus from the campaign's grammar.
+//
+// A campaign with a grammar and no corpus is not stuck: it can write its own
+// starting inputs, and inputs a grammar produced are structurally valid in a
+// way random bytes never are. The alternative is what this used to do — accept
+// the configuration, import nothing, and leave the engine with an empty corpus
+// and no account of why.
+//
+// Seeded from the campaign's own seed, so the same campaign generates the same
+// starting corpus (ASR-0008). A generated corpus that differed run to run would
+// make every comparison between two runs meaningless.
+func (c *Campaign) generateSeeds(ctx context.Context, count int) error {
+	sch, err := schema.ParseFile(c.Config.Format.Grammar)
+	if err != nil {
+		return fmt.Errorf("daemon: reading the grammar: %w", err)
+	}
+	gen := generate.New(sch)
+	r := rng.Derive(c.Seed, 0, rng.StreamGenerate)
+	arena := ir.NewArena()
+
+	tcs := make([]*corpus.Testcase, 0, count)
+	seen := map[corpus.Digest]bool{}
+	for i := 0; i < count; i++ {
+		arena.Reset()
+		node, gerr := gen.Generate(arena, r)
+		if gerr != nil {
+			return fmt.Errorf("daemon: generating a seed: %w", gerr)
+		}
+		payload := ir.Encode(node)
+		tc := corpus.NewTestcase(nil, payload)
+		if seen[tc.ID] {
+			// A grammar with few shapes repeats itself. Duplicates are dropped
+			// rather than counted, so "generate: 100" means a hundred inputs
+			// where it can and says so where it cannot.
+			continue
+		}
+		seen[tc.ID] = true
+		tc.Prov.Origin = "generated"
+		tcs = append(tcs, tc)
+	}
+	if err := c.store.SaveTestcases(ctx, c.id, tcs); err != nil {
+		return err
+	}
+	c.log("info", fmt.Sprintf("generated %d seed(s) from %s",
+		len(tcs), filepath.Base(c.Config.Format.Grammar)))
+	if len(tcs) < count {
+		c.warn(fmt.Sprintf("the grammar produced %d distinct inputs from %d attempts; "+
+			"it may have fewer shapes than the campaign asked for", len(tcs), count))
 	}
 	return nil
 }

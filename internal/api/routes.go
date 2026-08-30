@@ -18,6 +18,10 @@ import (
 	"github.com/rom/Xfuzz/internal/version"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpusio"
+	"github.com/rom/Xfuzz/pkg/generate"
+	"github.com/rom/Xfuzz/pkg/ir"
+	"github.com/rom/Xfuzz/pkg/rng"
+	"github.com/rom/Xfuzz/pkg/schema"
 )
 
 // register declares the API surface.
@@ -115,6 +119,9 @@ func (s *Server) register() {
 		handler: s.adminSafety})
 	s.route(Route{Method: "GET", Path: "/v1/audit", Service: ServiceAdmin,
 		Name: "admin.audit", Summary: "Audit log with its chain verification", handler: s.adminAudit})
+	s.route(Route{Method: "POST", Path: "/v1/grammar/sample", Service: ServiceCampaign,
+		Name: "grammar.sample", Summary: "Generate sample inputs from a grammar",
+		handler: s.grammarSample})
 	s.route(Route{Method: "GET", Path: "/v1/schema", Service: ServiceAdmin,
 		Name: "admin.schema", Summary: "The campaign file JSON Schema", handler: s.adminSchema})
 	s.route(Route{Method: "GET", Path: "/v1/openapi.json", Service: ServiceAdmin,
@@ -248,6 +255,78 @@ func (s *Server) campaignList(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"campaigns": out})
 }
+
+// grammarSample generates inputs from a grammar the client is writing.
+//
+// The workbench's whole purpose (ADR-0011): a grammar is a program, and the
+// only way to know what one produces is to look at what it produces. Sampling
+// is pure — it reads a document and returns bytes — so it needs no campaign, no
+// store and no target, which is what lets somebody write a grammar before there
+// is anything to fuzz with it.
+//
+// Seeded explicitly, so that the same grammar and the same seed give the same
+// samples: a workbench whose output changed every time it was asked would make
+// "did my edit change anything" unanswerable.
+func (s *Server) grammarSample(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Grammar string `json:"grammar"`
+		Count   int    `json:"count,omitempty"`
+		Seed    uint64 `json:"seed,omitempty"`
+	}
+	if err := decodeBody(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Count <= 0 {
+		req.Count = defaultGrammarSamples
+	}
+	if req.Count > maxGrammarSamples {
+		req.Count = maxGrammarSamples
+	}
+
+	sch, err := schema.Parse([]byte(req.Grammar), "grammar")
+	if err != nil {
+		// A grammar under construction does not parse most of the time, so
+		// this is the workbench's ordinary answer rather than a failure: the
+		// message is the thing the author needs.
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "error": err.Error()})
+		return
+	}
+
+	gen := generate.New(sch)
+	rand := rng.Derive(req.Seed, 0, rng.StreamGenerate)
+	arena := ir.NewArena()
+	samples := make([]sampleView, 0, req.Count)
+	for i := 0; i < req.Count; i++ {
+		arena.Reset()
+		node, gerr := gen.Generate(arena, rand)
+		if gerr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"valid": false, "error": gerr.Error(), "samples": samples,
+			})
+			return
+		}
+		payload := ir.Encode(node)
+		samples = append(samples, sampleView{Bytes: payload, Size: len(payload)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"valid": true, "root": sch.Root, "types": len(sch.Types), "samples": samples,
+	})
+}
+
+// sampleView is one generated input. The size travels with it because a
+// workbench's first question about a grammar is usually how big it goes.
+type sampleView struct {
+	Bytes []byte `json:"bytes"`
+	Size  int    `json:"size"`
+}
+
+// How many samples a workbench gets by default, and the most it may ask for.
+// Bounded because generation is unbounded work a client can request.
+const (
+	defaultGrammarSamples = 8
+	maxGrammarSamples     = 256
+)
 
 // campaignEdit applies field edits to a campaign document and hands it back.
 //

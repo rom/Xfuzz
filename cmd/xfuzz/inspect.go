@@ -24,6 +24,13 @@ func init() {
 		Run:   runFindings,
 	})
 	register(&Command{
+		Name: "grammar", Group: "inspection",
+		Short: "Compile a grammar and show what it generates",
+		Usage: "grammar FILE [-n COUNT] [--seed N] [--raw]",
+		API:   []string{"grammar.sample"},
+		Run:   runGrammar,
+	})
+	register(&Command{
 		Name: "metrics", Group: "inspection", Short: "Show counters, history, and health diagnostics",
 		Usage: "metrics NAME [--history]",
 		API:   []string{"metrics.get", "metrics.history"},
@@ -602,3 +609,80 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// runGrammar samples a grammar, which is the only way to know what one writes.
+//
+// The workbench's operation from the command line, over the same route, so that
+// a grammar can be checked in a shell loop or a test as readily as in a browser
+// — and so neither interface can inspect a grammar the other cannot.
+func runGrammar(ctx context.Context, args []string) error {
+	fs, opts := flags(commands["grammar"])
+	count := fs.Int("n", 0, "how many samples to generate")
+	seed := fs.Uint64("seed", 0, "sampling seed; the same seed gives the same samples")
+	raw := fs.Bool("raw", false, "write the samples to standard output, unadorned")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	path, err := onePath(fs.Args())
+	if err != nil {
+		return err
+	}
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	c, err := opts.connect(ctx)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Valid   bool   `json:"valid"`
+		Error   string `json:"error"`
+		Root    string `json:"root"`
+		Types   int    `json:"types"`
+		Samples []struct {
+			Bytes []byte `json:"bytes"`
+			Size  int    `json:"size"`
+		} `json:"samples"`
+	}
+	err = c.Do(ctx, "POST", "/v1/grammar/sample", map[string]any{
+		"grammar": string(src), "count": *count, "seed": *seed,
+	}, &resp)
+	if err != nil {
+		return err
+	}
+	if opts.jsonOut {
+		return printJSON(resp)
+	}
+	if !resp.Valid {
+		return fmt.Errorf("%s does not compile:\n%s", path, resp.Error)
+	}
+	if *raw {
+		for _, s := range resp.Samples {
+			os.Stdout.Write(s.Bytes)
+		}
+		return nil
+	}
+
+	fmt.Printf("%s: %d type(s), root %s\n\n", path, resp.Types, resp.Root)
+	for i, s := range resp.Samples {
+		// The head of each sample, not the whole of it. A grammar that
+		// generates megabytes is working correctly, and a terminal full of hex
+		// answers no question anybody had; --raw is there for the bytes.
+		shown := s.Bytes
+		if len(shown) > sampleHeadBytes {
+			shown = shown[:sampleHeadBytes]
+		}
+		fmt.Printf("sample %d (%d bytes):\n%s", i+1, s.Size, hexDump(shown))
+		if len(shown) < s.Size {
+			fmt.Printf("  ... %d more bytes\n", s.Size-len(shown))
+		}
+		fmt.Println()
+	}
+	return nil
+}
+
+// sampleHeadBytes is how much of a generated input the workbench shows. Enough
+// to recognise a format's header and the shape of what follows it.
+const sampleHeadBytes = 128

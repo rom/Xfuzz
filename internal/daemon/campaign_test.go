@@ -571,3 +571,57 @@ func TestFinishedCampaignsLoadWithoutTheirFile(t *testing.T) {
 		t.Error("loading a campaign the store has never held succeeded")
 	}
 }
+
+// A campaign with a grammar and no seed files writes its own starting corpus.
+//
+// The configuration for this validated all along and did nothing: seeds.generate
+// was accepted, no seeds were imported, and the engine started with an empty
+// corpus and no account of why. An empty corpus is the hardest kind of failure
+// to read, because everything else about the campaign looks correct.
+func TestCampaignGeneratesSeedsFromItsGrammar(t *testing.T) {
+	dir := testenv.ReachableDir(t)
+	d, err := New(Options{DataDir: dir, Spawner: &fakeSpawner{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close(context.Background())
+
+	cfgDir := testenv.ReachableDir(t)
+	if err := os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grammar := filepath.Join(cfgDir, "g.xfg")
+	if err := os.WriteFile(grammar, []byte(
+		"format message {\n  tag:  magic \"MSG\"\n  body: bytes<1..16>\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(cfgDir, "g.yaml")
+	doc := "name: grown\ntarget:\n  path: ./target\nformat:\n  grammar: ./g.xfg\nseeds:\n  generate: 12\n"
+	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := campaign.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := d.Create(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.importSeeds(context.Background()); err != nil {
+		t.Fatalf("importing seeds: %v", err)
+	}
+
+	entries, err := c.store.Testcases(context.Background(), c.id, store.TestcaseQuery{Limit: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("a campaign with a grammar and no seed files started with an empty corpus")
+	}
+	for _, e := range entries {
+		if e.Prov.Origin != "generated" {
+			t.Errorf("entry %s came from %q, not from the grammar", e.ID, e.Prov.Origin)
+		}
+	}
+}
