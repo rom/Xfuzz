@@ -38,13 +38,60 @@ listed here with its migration path.
   benchmark, which means the gate clause 3 asks for could only ever have held
   for one of them.
 
+**A pinnable campaign seed (ADR-0016, ASR-0008)**
+
+- `seed:` in the campaign file. ASR-0008's second acceptance criterion is about
+  "the same campaign file and seed" and there was no way to supply one: the
+  daemon drew a seed, recorded it, and reported it, so a campaign could be
+  described after the fact but never repeated.
+- In the file rather than behind a `--seed` flag, because ADR-0016 puts what
+  decides a run in the artefact — and because YAML holds a 64-bit integer
+  exactly where a JSON number is an IEEE double. 12345678901234567 goes in and
+  comes back out of `xfuzz status` unchanged.
+
+**Configurable health thresholds (ASR-0007, ASR-0008)**
+
+- `health:` — `min_stability`, `max_overhead`, `min_execs_per_second`,
+  `coverage_stall`. `internal/metrics` documented these as judgements "a
+  campaign against an unusual target may legitimately disagree" with, and no
+  campaign could: the defaults were passed as a literal at the one call site.
+  ASR-0008 requires the stability threshold in particular to be configurable.
+- Validation rejects `min_stability: 90`, which reads as ninety percent, means
+  nine thousand, and would silently retire the diagnostic it configures.
+
+**Clause 4 and clause 5, as tests rather than claims**
+
+- `test/e2e/determinism_test.go`: two runs of one file and seed, under separate
+  daemons in separate data directories, must find the same corpus by the same
+  derivation — provenance compared, not only digests, because two runs that
+  diverge and reconverge are lucky rather than deterministic. A third run with
+  another seed is required to differ, or the test would pass on a fuzzer that
+  ignored its seed.
+- The same file measures cross-host replay as literally as one machine allows:
+  a second set of binaries, a second data directory, a second daemon, a target
+  rebuilt at its own path, and the store carried across with `cp -a`. The seed
+  deliberately does not travel.
+- A `security` CI job. `make test-security` has existed since M4 and no job
+  ever ran it, so twelve of the eighteen properties in section 12 of TESTS.md
+  were asserted by a suite nobody ran. It passes — eleven tests, no skips — and
+  the job fails on a skip, which is how that suite reports "the mechanism is
+  not here".
+- `TestTiersAreOrderedAsADR0009Claims`: the per-tier benchmarks gate each tier
+  against its own past, and nothing gated them against each other. A tier that
+  fell below the one beneath it would keep passing its own benchmark while
+  having no reason to exist.
+
 **Documentation**
 
 - [ADR-0026](adr/ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)
   records the `gocov` deferral as a decision rather than an absence, and amends
   the scope tables in ADR-0002 and ADR-0020 that still listed it.
 - `docs/GUIDE.md` gains a reference table of every command, held to the binary
-  by `cmd/xfuzz/parity_test.go` in both directions.
+  by `cmd/xfuzz/parity_test.go` in both directions; a tier table; and a section
+  on repeating a campaign exactly.
+- MVP_PLAN § 6.1 records what was run for each clause of the definition of
+  done, and § 6.2 states what clause 2 does not cover: `stateful_proto`'s bug 3
+  has no established budget.
 
 ### Fixed — v0.1 release audit
 
@@ -65,6 +112,23 @@ listed here with its migration path.
 - **ADR-0009 named the T3 executor `ProcessPool`** where the code calls it
   `ProcPool`, and **ARCHITECTURE described `internal/platform` as `linux/
   darwin/ windows/` subdirectories** it has never had.
+- **The API's `seed` field on campaign creation was documented and dead.** It
+  said "pins the campaign's root RNG seed" and nothing read it, so a client
+  that pinned a seed to get a repeatable campaign got a random one and no
+  error. Removed rather than wired: the campaign file is where it belongs.
+- **T3 claimed `TimeoutEnforced` and enforced nothing.** `internal/safety`
+  gives a peer no deadline, correctly — a peer is a process the fuzzer talks to
+  over its whole life — but on this tier the process's life *is* one execution,
+  so a hanging target parked its worker for the rest of the campaign. Worse
+  than slow: a hang is a finding, so the tier was losing the bugs it was
+  pointed at while reporting nothing wrong.
+- **T3 spawned replacements against the execution's context**, so any caller
+  with a per-execution deadline would have emptied the pool — and a dead warm
+  process does not merely slow things down, it reports a *crash* on the next
+  execution to take it. The engine passes a long-lived context today, which is
+  the only reason this was latent.
+- **`make ci` claimed to be "what CI runs on every push"** while running four
+  of the ten jobs, and section 10 of TESTS.md listed seven of them.
 
 ### Added — M8 Extensions and hardening (2026-08-30)
 
