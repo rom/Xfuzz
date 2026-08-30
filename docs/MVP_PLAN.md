@@ -732,9 +732,19 @@ names what was run, not what is believed.
 
 ### 6.2 Clause 2, honestly
 
-Two of the three planted-bug targets meet the clause outright. `simple_parser`
-and `chunked_format` are found in full — five of five bugs behind per-chunk
-CRC-32s, in five distinct buckets, within `MaxExecs: 3_000_000`.
+Three of the four planted-bug targets meet the clause outright, in
+`internal/engine.TestCampaignFindsAllPlantedBugs`:
+
+| Target | Bugs | Budget |
+| --- | --- | --- |
+| `simple_parser` | 3 of 3 | 500,000 executions |
+| `magic_parser` | 4 of 4 | 600,000 executions, with a dictionary |
+| `chunked_format` | 5 of 5 | 3,000,000 executions, through the schema codec — every bug sits behind a CRC the parser checks first, so the budget buys mutations that survive the fixup pass rather than executions |
+
+That every bug lands in a bucket of its own is asserted separately, in
+`test/e2e/v01_test.go`, because it is a claim about triage rather than about
+exploration: two bugs that die of the same signal at the same depth must not be
+filed as one, or finding the second stops counting as finding it.
 
 `stateful_proto` is where the clause is qualified, and it is worth being precise
 about why. Its four bugs are not four samples of one difficulty; they are a
