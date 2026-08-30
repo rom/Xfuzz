@@ -259,7 +259,7 @@ usually matter:
 
 | Diagnostic | What to do |
 | --- | --- |
-| `overhead` over 10% | the executor tier is too slow; a fork server is several times faster than a subprocess |
+| `overhead` over 10% | the executor tier is too slow. With an instrumented target, a fork server is several times faster than a subprocess; without one, `executor: pool` is about twice as fast and works on every platform |
 | `unstable` below 90% | the target is non-deterministic — a clock, an address, a thread — and coverage guidance is chasing noise |
 | `map-saturated` | raise `feedback.map_size` and rebuild; edges are colliding |
 | `coverage-stalled` | the campaign has stopped learning: more seeds, a grammar, or a dictionary |
@@ -273,6 +273,23 @@ workers:
 format:
   dictionary: ./tokens.dict   # format keywords, AFL format
 ```
+
+And one worth knowing about, which `executor: auto` already picks for you:
+
+| Tier | How it is chosen | When | Measured here |
+| --- | --- | --- | --- |
+| T0 | `executor: inproc` | a Go harness, in the fuzzer's own process | 10⁶–10⁷/s |
+| T2 | `executor: forkserver` | an instrumented target on Linux or macOS | ~4,100/s |
+| T3 | `executor: pool` | any target, any platform — processes are started before their input exists, so the spawn overlaps the previous run | ~1,400/s |
+| T4 | `executor: subprocess` | one process per input; always works | ~600/s |
+| T6 | a `session:` block | a protocol, where the unit is a conversation rather than a byte string | varies with the target |
+
+`executor: auto` takes the fork server when there is coverage to collect and the
+pool when there is not, which is what makes a black-box campaign on Windows
+about twice as fast as it would otherwise be. Pin one only to rule the others
+out. The session tier is not on that list because it is not a delivery choice: a
+campaign with a `session:` block is fuzzing a conversation, and that is a
+different shape of campaign rather than a faster way to run the same one.
 
 A dictionary is the cheapest large win for a format with keywords — `IHDR`,
 `SELECT`, `\x89PNG`. A grammar is the next one; see

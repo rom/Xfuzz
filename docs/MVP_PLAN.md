@@ -711,3 +711,53 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
    `CHANGELOG.md` complete.
 10. A new user can install one binary, run `xfuzz init`, and reach a first finding
     without reading source.
+
+### 6.1 Where each clause stands
+
+Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30. Each row
+names what was run, not what is believed.
+
+| # | Clause | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Both proof obligations pass | met | `test/e2e/v01_test.go`. Structured against byte-level on the same seeds and budget: 48% corpus validity against 25%, four findings against two, minimisation reducing 45% against 11% |
+| 2 | Planted bugs found within budget | partly met | See § 6.2 |
+| 3 | Benchmark gates on every tier | met | `BenchmarkInProc`, `BenchmarkForkServer`, `BenchmarkProcPool`, `BenchmarkSubprocess`, `BenchmarkSession` — one per implemented tier, all in `bench/baseline.txt`. `TestTiersAreOrderedAsADR0009Claims` additionally checks they come out in the order the tier table predicts, which no per-tier gate can see |
+| 4 | Determinism and cross-host replay | met | `test/e2e/determinism_test.go`. Two runs of one file and seed, under separate daemons, produced the same corpus by the same derivation; a third with another seed differed. A store carried to a second data directory, daemon and target binary replayed three findings, three of three trials each |
+| 5 | Security tests pass | met | `make test-security`: eleven tests, no skips. Now a CI job that fails on a skip, which it was not before this audit |
+| 6 | Fault injection; clean resume | met | Nine of nine, M8. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
+| 7 | CI green on three platforms, with and without cgo | met | Ten jobs. `CGO_ENABLED=0` builds and tests clean; `make cross` compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`. The three stated gaps of § 10 of TESTS.md stand: no race detector on Windows, no native arm64 runner, instrumented targets skip without clang |
+| 8 | Self-fuzzing clean | met | Ten targets across nine packages, M8. The API target found a real path-cleaning defect on its first run |
+| 9 | Docs current | met | `tools/docslint` passes. The audit produced ADR-0026 and corrected four drifts, one of which was a documented Go build incantation that does not link |
+| 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
+
+### 6.2 Clause 2, honestly
+
+Two of the three planted-bug targets meet the clause outright. `simple_parser`
+and `chunked_format` are found in full — five of five bugs behind per-chunk
+CRC-32s, in five distinct buckets, within `MaxExecs: 3_000_000`.
+
+`stateful_proto` is where the clause is qualified, and it is worth being precise
+about why. Its four bugs are not four samples of one difficulty; they are a
+gradient, and the budget that finds the first is nowhere near the budget that
+finds the last. Measured first-appearance in one 42,000-session run:
+
+| Bug | What it needs | First seen |
+| --- | --- | --- |
+| 4 | The handshake, then AUTH, RESET, GET in that order and no other | ~2,700 sessions |
+| 1 | The handshake | ~4,200 sessions |
+| 2 | A SET whose value grows past a length nothing in the protocol suggests | ~39,700 sessions |
+| 3 | Two transfers on one connection | not reached |
+
+So the exit criterion requires bugs 1 and 4 at 20,000 sessions — reached every
+run of five — and *records* bugs 2 and 3 rather than requiring them. That is a
+deliberate choice and not a lowered bar: requiring a tail event of a sampling
+process would make the criterion a coin flip, and a criterion that fails half
+the time teaches people to re-run it rather than to read it.
+
+What this costs is real and is stated rather than hidden: **bug 3 has no
+established budget.** It has been found at this budget in past runs and was not
+found in 42,000 sessions here. Nothing in the campaign is known to be wrong; it
+is a tail. Closing this properly needs either a mutation stage that targets
+repeated transfers on one connection, or an honest measurement over many runs
+of how long the tail actually is — and the second is a claim about a
+distribution, so it needs runs, not one longer run.
