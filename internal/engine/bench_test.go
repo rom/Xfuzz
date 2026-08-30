@@ -245,3 +245,97 @@ func BenchmarkSubprocessNop(b *testing.B) {
 	}
 	b.ReportMetric(float64(b.N)/b.Elapsed().Seconds(), "exec/s")
 }
+
+// TestTiersAreOrderedAsADR0009Claims measures every implemented tier against
+// the same do-nothing target and checks they come out in the order the tier
+// table predicts.
+//
+// The benchmarks above gate each tier against its own past. Nothing gated them
+// against *each other*, and the ordering is the claim ADR-0009 actually makes:
+// T0 beats T2 beats T3 beats T4, and T6 is slowest because a session is a
+// conversation. A tier that quietly fell below the one beneath it would keep
+// passing its own benchmark — the numbers would move together — while having
+// no reason to exist. That is exactly what T3 would be if a change made it
+// slower than the T4 it was built to replace on Windows.
+//
+// Measured over a fixed number of executions rather than a fixed window, so a
+// slow host takes longer rather than reporting a smaller number, and compared
+// as ratios with a wide margin. The gaps are two- to fortyfold; a 1.2x margin
+// leaves room for a loaded machine without leaving room for a regression.
+func TestTiersAreOrderedAsADR0009Claims(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this measures four tiers end to end")
+	}
+	target := buildTarget(t, "nop")
+	in := executor.Input{Bytes: []byte("Z\x00")}
+
+	// Enough executions to swamp setup, few enough that the slowest tier here
+	// still finishes in a couple of seconds.
+	const runs = 400
+
+	rate := func(name string, e executor.Executor, warm int) float64 {
+		t.Helper()
+		defer e.Close()
+		for i := 0; i < warm; i++ {
+			if _, err := e.Run(t.Context(), in, nil); err != nil {
+				t.Fatalf("%s: warming up: %v", name, err)
+			}
+		}
+		start := time.Now()
+		for i := 0; i < runs; i++ {
+			if _, err := e.Run(t.Context(), in, nil); err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+		}
+		r := float64(runs) / time.Since(start).Seconds()
+		t.Logf("%-14s %10.0f exec/s", name, r)
+		return r
+	}
+
+	spec := executor.ProcSpec{Path: target, Args: []string{target}, Timeout: time.Second}
+
+	inproc := rate("T0 in-process", executor.NewInProc("t0", func([]byte) error { return nil }), 0)
+
+	pool := executor.NewProcPool("t3", safety.NewSpawner(), spec)
+	if err := pool.Start(t.Context()); err != nil {
+		t.Skipf("the pool would not start here: %v", err)
+	}
+	poolRate := rate("T3 pool", pool, 10)
+
+	subRate := rate("T4 subprocess", executor.NewSubprocess("t4", safety.NewSpawner(), spec), 0)
+
+	fs := executor.NewForkServer("t2", safety.NewSpawner(), spec)
+	fs.Timeout = time.Second
+	var forkRate float64
+	if err := fs.Start(t.Context()); err != nil {
+		// The fork server needs an instrumented target and descriptors 3 and 4,
+		// so it is the one tier here that legitimately is not available. Skipped
+		// with the reason rather than dropped from the ordering silently.
+		t.Logf("T2 fork server unavailable here (%v); the rest of the order still holds", err)
+		fs.Close()
+	} else {
+		forkRate = rate("T2 fork server", fs, 10)
+	}
+
+	// The margin, not equality: these are measurements.
+	const margin = 1.2
+	check := func(faster string, a float64, slower string, b float64) {
+		t.Helper()
+		if a == 0 || b == 0 {
+			return
+		}
+		if a < margin*b {
+			t.Errorf("%s ran at %.0f exec/s and %s at %.0f, a ratio of %.2fx; "+
+				"ADR-0009 puts %s above %s and a tier that is not faster than the "+
+				"one below it has no reason to exist",
+				faster, a, slower, b, a/b, faster, slower)
+		}
+	}
+	check("T0 in-process", inproc, "T2 fork server", forkRate)
+	if forkRate > 0 {
+		check("T2 fork server", forkRate, "T3 pool", poolRate)
+	} else {
+		check("T0 in-process", inproc, "T3 pool", poolRate)
+	}
+	check("T3 pool", poolRate, "T4 subprocess", subRate)
+}
