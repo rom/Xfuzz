@@ -22,6 +22,7 @@ import (
 	"github.com/rom/Xfuzz/internal/store"
 	"github.com/rom/Xfuzz/internal/version"
 	"github.com/rom/Xfuzz/pkg/campaign"
+	"github.com/rom/Xfuzz/pkg/corpus"
 )
 
 // ErrNoCampaign is returned for a campaign the daemon does not know about.
@@ -356,6 +357,18 @@ func (d *Daemon) storeAt(dir string) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A corpus entry whose payload cannot be read is dropped rather than
+	// failing the campaign, and this is what stops that being silent. A corpus
+	// that quietly shrank is a campaign whose results nobody can explain
+	// afterwards (TESTS.md section 9).
+	st.OnDropped(func(dg corpus.Digest, derr error) {
+		d.bus.Publish(Event{Kind: EventLog, Data: map[string]any{
+			"level": "warn",
+			"text": fmt.Sprintf("corpus entry %s dropped: %v; "+
+				"a corrupt payload is quarantined under %s and the campaign continues",
+				dg.Short(), derr, filepath.Join(abs, "blobs", store.QuarantineDir)),
+		}})
+	})
 	d.stores[abs] = st
 	return st, nil
 }

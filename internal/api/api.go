@@ -137,7 +137,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
-	if s.console != nil && !console.IsAPIPath(path.Clean("/"+r.URL.Path)) {
+	// A path that does not survive cleaning is redirected rather than acted
+	// on. Without this, "/v1/campaigns/../../etc/passwd" cleans to "/etc/passwd"
+	// and is answered by the console: a client that asked the API a question
+	// gets an HTML page back, and the two halves of this listener disagree
+	// about which of them the request was for. net/http's own mux redirects
+	// for the same reason; dispatching by hand meant re-earning it.
+	//
+	// Found by the self-fuzzing target for this handler (ADR-0021), on its
+	// first run.
+	if cleaned := path.Clean("/" + r.URL.Path); cleaned != r.URL.Path {
+		u := *r.URL
+		u.Path = cleaned
+		http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+		return
+	}
+
+	if s.console != nil && !console.IsAPIPath(r.URL.Path) {
 		s.console.ServeHTTP(w, r)
 		return
 	}

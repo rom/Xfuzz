@@ -52,9 +52,10 @@ type BlobStore struct {
 	// worse than a read that fails loudly.
 	Verify bool
 
-	mu    sync.Mutex
-	count int64
-	bytes int64
+	mu          sync.Mutex
+	count       int64
+	bytes       int64
+	quarantined int64
 }
 
 // OpenBlobStore opens or creates a blob store rooted at dir.
@@ -160,10 +161,79 @@ func (b *BlobStore) Get(d corpus.Digest) ([]byte, error) {
 	}
 	if b.Verify {
 		if got := sha256.Sum256(data); corpus.Digest(got) != d {
-			return nil, fmt.Errorf("%w: %s hashes to %s", ErrCorrupt, d.Short(), corpus.Digest(got).Short())
+			// Quarantined rather than left in place. A file that does not hash
+			// to its own name is not the blob it claims to be, and leaving it
+			// means every later reader walks into the same wall — including
+			// the collector, which would otherwise treat it as a live payload
+			// forever. Moved rather than deleted, because it is evidence: a
+			// corrupt corpus entry says something about the disk it was on.
+			reason := fmt.Sprintf("hashes to %s", corpus.Digest(got).Short())
+			qerr := b.Quarantine(d, reason)
+			err := fmt.Errorf("%w: %s %s", ErrCorrupt, d.Short(), reason)
+			if qerr != nil {
+				return nil, fmt.Errorf("%w (and it could not be quarantined: %v)", err, qerr)
+			}
+			return nil, err
 		}
 	}
 	return data, nil
+}
+
+// QuarantineDir is where blobs that failed their digest are kept.
+const QuarantineDir = "quarantine"
+
+// Quarantine moves a blob out of the store and records why.
+//
+// The store carries on without it. That is the point: one bad file on a disk
+// that is going wrong must cost a campaign that entry, not the campaign
+// (TESTS.md section 9).
+func (b *BlobStore) Quarantine(d corpus.Digest, reason string) error {
+	dir := filepath.Join(b.root, QuarantineDir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("store: creating the quarantine: %w", err)
+	}
+
+	src := b.path(d)
+	size := int64(0)
+	if fi, err := os.Stat(src); err == nil {
+		size = fi.Size()
+	}
+	if err := os.Chmod(src, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("store: quarantining %s: %w", d.Short(), err)
+	}
+	if err := os.Rename(src, filepath.Join(dir, d.String())); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("store: quarantining %s: %w", d.Short(), err)
+	}
+
+	line := fmt.Sprintf("%s %s\n", d.String(), reason)
+	f, err := os.OpenFile(filepath.Join(dir, "reasons"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("store: recording the quarantine of %s: %w", d.Short(), err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(line); err != nil {
+		return err
+	}
+
+	b.mu.Lock()
+	if b.count > 0 {
+		b.count--
+	}
+	b.bytes -= size
+	if b.bytes < 0 {
+		b.bytes = 0
+	}
+	b.quarantined++
+	b.mu.Unlock()
+	return nil
+}
+
+// Quarantined counts the blobs this store has moved aside, which is what a
+// campaign reports rather than staying quiet about a disk going bad.
+func (b *BlobStore) Quarantined() int64 {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.quarantined
 }
 
 // Open returns a reader over a blob. It does not verify: a caller streaming a
@@ -227,7 +297,7 @@ func (b *BlobStore) Walk(fn func(d corpus.Digest, size int64) error) error {
 			return err
 		}
 		if e.IsDir() {
-			return nil
+			return skipQuarantine(b.root, p)
 		}
 		name := e.Name()
 		if strings.HasPrefix(name, ".tmp-") {
@@ -260,8 +330,11 @@ func (b *BlobStore) Usage() (count, bytes int64) {
 func (b *BlobStore) Sweep() (int, error) {
 	n := 0
 	err := filepath.WalkDir(b.root, func(p string, e fs.DirEntry, err error) error {
-		if err != nil || e.IsDir() {
+		if err != nil {
 			return err
+		}
+		if e.IsDir() {
+			return skipQuarantine(b.root, p)
 		}
 		if strings.HasPrefix(e.Name(), ".tmp-") {
 			if rmErr := os.Remove(p); rmErr == nil {
@@ -303,4 +376,17 @@ func unhex(c byte) (byte, bool) {
 // stat returns a blob's file information.
 func (b *BlobStore) stat(d corpus.Digest) (os.FileInfo, error) {
 	return os.Stat(b.path(d))
+}
+
+// skipQuarantine keeps a directory walk out of the quarantine.
+//
+// What is in there is no longer part of the store: it does not count towards a
+// budget, it must not be swept away as a stray temporary file, and it must not
+// be handed back to a reader. It is kept only because a corrupt payload is
+// evidence about the disk it was on.
+func skipQuarantine(root, dir string) error {
+	if dir == filepath.Join(root, QuarantineDir) {
+		return fs.SkipDir
+	}
+	return nil
 }

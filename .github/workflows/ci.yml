@@ -105,6 +105,40 @@ jobs:
       - name: run integration tests
         run: make test-integration
 
+  # Layer 7 — self-fuzzing. Xfuzz's own untrusted-input surface, fuzzed with
+  # Go's native fuzzing (ADR-0021, docs/TESTS.md section 8).
+  #
+  # The corpus is cached across runs so coverage accumulates rather than
+  # restarting from the seeds every build; that is the difference between a
+  # fuzzing job and a fuzzing gesture. Any crash, hang, or out-of-memory is a
+  # release blocker, and the input that caused it is uploaded so it can be
+  # reproduced without re-finding it.
+  fuzz:
+    name: self-fuzzing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: restore the accumulated fuzzing corpus
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-
+      - name: fuzz every parser
+        run: make fuzz-all FUZZTIME=60s
+      - name: keep the input that broke it
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore
+
   # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
   # slower or less featureful, never broken.
   nocgo:

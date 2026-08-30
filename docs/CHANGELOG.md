@@ -86,6 +86,26 @@ listed here with its migration path.
   slow plugin is diagnosable rather than mysterious; "your campaign is slow" is
   not a finding anyone can act on.
 
+**Fault injection and self-fuzzing (ADR-0021, ASR-0012)**
+
+- The fault-injection suite of TESTS.md section 9, all nine faults, each
+  injected for real rather than simulated. The full disk is a two-megabyte
+  tmpfs, because a write that fails because the filesystem is full stops
+  part-way and what matters is what is left on disk — which a permission error
+  never exercises. The corrupted database is overwritten in place at its
+  original length, which is what a bad sector looks like from userspace. The
+  killed worker is proven restarted by a process identifier that was not in the
+  original set, because "a worker is running" also passes when nothing happened.
+- Blob quarantine, which the suite required and nothing implemented: a payload
+  that does not hash to its own name is moved aside with its reason recorded,
+  the corpus entry is dropped and reported, and the campaign carries on. One bad
+  file on a disk that is going wrong costs a campaign that entry, not the
+  campaign.
+- Self-fuzzing targets for every untrusted parser TESTS.md section 8 names,
+  wired into CI with a corpus cached across runs. Each asserts a property rather
+  than only the absence of a panic, because "it did not crash" is satisfied by a
+  parser that accepts everything and understands nothing.
+
 ### Fixed — M8
 
 - A plugin's lifetime is the worker's, not the campaign context's. Tying it to
@@ -93,6 +113,15 @@ listed here with its migration path.
   ending, on the pipe the final commit still had to be written to.
 - `Host.Close` reported failures caused by its own shutdown. Every clean stop
   was ending with "write: file already closed" against the plugin's name.
+- The API and the console share a listener, and which of them answered was
+  decided on the *cleaned* path — so `/v1/campaigns/../../etc/passwd` cleaned to
+  `/etc/passwd` and fell through to the console, and a client that asked the API
+  a question got an HTML page back. Paths that do not survive cleaning are now
+  redirected, as `net/http`'s own mux does; dispatching by hand had meant
+  re-earning that. Found by this package's new self-fuzzing target on its first
+  run.
+- One corrupt payload failed the whole corpus read, so a single bad file took
+  down a campaign's seed load rather than costing it one entry.
 
 ### Added — M7 Web console (2026-08-30)
 

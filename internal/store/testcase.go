@@ -198,14 +198,47 @@ func (s *Store) Testcases(ctx context.Context, campaignID int64, q TestcaseQuery
 		return nil, err
 	}
 	if q.WithPayload {
+		kept := out[:0]
 		for _, tc := range out {
-			if tc.Bytes, err = s.blobs.Get(tc.ID); err != nil {
+			tc.Bytes, err = s.blobs.Get(tc.ID)
+			switch {
+			case err == nil:
+				kept = append(kept, tc)
+			case errors.Is(err, ErrCorrupt), errors.Is(err, ErrNotFound):
+				// One unreadable payload costs the campaign that entry, not
+				// the campaign (TESTS.md section 9). Get has already moved a
+				// corrupt blob into the quarantine; what is left here is to
+				// carry on with the rest and say what was lost, because a
+				// corpus that silently shrank is a campaign whose results
+				// nobody can explain later.
+				s.dropped(tc.ID, err)
+			default:
 				return nil, err
 			}
 		}
+		out = kept
 	}
 	return out, nil
 }
+
+// OnDropped is called when a corpus entry is skipped because its payload could
+// not be read. Set by the daemon, which turns it into an event and a log line.
+//
+// A hook rather than an error return, because the caller asked for a corpus and
+// a corpus is what it gets: an entry that has gone bad is news about the store,
+// not a failure of the query.
+func (s *Store) OnDropped(fn func(d corpus.Digest, err error)) { s.onDropped = fn }
+
+func (s *Store) dropped(d corpus.Digest, err error) {
+	s.droppedCount.Add(1)
+	if s.onDropped != nil {
+		s.onDropped(d, err)
+	}
+}
+
+// Dropped counts the corpus entries skipped because their payloads were
+// unreadable.
+func (s *Store) Dropped() int64 { return s.droppedCount.Load() }
 
 // CountTestcases returns how many entries and how many payload bytes a campaign
 // holds.

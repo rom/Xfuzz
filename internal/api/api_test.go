@@ -639,3 +639,49 @@ func TestTheClientAgreesOnTheAPIVersion(t *testing.T) {
 			client.APIVersion, APIVersion)
 	}
 }
+
+func TestAPathThatDoesNotSurviveCleaningIsRedirectedRatherThanReroutedToTheConsole(t *testing.T) {
+	// The console and the API share a listener, and which of them answers is
+	// decided by the path. Deciding it on the *cleaned* path meant that
+	// "/v1/campaigns/../../etc/passwd" cleaned to "/etc/passwd" and fell
+	// through to the console: a client that asked the API a question got an
+	// HTML page. Found by this package's self-fuzzing target on its first run.
+	h := newHarness(t)
+
+	for _, path := range []string{
+		"/v1/campaigns/../../etc/passwd",
+		"/v1/campaigns/%2e%2e%2f/findings",
+		"/v1/",
+		"/v1/campaigns//",
+	} {
+		req, err := http.NewRequest("GET", h.http.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The client must not follow the redirect, or the assertion would be
+		// about wherever it landed rather than about this decision.
+		client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}}
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode/100 != 3 {
+			t.Errorf("%s answered %d, want a redirect: the path does not survive cleaning",
+				path, resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Location"); ct == "" {
+			t.Errorf("%s redirected without saying where to", path)
+		}
+	}
+
+	// And a path that is already clean is not redirected, so the rule costs
+	// nothing on every ordinary request.
+	resp, body := h.do("GET", "/v1/info", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/info answered %d: %s", resp.StatusCode, body)
+	}
+}

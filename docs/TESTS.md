@@ -229,36 +229,83 @@ only as part of a change that justifies the new numbers.
 Xfuzz fuzzes its own untrusted-input surface using Go native fuzzing, run
 continuously in CI with a persisted corpus (see [SECURITY.md](SECURITY.md) § 3.5):
 
-| Parser | Untrusted source |
-| --- | --- |
-| `codec.Decode` (per format) | Corpus files |
-| `.xfg` grammar parser | Shared grammars |
-| Campaign file parser | Shared campaign files |
-| AFL/libFuzzer corpus import | Downloaded corpora |
-| Dictionary parser | Shared dictionaries |
-| HAR / pcap capture parsers | Captured traffic |
-| Sanitizer output parser | Target output |
-| Plugin protocol decoder | Third-party plugins |
-| API request handlers | Network clients |
+| Parser | Untrusted source | Target |
+| --- | --- | --- |
+| `codec.Decode` (per format) | Corpus files | `pkg/codec.FuzzPNGDecode` |
+| `.xfg` grammar parser | Shared grammars | `pkg/schema.FuzzParse` |
+| Campaign file parser | Shared campaign files | `pkg/campaign.FuzzParse` |
+| AFL/libFuzzer corpus import | Downloaded corpora | `pkg/corpusio.FuzzImport` |
+| Dictionary parser | Shared dictionaries | `pkg/mutate.FuzzParseDictionary` |
+| HAR / pcap capture parsers | Captured traffic | v0.4, with the parsers |
+| Sanitizer output parser | Target output | `internal/triage.FuzzClassify` |
+| Plugin protocol decoder | Third-party plugins | `pkg/plugin.FuzzReceive`, `FuzzServe` |
+| API request handlers | Network clients | `internal/api.FuzzRequest` |
 
 Any crash, hang, or OOM is a release blocker. Corpora persist across CI runs so
-coverage accumulates rather than restarting each build.
+coverage accumulates rather than restarting each build; `make fuzz-all` runs
+every target for `FUZZTIME` each, and `make fuzz` runs the seeds only, as part
+of the ordinary suite.
+
+Each target asserts a property rather than only the absence of a panic, because
+"it did not crash" is satisfied by a parser that accepts everything and
+understands nothing:
+
+- A grammar that parses must **validate**, and its root must be a type it
+  declares — otherwise the failure has moved somewhere with no source line to
+  point at.
+- A campaign document that parses must have **no includes left in it**: that
+  refusal is what stops a document arriving over a socket from naming a path on
+  the daemon's filesystem.
+- A dictionary token must be **non-empty**, or it would be inserted on every
+  mutation and change nothing — a silent waste of a campaign rather than a
+  crash.
+- A corpus import's **report must add up**: a directory where forty of a
+  thousand files were skipped must not look like one where none were.
+- Every classified outcome must produce a **kind and a bounded, single-line
+  marker**, because both become a bucket key.
+- Every bucketing strategy must produce a **non-empty signature**, since an
+  empty one silently merges every unclassifiable finding with every other.
+- A decoded plugin verdict's **novelty must land in 0..1**, the range the
+  scheduler assumes.
+- The API must **answer every request** and must never let a `/v1` path be
+  answered by the console.
+
+That last one found a real defect on its first run: the console and the API
+share a listener, and which of them answered was decided on the *cleaned* path,
+so `/v1/campaigns/../../etc/passwd` cleaned to `/etc/passwd` and fell through to
+the console — a client that asked the API a question got an HTML page back.
+Paths that do not survive cleaning are now redirected, as `net/http`'s own mux
+does; dispatching by hand had meant re-earning that.
 
 ## 9. Layer 8 — Fault injection
 
 Asserts that recovery and resumability (ASR-0012) actually hold:
 
-| Injected fault | Required behaviour |
-| --- | --- |
-| Worker killed mid-execution | Daemon restarts it; corpus stays consistent |
-| Daemon killed mid-campaign | Resume loses at most the checkpoint window; no corruption |
-| Plugin process dies | Campaign fails cleanly with a clear error |
-| Disk full during corpus write | Graceful degradation; reported; no corruption |
-| Corrupted blob | Detected by digest; entry quarantined, campaign continues |
-| Corrupted database | Detected on open; explicit error, never silent misbehaviour |
-| Target hangs indefinitely | Timeout enforced; recorded as a hang |
-| Target fork-bombs | Sandbox PID limit holds; campaign continues |
-| Store opened by a newer version | Explicit version error |
+| Injected fault | Required behaviour | Where |
+| --- | --- | --- |
+| Worker killed mid-execution | Daemon restarts it; corpus stays consistent | `test/e2e/fault_test.go` |
+| Daemon killed mid-campaign | Resume loses at most the checkpoint window; no corruption | `test/e2e/m5_test.go` |
+| Plugin process dies | Campaign fails cleanly with a clear error | `internal/worker/worker_test.go` |
+| Disk full during corpus write | Graceful degradation; reported; no corruption | `internal/store/fault_test.go` |
+| Corrupted blob | Detected by digest; entry quarantined, campaign continues | `internal/store/fault_test.go` |
+| Corrupted database | Detected on open; explicit error, never silent misbehaviour | `internal/store/fault_test.go` |
+| Target hangs indefinitely | Timeout enforced; recorded as a hang | `test/e2e/fault_test.go` |
+| Target fork-bombs | Sandbox PID limit holds; campaign continues | `test/e2e/fault_test.go` |
+| Store opened by a newer version | Explicit version error | `internal/store/fault_test.go` |
+
+Each fault is injected for real rather than simulated. The full disk is a
+two-megabyte tmpfs, not a permission error: a write that fails because the
+filesystem is full stops part-way, and what matters is what is left on disk
+afterwards, which a permission error never exercises. The corrupted database is
+overwritten in place at its original length, which is what a bad sector looks
+like from userspace. The killed worker is proven restarted by a process
+identifier that was not in the original set, because "a worker is running"
+also passes when nothing happened.
+
+Where a fault's behaviour belongs to one package, the test lives with it: the
+store's four are injected at a byte, which an end-to-end test can only observe.
+The three that are only true of the running system are measured against the
+binaries that ship.
 
 ## 10. Layer 9 — Cross-platform CI
 

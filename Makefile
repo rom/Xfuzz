@@ -97,6 +97,17 @@ cover: ## Unit tests with a coverage profile
 fuzz: ## Layer 7: run every fuzz target against its seed corpus
 	$(GO) test -run '^Fuzz' ./...
 
+.PHONY: fuzz-all
+fuzz-all: ## Layer 7: fuzz every target for FUZZTIME each (default 30s)
+	@set -e; \
+	for pkg in $$($(GO) list ./...); do \
+	  targets=$$($(GO) test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz' || true); \
+	  for target in $$targets; do \
+	    echo "=== $$pkg $$target ($(FUZZTIME))"; \
+	    $(GO) test $$pkg -run '^$$' -fuzz "^$$target$$" -fuzztime $(FUZZTIME); \
+	  done; \
+	done
+
 .PHONY: fuzz-target
 fuzz-target: ## Layer 7: fuzz one target continuously — make fuzz-target PKG=./pkg/codec FUZZ=FuzzDecode
 	@test -n "$(PKG)" -a -n "$(FUZZ)" || { echo "usage: make fuzz-target PKG=./pkg/codec FUZZ=FuzzDecode"; exit 2; }

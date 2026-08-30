@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/rom/Xfuzz/pkg/corpus"
@@ -45,6 +46,11 @@ type Store struct {
 	// now is the clock, replaceable in tests. Timestamps are recorded for
 	// reporting; they never influence a fuzzing decision (ASR-0008).
 	now func() time.Time
+
+	// onDropped is called when a corpus entry is skipped because its payload
+	// could not be read, and droppedCount counts them.
+	onDropped    func(corpus.Digest, error)
+	droppedCount atomic.Int64
 }
 
 // Open opens or creates a store rooted at dir.
