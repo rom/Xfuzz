@@ -200,7 +200,7 @@ func (e *statefulEnv) bucketsOf(name string) map[int]int64 {
 	var list struct {
 		Findings []struct {
 			ID     int   `json:"id"`
-			Bucket int64 `json:"bucket"`
+			Bucket int64 `json:"bucket_id"`
 		} `json:"findings"`
 	}
 	out := e.mustRun(60*time.Second, "findings", "list", name, "--json")

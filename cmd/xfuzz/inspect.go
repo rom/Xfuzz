@@ -230,6 +230,7 @@ func findingsList(ctx context.Context, args []string) error {
 			ReproTrials int     `json:"repro_trials"`
 			ReproRate   float64 `json:"repro_rate"`
 			Reduction   float64 `json:"reduction"`
+			Bucket      int64   `json:"bucket_id"`
 		} `json:"findings"`
 		Count int `json:"count"`
 	}
@@ -245,8 +246,13 @@ func findingsList(ctx context.Context, args []string) error {
 	}
 	// Triage and judgement in separate columns, because they answer separate
 	// questions: what the machine found out, and what somebody decided.
-	fmt.Printf("%6s %-10s %-12s %-10s %10s  %s\n",
-		"ID", "KIND", "TRIAGE", "JUDGED", "REPRO", "SUMMARY")
+	// The bucket is which *bug* a finding is one of, and it was missing: a
+	// campaign that reports twelve findings and one bug looked the same as one
+	// that found twelve bugs. It was missing from the JSON too, which is how
+	// two tests came to assert that distinct bugs land in distinct buckets
+	// while reading zero for every bucket and checking nothing.
+	fmt.Printf("%6s %6s %-10s %-12s %-10s %10s  %s\n",
+		"ID", "BUG", "KIND", "TRIAGE", "JUDGED", "REPRO", "SUMMARY")
 	for _, f := range resp.Findings {
 		repro := "not checked"
 		if f.ReproTrials > 0 {
@@ -256,8 +262,12 @@ func findingsList(ctx context.Context, args []string) error {
 		if judged == "" {
 			judged = "-"
 		}
-		fmt.Printf("%6d %-10s %-12s %-10s %10s  %s\n",
-			f.ID, f.Kind, f.TriageState, judged, repro, f.Summary)
+		bug := "-"
+		if f.Bucket != 0 {
+			bug = fmt.Sprintf("%d", f.Bucket)
+		}
+		fmt.Printf("%6d %6s %-10s %-12s %-10s %10s  %s\n",
+			f.ID, bug, f.Kind, f.TriageState, judged, repro, f.Summary)
 	}
 	fmt.Printf("\n%d findings\n", resp.Count)
 	return nil
@@ -290,6 +300,7 @@ func findingsGet(ctx context.Context, args []string) error {
 		Diagnosis   string   `json:"diagnosis"`
 		Disposition string   `json:"disposition"`
 		Notes       string   `json:"notes"`
+		Bucket      int64    `json:"bucket_id"`
 		Reproducer  []byte   `json:"reproducer"`
 	}
 	if err := c.Do(ctx, "GET", "/v1/campaigns/"+fs.Arg(0)+"/findings/"+fs.Arg(1), nil, &f); err != nil {
@@ -299,6 +310,12 @@ func findingsGet(ctx context.Context, args []string) error {
 		return emit(*out, f.Reproducer, opts.jsonOut, f)
 	}
 	fmt.Printf("finding %d: %s %s\n", f.ID, f.Kind, f.Summary)
+	if f.Bucket != 0 {
+		// Which bug this is one of. Two findings in one bucket are one bug
+		// found twice, and knowing that is the difference between a report of
+		// twelve problems and a report of one.
+		fmt.Printf("  bug %d\n", f.Bucket)
+	}
 	for _, fr := range f.Frames {
 		fmt.Printf("  %s\n", fr)
 	}

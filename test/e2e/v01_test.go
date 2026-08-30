@@ -36,6 +36,7 @@ import (
 	"hash/crc32"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +127,8 @@ format:
 feedback:
   coverage: sancov
   objectives: [crash, hang, oom, sanitizer]
+triage:
+  markers: ["XFUZZ-BUG-"]
 workers:
   count: 2
 stop:
@@ -203,6 +206,29 @@ func TestProofObligationOneAStatelessCampaignAgainstAChecksumProtectedFormat(t *
 
 	// Clause: triaged to a minimised, reproducible finding.
 	assertMinimisedAndReproducible(t, e, "structured")
+
+	// v0.1's second clause: distinct bugs land in distinct buckets.
+	//
+	// The target names its own bugs — it prints XFUZZ-BUG-n before it aborts —
+	// and the campaign tells triage to read that, which is what a campaign
+	// against a target with its own failure vocabulary does. Without it every
+	// abort is signal 6 and one bucket, which is the honest floor and not an
+	// answer: two bugs reported as one is how finding the second stops
+	// counting as finding it (ASR-0011).
+	byBug := bugBuckets(t, e, "structured")
+	t.Logf("bug to bucket: %v", byBug)
+	if len(byBug) == 0 {
+		t.Fatal("no finding carried the target's own bug marker; " +
+			"triage was not told what this target says when it fails")
+	}
+	seen := map[int64]string{}
+	for bug, bucket := range byBug {
+		if other, clash := seen[bucket]; clash {
+			t.Errorf("bug %s and bug %s share bucket %d; the target names them apart "+
+				"and triage does not", other, bug, bucket)
+		}
+		seen[bucket] = bug
+	}
 
 	// The byte-level arm: identical in every respect except that it does not
 	// know the format.
@@ -351,4 +377,40 @@ func assertMinimisedAndReproducible(t *testing.T, e *env, name string) {
 	// Re-running it must still fail, which is what makes it a reproducer.
 	replayed := e.mustRun(120*time.Second, "replay", name, fmt.Sprintf("%d", resp.Findings[0].ID))
 	t.Logf("replay: %s", replayed)
+}
+
+// bugBuckets maps each planted bug the campaign found onto its bucket.
+func bugBuckets(t *testing.T, e *env, name string) map[string]int64 {
+	t.Helper()
+
+	out := e.mustRun(60*time.Second, "findings", name, "--json")
+	var findings struct {
+		Findings []struct {
+			ID int64 `json:"id"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(out), &findings); err != nil {
+		t.Fatalf("decoding findings: %v\n%s", err, out)
+	}
+
+	byBug := map[string]int64{}
+	for _, f := range findings.Findings {
+		one := e.mustRun(60*time.Second, "findings", "get", name,
+			fmt.Sprintf("%d", f.ID), "--json")
+		var detail struct {
+			Detail   string `json:"detail"`
+			Summary  string `json:"summary"`
+			BucketID int64  `json:"bucket_id"`
+		}
+		if err := json.Unmarshal([]byte(one), &detail); err != nil {
+			t.Fatalf("decoding finding %d: %v\n%s", f.ID, err, one)
+		}
+		text := detail.Detail + detail.Summary
+		for n := 1; n <= 5; n++ {
+			if strings.Contains(text, fmt.Sprintf("XFUZZ-BUG-%d", n)) {
+				byBug[fmt.Sprintf("%d", n)] = detail.BucketID
+			}
+		}
+	}
+	return byBug
 }
