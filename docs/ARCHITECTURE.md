@@ -60,7 +60,8 @@ github.com/rom/Xfuzz
 │   ├── rng/                deterministic, splittable, seekable randomness
 │   ├── ir/                 input IR: nodes, fixups, traversal, arena
 │   ├── schema/             .xfg grammar DSL, importers
-│   ├── codec/              parse/serialise between bytes and IR
+│   ├── codec/              parse/serialise between bytes and IR, including the
+│   │                       schema-driven one a .xfg grammar becomes
 │   ├── mutate/             mutators, mutator scheduling
 │   ├── generate/           grammar-driven generation
 │   ├── feedback/           Observer, Feedback, Objective + algebra

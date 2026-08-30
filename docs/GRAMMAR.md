@@ -43,6 +43,13 @@ format:
   grammar: ./chunked.xfg
 ```
 
+That one line does two things. It generates seeds when you have none, and — the
+part that matters — it becomes the **codec**: inputs are decoded into the tree
+the grammar describes, mutated as a tree, and repaired by the fixup pass before
+they are executed. Setting `codec: raw` beside a grammar turns the second half
+off, which is a meaningful thing to ask for when you want to measure what the
+structure is buying.
+
 And see what it produces before running anything:
 
 ```console
