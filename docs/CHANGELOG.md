@@ -160,6 +160,17 @@ listed here with its migration path.
   `internal/engine/marker_test.go` now runs both over the same inputs and
   checks the rules they share, while allowing the differences that are
   deliberate.
+- **DESIGN called bucketing "versioned"** and no signature carries a version
+  stamp. Multi-signal is true and re-bucketing on demand is true; the stamp is
+  not, and the word mattered as soon as the marker fix changed what a signature
+  computes to. Corrected, with the consequence recorded under known issues and
+  the argument for adding a stamp later stated rather than implied.
+- **The campaign file's `seed:` carried a `,string` JSON tag** that contradicted
+  the JSON Schema this project publishes, which says `"type": "integer"`. It was
+  the IEEE-double rule applied one place too far: nothing marshals a
+  `campaign.File` to JSON, YAML holds a 64-bit integer exactly, and had anything
+  ever decoded a document that validates against that schema, the tag would have
+  rejected it.
 - **The grammar workbench took its seed as a bare JSON number**, the last place
   one did. Pasting a campaign's own seed to see what that campaign was
   generating — the obvious thing to do with one — sampled a different campaign's
