@@ -32,6 +32,21 @@ selected per campaign by target capability:
 | T6 | `Session` | Connection-oriented protocol/API sessions | 10⁰–10²/s | all |
 | T7 | `Driver` | GUI/TUI drivers (ADR-0013) | 10⁻¹–10¹/s | platform-dependent |
 
+**T3's place in that order has a precondition, added 2026-08-31.** The rates
+above read as properties of the tiers. T3's is not: a pool is faster than T4
+only because the next process is created *while* the current one runs, and that
+overlap needs a core to happen on. Given one the win is large; on a saturated or
+two-core machine the spawn merely moves and the two tiers converge. Measured
+with the same target on both: 1383 against 634 exec/s on a 4-core host, and 256
+against 239 — a ratio of 1.07 — on a 2-core CI runner.
+
+This matters for where T3 is deployed rather than whether it is worth having.
+It is the portable stand-in for the fork server, so it runs where there is no
+fork server, and a single-core Windows container is exactly the shape of host
+that gets no benefit from it. `TestTiersAreOrderedAsADR0009Claims` asserts the
+T3-over-T4 ordering only where the host can supply the overlap, and logs the
+ratio everywhere so the convergence is visible.
+
 Common contract across all tiers:
 
 - **Reset semantics** are explicit (`none`/`reconnect`/`restart`/`snapshot`),
