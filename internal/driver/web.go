@@ -259,15 +259,29 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 	// start — with an error about the profile rather than about the sandbox.
 	_ = os.Chmod(dataDir, 0o755)
 
-	// A browser writes temporary files as well as profile files, and under
-	// confinement the system temporary directory is not writable either. Giving
-	// it one inside the profile puts both under the same allowed path.
+	// A browser writes three kinds of thing, and only one of them is the profile
+	// the command line names. Its temporary files go to TMPDIR, and — before it
+	// has read a command line at all — it works out where its *default* profile
+	// would live from the home directory and creates it. Both are somewhere
+	// confinement does not allow, and the second is the one that kills it:
+	// measured on macOS, Chromium dies with `Failed to get the path for 1001`,
+	// which is the user data directory, while `--user-data-dir` names a
+	// perfectly good one somewhere else.
+	//
+	// So both go inside the profile directory, which is the one place already
+	// writable. That is not only a fix for confinement: a browser pointed at the
+	// operator's home directory reads the operator's profile — their extensions,
+	// their cookies, their settings — and a finding that depends on those does
+	// not reproduce anywhere else (ASR-0008). A harness gets a fresh home.
 	tmpDir := filepath.Join(dataDir, "tmp")
-	if err := os.Mkdir(tmpDir, 0o777); err != nil {
-		os.RemoveAll(dataDir)
-		return nil, fmt.Errorf("driver: creating the browser's temporary directory: %w", err)
+	homeDir := filepath.Join(dataDir, "home")
+	for _, d := range []string{tmpDir, homeDir} {
+		if err := os.Mkdir(d, 0o777); err != nil {
+			os.RemoveAll(dataDir)
+			return nil, fmt.Errorf("driver: creating the browser's scratch directory: %w", err)
+		}
+		_ = os.Chmod(d, 0o777)
 	}
-	_ = os.Chmod(tmpDir, 0o777)
 
 	// A pipe rather than a file: the endpoint is announced on standard error
 	// and the announcement is what says the browser is ready. Polling an HTTP
@@ -285,9 +299,8 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 		// A headless browser needs less of the session than a desktop
 		// application does, and it still needs a home directory to put its
 		// profile beside and a display when the campaign asked to watch it.
-		// TMPDIR is set to a directory inside the profile so that everything
-		// the browser writes is under one path — see withBrowserTemp.
-		Env: withBrowserTemp(WithSessionEnv(d.opts.Env), tmpDir),
+		// Everything the browser writes is under one path — see browserEnv.
+		Env: browserEnv(d.opts.Env, homeDir, tmpDir),
 		// The profile directory, and not because the browser cares where it
 		// starts: the working directory is what a sandbox keeps writable.
 		//
@@ -418,20 +431,28 @@ func (t *tail) String() string {
 	return strings.TrimSpace(string(t.buf[t.pos:]) + string(t.buf[:t.pos]))
 }
 
-// withBrowserTemp points the browser's temporary directory inside its profile.
+// browserEnv points the browser's home and temporary directories inside its
+// profile, and then fills in the rest of the session as any harness gets it.
 //
-// The campaign wins where it named TMPDIR, on the same rule WithSessionEnv
-// follows: an operator who set it meant that directory. Otherwise the browser
-// gets one under the profile, which is where confinement already permits it to
-// write — a browser that cannot write a temporary file fails in ways that read
-// as the page being broken rather than as the sandbox being tight.
-func withBrowserTemp(env []string, tmp string) []string {
+// Set before WithSessionEnv rather than after, which is what makes the campaign
+// win: that function adds only what is missing, so a variable named here is one
+// it will not override — and an operator who set HOME or TMPDIR meant those
+// directories.
+func browserEnv(env []string, home, tmp string) []string {
+	out := append([]string(nil), env...)
+	out = withVar(out, "HOME", home)
+	out = withVar(out, "TMPDIR", tmp)
+	return WithSessionEnv(out)
+}
+
+// withVar sets a variable unless it is already there.
+func withVar(env []string, key, value string) []string {
 	for _, e := range env {
-		if k, _, ok := strings.Cut(e, "="); ok && k == "TMPDIR" {
+		if k, _, ok := strings.Cut(e, "="); ok && k == key {
 			return env
 		}
 	}
-	return append(env, "TMPDIR="+tmp)
+	return append(env, key+"="+value)
 }
 
 // browserArgs assembles the command line.

@@ -2,7 +2,10 @@ package campaign
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,8 +120,8 @@ func (r *Resolved) validateTarget(add addFunc) {
 		add("target.path", fmt.Sprintf("%s cannot be read: %v", t.Path, err), "")
 	} else if fi.IsDir() {
 		add("target.path", t.Path+" is a directory", "")
-	} else if fi.Mode()&0o111 == 0 {
-		add("target.path", t.Path+" is not executable", "chmod +x it, or point at the right file")
+	} else if !isExecutable(t.Path, fi.Mode()) {
+		add("target.path", t.Path+" is not executable", executableHint)
 	}
 
 	switch t.Executor {
@@ -883,3 +886,35 @@ func (r *Resolved) validateLearn(add addFunc) {
 				"without one there is nothing to learn over")
 	}
 }
+
+// isExecutable reports whether the platform will run this file.
+//
+// The permission bits are a Unix answer, and on Windows they are not an answer
+// at all: the mode a stat returns there is derived from file attributes and
+// never carries an execute bit, while what actually makes a file runnable is
+// its extension. Checking the bits on Windows therefore rejects every target —
+// measured, on the one platform where a file named portable.exe plainly was
+// executable and the campaign was refused because it was not marked so.
+//
+// A runtime check rather than two files with build constraints, because
+// ARCHITECTURE.md § 2 keeps those to internal/platform, and a public package
+// may not reach into internal at all. What is here is not a mechanism; it is
+// one fact about how a platform decides, in the one place that has to ask.
+func isExecutable(path string, mode fs.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return mode&0o111 != 0
+	}
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".exe", ".com", ".bat", ".cmd":
+		return true
+	}
+	return false
+}
+
+// executableHint says how to fix it, in the terms of the platform being fixed.
+var executableHint = func() string {
+	if runtime.GOOS == "windows" {
+		return "name a .exe, .com, .bat or .cmd, or point at the right file"
+	}
+	return "chmod +x it, or point at the right file"
+}()

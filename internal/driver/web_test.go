@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -369,5 +370,47 @@ func TestFindBrowserNamesWhatItTried(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "this-browser-does-not-exist") {
 		t.Fatalf("the error does not name what was asked for: %v", err)
+	}
+}
+
+// TestTheBrowserGetsAFreshHomeAndTemporaryDirectory pins the environment a
+// harness browser runs in, which no test that needs a browser can check on a
+// machine that has none — and which is what a whole platform's web tests failed
+// on.
+//
+// Two things depend on it. Confinement allows the profile directory and little
+// else, and a browser works out where its *default* profile would live from the
+// home directory and creates it before it has read a command line: on macOS that
+// failed as `Failed to get the path for 1001`, naming the user data directory
+// while `--user-data-dir` pointed at a perfectly good one. And reproducibility:
+// a browser pointed at the operator's home reads the operator's profile, and a
+// finding that depends on their extensions and cookies does not reproduce
+// anywhere else (ASR-0008).
+func TestTheBrowserGetsAFreshHomeAndTemporaryDirectory(t *testing.T) {
+	profile := t.TempDir()
+	home := filepath.Join(profile, "home")
+	tmp := filepath.Join(profile, "tmp")
+
+	env := browserEnv(nil, home, tmp)
+	got := map[string]string{}
+	for _, e := range env {
+		if k, v, ok := strings.Cut(e, "="); ok {
+			got[k] = v
+		}
+	}
+	if got["HOME"] != home {
+		t.Errorf("HOME = %q, want the scratch home %q", got["HOME"], home)
+	}
+	if got["TMPDIR"] != tmp {
+		t.Errorf("TMPDIR = %q, want the scratch temporary directory %q", got["TMPDIR"], tmp)
+	}
+
+	// And the campaign wins where it named one, which is the rule every session
+	// variable follows: an operator who set HOME meant that directory.
+	env = browserEnv([]string{"HOME=/somewhere/else"}, home, tmp)
+	for _, e := range env {
+		if e == "HOME="+home {
+			t.Error("the campaign's own HOME was overridden by the scratch one")
+		}
 	}
 }

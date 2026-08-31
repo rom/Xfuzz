@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -853,5 +854,65 @@ func TestAPlainByteCountStillWorks(t *testing.T) {
 	}
 	if got := cfg.Storage.MaxCorpusBytes.Bytes(); got != 1<<30 {
 		t.Errorf("max_corpus_bytes = %d, want %d", got, 1<<30)
+	}
+}
+
+// TestATargetIsExecutableByThePlatformsRule checks the one thing about a
+// campaign file that a Unix-shaped assumption got wrong on a whole platform:
+// whether the program it names can actually be run.
+//
+// Windows decides by extension and its stat never returns an execute bit, so
+// the permission-bit check refused every target there — a campaign naming
+// portable.exe was rejected as not executable on the platform where it plainly
+// was. The rule is one rule with a platform's answer, so the test asks for the
+// platform's answer too.
+func TestATargetIsExecutableByThePlatformsRule(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name string, mode os.FileMode) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("not really a program"), mode); err != nil {
+			t.Fatal(err)
+		}
+		// WriteFile's mode is masked by the umask, so set it outright.
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	plain := write("plain", 0o644)
+	marked := write("marked", 0o755)
+	exeSuffix := write("program.exe", 0o644)
+
+	check := func(path string, want bool) {
+		t.Helper()
+		fi, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := isExecutable(path, fi.Mode()); got != want {
+			t.Errorf("isExecutable(%s) = %t on %s, want %t", filepath.Base(path), got, runtime.GOOS, want)
+		}
+	}
+
+	if runtime.GOOS == "windows" {
+		// The extension decides, and the bits are not even set by a stat there.
+		check(plain, false)
+		check(marked, false)
+		check(exeSuffix, true)
+	} else {
+		// The bits decide, and an extension means nothing.
+		check(plain, false)
+		check(marked, true)
+		check(exeSuffix, false)
+	}
+
+	// And the advice matches the rule, or it sends somebody to run a command
+	// that will not help them.
+	if runtime.GOOS == "windows" && strings.Contains(executableHint, "chmod") {
+		t.Errorf("the hint tells a Windows operator to chmod: %q", executableHint)
+	}
+	if runtime.GOOS != "windows" && !strings.Contains(executableHint, "chmod") {
+		t.Errorf("the hint does not say how to mark a file executable: %q", executableHint)
 	}
 }

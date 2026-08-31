@@ -240,6 +240,18 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
+- **A campaign was refused on Windows because its target "is not executable".**
+  The permission bits are a Unix answer and Windows never returns one — what
+  makes a file runnable there is its extension — so the check rejected every
+  target on that platform, `portable.exe` included. The rule now asks the
+  platform, and the advice it gives matches the platform being advised.
+- **The browser ran with the operator's home directory.** Under confinement that
+  is where it died: it works out where its *default* profile would live from
+  `HOME` and creates it before it has read a command line, so on macOS it failed
+  as `Failed to get the path for 1001` while `--user-data-dir` named a perfectly
+  good directory elsewhere. It gets a fresh home beside its profile now — which
+  it should have had anyway, since a browser reading the operator's extensions
+  and cookies produces findings that reproduce nowhere else (ASR-0008).
 - **`xfuzz doctor` reported `cgroups` on Windows**, where there are none. Every
   other row in that report is a mechanism, and a reader scanning the names is
   entitled to read them as facts about their machine; a job object does a
