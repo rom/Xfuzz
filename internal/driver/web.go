@@ -340,8 +340,14 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 
 	endpoint, noise, err := readEndpoint(pr, startCtx)
 	if err != nil {
+		// How it was started, as well as what it said. A browser that will not
+		// start usually says why in terms of its own files — "failed to get the
+		// path for 1001" names a profile directory — and the reason it could
+		// not have that file is often the confinement it was started under,
+		// which it has no way to know about and no way to mention.
 		return fail(fmt.Errorf("driver: the browser did not announce a debugging "+
-			"endpoint: %w\nwhat it said instead:\n%s", err, noise))
+			"endpoint: %w\nwhat it said instead:\n%s\nhow it was started: isolation %s: %s",
+			err, noise, d.spawn.IsolationLevel(), d.spawn.Explain()))
 	}
 	// Kept from here on rather than discarded, and kept rather than merely
 	// drained. A browser that will not do what it is asked usually said why on

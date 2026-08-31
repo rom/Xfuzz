@@ -38,6 +38,28 @@ func newTUI(t *testing.T, opts driver.TUIOptions) *driver.TUI {
 	return d
 }
 
+// awaitScreen waits for the screen to say something, settling as it goes.
+//
+// One settle is not a guarantee that a program has drawn. Settle returns when
+// the terminal has been quiet for the settle window, and a program that has not
+// been scheduled yet has been perfectly quiet — so on a loaded machine the
+// first read can come back before the first frame. Measured: the initial screen
+// was missing on a two-core runner, in a test that had passed everywhere else.
+//
+// Bounded, so a program that never draws still fails rather than hanging, and
+// the failure still shows the screen it did have.
+func awaitScreen(t *testing.T, d *driver.TUI, want string) string {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got := string(d.State())
+		if strings.Contains(got, want) || time.Now().After(deadline) {
+			return got
+		}
+		d.Settle(t.Context())
+	}
+}
+
 func TestTUIStartsAProgramAndReadsItsScreen(t *testing.T) {
 	d := newTUI(t, driver.TUIOptions{})
 	if err := d.Start(t.Context()); err != nil {
@@ -169,16 +191,12 @@ func TestTUIResizeReachesTheProgram(t *testing.T) {
 	if err := d.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(d.State()); !strings.Contains(got, "60x20") {
+	if got := awaitScreen(t, d, "60x20"); !strings.Contains(got, "60x20") {
 		t.Fatalf("the program did not see its initial size:\n%s", got)
 	}
 
 	send(t, d, "resize 32 12")
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(string(d.State()), "32x12") && time.Now().Before(deadline) {
-		d.Settle(t.Context())
-	}
-	if got := string(d.State()); !strings.Contains(got, "32x12") {
+	if got := awaitScreen(t, d, "32x12"); !strings.Contains(got, "32x12") {
 		t.Errorf("the program was not told about the resize:\n%s", got)
 	}
 	if s := d.Screen(); s.Cols != 32 || s.Rows != 12 {

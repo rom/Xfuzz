@@ -392,10 +392,19 @@ func (e *ForkServer) cycle() (feedback.ExitKind, error) {
 }
 
 func (e *ForkServer) cycleDeadline() time.Duration {
-	if e.Timeout > 5*time.Second {
-		return e.Timeout
-	}
-	return 5 * time.Second
+	// The child's own timer is what bounds an execution; this only decides how
+	// long to wait before concluding the server is gone. So it is the target's
+	// timeout plus room for a machine under load — which a fuzzing host always
+	// is — rather than a small fixed number.
+	//
+	// Being wrong in the tight direction does not cost a slow execution, it
+	// costs the campaign: the server is declared lost, killed and restarted,
+	// and the execution is recorded as a timeout that never happened. Measured
+	// on a two-core runner building and testing four packages at once, against
+	// a target that answers in milliseconds: `read |0: i/o timeout` after five
+	// seconds, and a campaign that reported its own harness as the failure.
+	const slack = 15 * time.Second
+	return e.Timeout + slack
 }
 
 // serverDied reports the loss of the fork server and drops the handle so the

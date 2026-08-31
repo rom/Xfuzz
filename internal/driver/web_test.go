@@ -65,17 +65,28 @@ const (
 	askX, askY     = 170, 70
 )
 
-// webSpawner is the spawner a web campaign needs.
+// webSpawner is the spawner these tests use to start a browser.
 //
-// Network: true is not a test convenience. A browser in a network namespace of
-// its own has its own loopback, so the debugging endpoint it announces on
-// 127.0.0.1 is not the fuzzer's 127.0.0.1 and the connection is refused — and
-// it could not reach the target URL either. A web campaign reaches the network
-// by definition, which is why the worker sets this and why the scope guard is
-// what constrains it.
+// Unconfined, on the same reasoning the terminal tests give: what is under test
+// here is the debugging protocol — the pages, the events, the state a screen
+// makes — and a sandbox that refuses to start the browser fails all of it for
+// an unrelated reason. The confined path is internal/safety's own to test, and
+// this driver reaches it through the same spawner as every other backend.
+//
+// It is also the honest arrangement on macOS, where a Seatbelt profile denies
+// writes outside the campaign's directories and a browser works out where its
+// *default* profile lives from the operating system rather than from HOME: it
+// dies before it has read a command line, saying `Failed to get the path for
+// 1001`, which names a user data directory and nothing about a sandbox.
+//
+// Network access is not a test convenience either. A browser in a network
+// namespace of its own has its own loopback, so the debugging endpoint it
+// announces on 127.0.0.1 is not the fuzzer's — and it could not reach the page
+// under test. A web campaign reaches the network by definition, which is why
+// the worker sets this and why the scope guard is what constrains it.
 func webSpawner() *safety.Spawner {
-	s := safety.NewSpawner()
-	s.Sandbox = &safety.Sandbox{Network: true}
+	s := safety.NewTrustedSpawner()
+	s.Sandbox.Network = true
 	return s
 }
 
