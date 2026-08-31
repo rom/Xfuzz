@@ -325,10 +325,20 @@ jobs:
       - name: compare against committed baseline (allocations only)
         if: github.event_name != 'pull_request'
         run: |
+          # The spawning benchmarks are measured and reported here, never
+          # gated. "Allocation counts are host-independent" is true of a
+          # computation and false of anything that goes through the safety
+          # layer, because how many allocations a spawn costs depends on which
+          # confinement mechanisms the host provides. Measured across two hosts:
+          # all three reported allocations up 37-45% while bytes went *down*
+          # 3-8% — the same work divided differently, gated as a regression.
+          # On a pull request both sides run on one runner, so the comparison
+          # below gates them like everything else.
           go run ./tools/benchcmp \
             -baseline bench/baseline.txt \
             -current bench/current.txt \
-            -gate-units allocs/op,B/op
+            -gate-units allocs/op,B/op \
+            -host-dependent BenchmarkProcPool,BenchmarkSubprocess,BenchmarkSubprocessNop,BenchmarkForkServer/nop,BenchmarkForkServer/nop+coverage,BenchmarkForkServer/simple_parser+coverage,BenchmarkSession
 
       - name: measure base branch on this runner
         if: github.event_name == 'pull_request'

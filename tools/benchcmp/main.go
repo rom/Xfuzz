@@ -40,6 +40,17 @@ func higherIsBetter(unit string) bool { return strings.HasSuffix(unit, "/s") }
 // threshold.
 func exact(unit string) bool { return unit == "allocs/op" }
 
+// set turns a comma-separated flag value into a lookup.
+func set(csv string) map[string]bool {
+	m := map[string]bool{}
+	for _, v := range strings.Split(csv, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			m[v] = true
+		}
+	}
+	return m
+}
+
 // Parse reads `go test -bench` output.
 //
 // A benchmark line looks like:
@@ -148,7 +159,18 @@ func (f Finding) String() string {
 // compare meaningfully anywhere. CI gates allocations against the committed
 // baseline and gates timings only when both measurements come from the same
 // runner.
-func Compare(baseline, current map[string]Result, threshold float64, gateUnits map[string]bool) (findings []Finding, missing, added []string) {
+//
+// hostDependent names benchmarks for which that last sentence is false, and
+// they exist. "Allocation counts are deterministic" holds for a computation; it
+// does not hold for anything that spawns a process through the safety layer,
+// because how many allocations a spawn costs depends on which confinement
+// mechanisms the host actually provides. Measured across two hosts: the three
+// spawning benchmarks each reported allocations up by 37-45% while bytes went
+// *down* by 3-8%, which is not a regression but the same work divided
+// differently. On a pull request both sides are measured on one runner and
+// everything is comparable again, so this exemption applies only to the
+// push-time comparison against a baseline recorded elsewhere.
+func Compare(baseline, current map[string]Result, threshold float64, gateUnits map[string]bool, hostDependent map[string]bool) (findings []Finding, missing, added []string) {
 	for name := range baseline {
 		if _, ok := current[name]; !ok {
 			missing = append(missing, name)
@@ -198,6 +220,9 @@ func Compare(baseline, current map[string]Result, threshold float64, gateUnits m
 				regressed = c > b
 			}
 			gated := len(gateUnits) == 0 || gateUnits[unit]
+			if hostDependent[name] {
+				gated = false
+			}
 			findings = append(findings, Finding{
 				Benchmark: name, Unit: unit, Baseline: b, Current: c,
 				Delta: delta, Regressed: regressed && gated, Gated: gated,
@@ -212,16 +237,13 @@ func main() {
 	currentPath := flag.String("current", "", "current benchmark output to compare (required)")
 	threshold := flag.Float64("threshold", 0.10, "fraction a metric may worsen before failing")
 	failOnMissing := flag.Bool("fail-on-missing", false, "fail if a baseline benchmark is absent from the current run")
+	hostDependent := flag.String("host-dependent", "",
+		"comma-separated benchmark names whose metrics are not comparable across hosts; measured and reported, never gated")
 	gateUnits := flag.String("gate-units", "",
 		"comma-separated units that may fail the build (default: all). Use \"allocs/op,B/op\" when the two runs come from different machines, since timing is host-dependent.")
 	flag.Parse()
 
-	gate := map[string]bool{}
-	for _, u := range strings.Split(*gateUnits, ",") {
-		if u = strings.TrimSpace(u); u != "" {
-			gate[u] = true
-		}
-	}
+	gate := set(*gateUnits)
 
 	if *currentPath == "" {
 		fmt.Fprintln(os.Stderr, "benchcmp: -current is required")
@@ -241,7 +263,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	findings, missing, added := Compare(baseline, current, *threshold, gate)
+	findings, missing, added := Compare(baseline, current, *threshold, gate, set(*hostDependent))
 
 	fmt.Printf("%-40s %-10s %12s    %12s  %8s  %s\n", "BENCHMARK", "UNIT", "BASELINE", "CURRENT", "DELTA", "VERDICT")
 	regressions := 0

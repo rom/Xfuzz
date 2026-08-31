@@ -35,7 +35,7 @@ func TestParse(t *testing.T) {
 func TestCompareDetectsSlowdown(t *testing.T) {
 	base := map[string]Result{"B": {"B", map[string]float64{"ns/op": 100}}}
 	cur := map[string]Result{"B": {"B", map[string]float64{"ns/op": 120}}}
-	f, _, _ := Compare(base, cur, 0.10, nil)
+	f, _, _ := Compare(base, cur, 0.10, nil, nil)
 	if len(f) != 1 || !f[0].Regressed {
 		t.Errorf("a 20%% slowdown must regress at a 10%% threshold: %v", f)
 	}
@@ -44,7 +44,7 @@ func TestCompareDetectsSlowdown(t *testing.T) {
 func TestCompareToleratesNoise(t *testing.T) {
 	base := map[string]Result{"B": {"B", map[string]float64{"ns/op": 100}}}
 	cur := map[string]Result{"B": {"B", map[string]float64{"ns/op": 105}}}
-	f, _, _ := Compare(base, cur, 0.10, nil)
+	f, _, _ := Compare(base, cur, 0.10, nil, nil)
 	if f[0].Regressed {
 		t.Errorf("a 5%% slowdown must not regress at a 10%% threshold: %v", f)
 	}
@@ -54,13 +54,13 @@ func TestCompareTreatsRatesAsHigherIsBetter(t *testing.T) {
 	base := map[string]Result{"B": {"B", map[string]float64{"execs/s": 10000}}}
 
 	slower := map[string]Result{"B": {"B", map[string]float64{"execs/s": 8000}}}
-	f, _, _ := Compare(base, slower, 0.10, nil)
+	f, _, _ := Compare(base, slower, 0.10, nil, nil)
 	if !f[0].Regressed {
 		t.Error("a 20% drop in execs/s must regress")
 	}
 
 	faster := map[string]Result{"B": {"B", map[string]float64{"execs/s": 20000}}}
-	f, _, _ = Compare(base, faster, 0.10, nil)
+	f, _, _ = Compare(base, faster, 0.10, nil, nil)
 	if f[0].Regressed {
 		t.Error("a doubling of execs/s must not regress")
 	}
@@ -69,13 +69,13 @@ func TestCompareTreatsRatesAsHigherIsBetter(t *testing.T) {
 func TestCompareTreatsAllocationsExactly(t *testing.T) {
 	base := map[string]Result{"B": {"B", map[string]float64{"allocs/op": 0}}}
 	cur := map[string]Result{"B": {"B", map[string]float64{"allocs/op": 1}}}
-	f, _, _ := Compare(base, cur, 0.50, nil)
+	f, _, _ := Compare(base, cur, 0.50, nil, nil)
 	if !f[0].Regressed {
 		t.Error("any increase in allocs/op must regress, regardless of threshold")
 	}
 
 	same := map[string]Result{"B": {"B", map[string]float64{"allocs/op": 0}}}
-	f, _, _ = Compare(base, same, 0.10, nil)
+	f, _, _ = Compare(base, same, 0.10, nil, nil)
 	if f[0].Regressed {
 		t.Error("unchanged allocs/op must not regress")
 	}
@@ -84,7 +84,7 @@ func TestCompareTreatsAllocationsExactly(t *testing.T) {
 func TestCompareReportsAddedAndMissing(t *testing.T) {
 	base := map[string]Result{"Gone": {"Gone", map[string]float64{"ns/op": 1}}}
 	cur := map[string]Result{"New": {"New", map[string]float64{"ns/op": 1}}}
-	_, missing, added := Compare(base, cur, 0.10, nil)
+	_, missing, added := Compare(base, cur, 0.10, nil, nil)
 	if len(missing) != 1 || missing[0] != "Gone" {
 		t.Errorf("missing = %v, want [Gone]", missing)
 	}
@@ -123,7 +123,7 @@ func TestGateUnitsLimitWhatCanFail(t *testing.T) {
 
 	// Timing is host-dependent: when only allocations are gated, a 5x slowdown
 	// is reported but must not fail the build.
-	f, _, _ := Compare(base, cur, 0.10, map[string]bool{"allocs/op": true})
+	f, _, _ := Compare(base, cur, 0.10, map[string]bool{"allocs/op": true}, nil)
 	for _, x := range f {
 		if x.Unit == "ns/op" {
 			if x.Regressed {
@@ -139,7 +139,7 @@ func TestGateUnitsLimitWhatCanFail(t *testing.T) {
 	}
 
 	// With no restriction, the same slowdown fails.
-	f, _, _ = Compare(base, cur, 0.10, nil)
+	f, _, _ = Compare(base, cur, 0.10, nil, nil)
 	found := false
 	for _, x := range f {
 		if x.Unit == "ns/op" && x.Regressed {
@@ -154,8 +154,59 @@ func TestGateUnitsLimitWhatCanFail(t *testing.T) {
 func TestGatedAllocationRegressionStillFails(t *testing.T) {
 	base := map[string]Result{"B": {"B", map[string]float64{"allocs/op": 0}}}
 	cur := map[string]Result{"B": {"B", map[string]float64{"allocs/op": 2}}}
-	f, _, _ := Compare(base, cur, 0.10, map[string]bool{"allocs/op": true})
+	f, _, _ := Compare(base, cur, 0.10, map[string]bool{"allocs/op": true}, nil)
 	if !f[0].Regressed {
 		t.Error("an allocation regression must fail even when only allocations are gated")
 	}
+}
+
+// A benchmark named host-dependent is measured and reported, never gated.
+//
+// "Allocation counts are deterministic" is true of a computation and false of
+// anything that spawns a process: how many allocations a spawn costs depends on
+// which confinement mechanisms the host provides. Measured across two hosts,
+// the three spawning benchmarks each reported allocations up 37-45% while bytes
+// went *down* 3-8% — the same work divided differently, gated as a regression.
+func TestAHostDependentBenchmarkIsReportedButNotGated(t *testing.T) {
+	base := Parse("BenchmarkSpawn-4  100  1000 ns/op  74 allocs/op\n" +
+		"BenchmarkPure-4   100  1000 ns/op   0 allocs/op\n")
+	cur := Parse("BenchmarkSpawn-4  100  1000 ns/op  107 allocs/op\n" +
+		"BenchmarkPure-4   100  1000 ns/op    3 allocs/op\n")
+
+	gate := map[string]bool{"allocs/op": true}
+
+	// Without the exemption both are regressions.
+	f, _, _ := Compare(base, cur, 0.10, gate, nil)
+	if got := countGated(f); got != 2 {
+		t.Fatalf("gated %d findings, want 2 before the exemption", got)
+	}
+
+	// With it, the spawning one is still compared and still reported — it must
+	// not vanish — but it cannot fail the build, and the pure one still can.
+	f, _, _ = Compare(base, cur, 0.10, gate, map[string]bool{"BenchmarkSpawn": true})
+	if got := countGated(f); got != 1 {
+		t.Fatalf("gated %d findings, want only the pure benchmark", got)
+	}
+	var sawSpawn bool
+	for _, x := range f {
+		if x.Benchmark == "BenchmarkSpawn" && x.Unit == "allocs/op" {
+			sawSpawn = true
+			if x.Gated {
+				t.Error("the exempt benchmark was gated")
+			}
+		}
+	}
+	if !sawSpawn {
+		t.Error("the exempt benchmark disappeared from the report instead of being reported ungated")
+	}
+}
+
+func countGated(fs []Finding) int {
+	n := 0
+	for _, f := range fs {
+		if f.Regressed {
+			n++
+		}
+	}
+	return n
 }

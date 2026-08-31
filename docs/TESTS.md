@@ -212,6 +212,18 @@ the fuzzer. So the gate has two parts:
   rate the same executor achieves against a do-nothing target. That ratio says
   whether the executor spends its time in the target or in the protocol around
   it, and it means the same thing on any machine.
+The same reasoning applies once more, to the metric everyone assumes is safe.
+`benchcmp` gates allocation counts *exactly* rather than against a threshold,
+on the stated grounds that they are deterministic and so compare meaningfully
+between machines. That is true of a computation and false of anything that
+spawns a process: how many allocations a spawn costs depends on which
+confinement mechanisms the host actually provides. Measured across two hosts,
+the three spawning benchmarks each reported allocations up 37–45% while bytes
+went *down* 3–8% — the same work divided differently, and reported as a
+regression. Those benchmarks are named to `-host-dependent`, which measures and
+reports them and never lets them fail a push. On a pull request both sides are
+measured on one runner, and there they are gated like everything else.
+
 - **Asserted where the host allows it:** the absolute floor. Where the host's own
   do-nothing rate is below the floor, the test says so and skips that assertion
   rather than reporting a failure it cannot attribute.
