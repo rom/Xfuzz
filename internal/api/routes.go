@@ -983,6 +983,7 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 		"installs limits and the denylist in the process that becomes the target"))
 	cs = append(cs, foundTool(daemon.WorkerBinaryName, "runs a campaign's workers"))
 	cs = append(cs, foundTool("clang", "builds instrumented targets through xfuzz-cc"))
+	cs = append(cs, goCoverage())
 
 	// The binary-only backends (ADR-0002). These are what a campaign has when
 	// the target cannot be rebuilt, and each is unavailable for its own reason:
@@ -1163,6 +1164,34 @@ func consoleDetail() string {
 // One row each rather than a single "binary-only" row, because they fail
 // independently and for different reasons, and because the remedy differs: the
 // breakpoint backend needs a kernel setting, and the other two need a package.
+// goCoverage reports whether a Go target can be given coverage on this host.
+//
+// Worth its own line because its absence is the case ADR-0026 left open: a Go
+// program with no coverage backend runs black box, which looks like a working
+// campaign that learns nothing. It needs the Go toolchain for the
+// instrumentation and a C compiler for the runtime object the instrumentation
+// resolves against — the second is easy to miss, because nothing else about
+// building a Go program does.
+func goCoverage() Capability {
+	goPath, goErr := safety.FindTool("go")
+	cc, ccErr := safety.FindTool("clang")
+	if ccErr != nil {
+		cc, ccErr = safety.FindTool("gcc")
+	}
+	switch {
+	case goErr != nil:
+		return Capability{Name: "gocov", Detail: "coverage for a Go target, through the " +
+			"compiler's own instrumentation; needs the go toolchain, which is not on PATH"}
+	case ccErr != nil:
+		return Capability{Name: "gocov", Detail: "coverage for a Go target; the go toolchain " +
+			"is at " + goPath + " but no C compiler was found, and the runtime the " +
+			"instrumentation resolves against is C"}
+	}
+	return Capability{Name: "gocov", Available: true,
+		Detail: "coverage for a Go target with no clang instrumentation of its own, built " +
+			"with xfuzz-cc --go; " + goPath + " and " + cc}
+}
+
 func binaryOnlyCapabilities() []Capability {
 	cs := []Capability{{
 		Name:      "ptrace-bb",

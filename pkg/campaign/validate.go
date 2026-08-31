@@ -187,7 +187,7 @@ func (r *Resolved) validateFormat(add addFunc) {
 func (r *Resolved) validateFeedback(add addFunc) {
 	f := r.Feedback
 	switch f.Coverage {
-	case CoverageSancov, CoverageBlackbox, CoverageNone:
+	case CoverageSancov, CoverageGocov, CoverageBlackbox, CoverageNone:
 	case CoveragePtraceBB, CoverageQemu, CoverageFrida:
 		// The binary-only backends (ADR-0002). They need no instrumented build,
 		// so they are the answer for a target nobody can rebuild — and they are
@@ -195,7 +195,7 @@ func (r *Resolved) validateFeedback(add addFunc) {
 		// them automatically.
 	default:
 		add("feedback.coverage", fmt.Sprintf("%q is not a coverage backend", f.Coverage),
-			"one of sancov, ptrace-bb, qemu, frida, blackbox, none")
+			"one of sancov, gocov, ptrace-bb, qemu, frida, blackbox, none")
 	}
 
 	// The binary-only backends are the T5 tier and only the T5 tier: they work
@@ -224,11 +224,13 @@ func (r *Resolved) validateFeedback(add addFunc) {
 	// which looks like a target with no constants in it.
 	if f.CmpLog || f.ValueProfile {
 		switch f.Coverage {
-		case CoverageSancov:
+		case CoverageSancov, CoverageGocov:
+			// Both are instrumented builds carrying the runtime, and Go's own
+			// instrumentation emits the same comparison callbacks clang's does.
 		default:
 			add("feedback.cmplog", fmt.Sprintf("needs an instrumented build and coverage is %q", f.Coverage),
 				"comparison operands come from the runtime linked into the target by "+
-					"xfuzz-cc; set feedback.coverage to sancov, or turn cmplog off")
+					"xfuzz-cc; set feedback.coverage to sancov or gocov, or turn cmplog off")
 		}
 	}
 	if f.ValueProfile && !f.CmpLog {

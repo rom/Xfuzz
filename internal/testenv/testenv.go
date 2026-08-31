@@ -90,6 +90,32 @@ func BuildTarget(t testing.TB, name string) string {
 	return out
 }
 
+// BuildGoTarget compiles a Go planted-bug target with Xfuzz instrumentation.
+//
+// Through xfuzz-cc's Go mode rather than `go build`, because the claim under
+// test is that the tool produces a target the fuzzer can read coverage from —
+// and reproducing its flags here would be testing a copy of them.
+func BuildGoTarget(t testing.TB, name string) string {
+	t.Helper()
+	if _, err := exec.LookPath("clang"); err != nil {
+		if _, err := exec.LookPath("gcc"); err != nil {
+			t.Skip("no C compiler; the runtime object cannot be built")
+		}
+	}
+	dir := ReachableDir(t)
+	cc := BuildBinary(t, dir, "xfuzz-cc")
+	out := filepath.Join(dir, name)
+	cmd := exec.Command(cc, "--go", "-o", out, "./testdata/targets/go/"+name)
+	cmd.Dir = RepoRoot(t)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building the Go target %s: %v\n%s", name, err, b)
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // BuildAt compiles the package in src to out and returns out.
 //
 // For fixtures a test writes on the fly, which is how the fault-injection

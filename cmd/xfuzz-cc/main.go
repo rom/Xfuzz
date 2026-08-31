@@ -27,6 +27,7 @@ const usage = `xfuzz-cc — compile a target with Xfuzz coverage instrumentation
 
 Usage:
   xfuzz-cc [compiler flags] source.c ...      compile and link, instrumented
+  xfuzz-cc --go [go build flags] ./pkg        build a Go target, instrumented
   xfuzz-cc --print-runtime                    write the C runtime to stdout
   xfuzz-cc --version
 
@@ -68,6 +69,8 @@ func run(args []string) error {
 	case "--print-runtime":
 		_, err := os.Stdout.WriteString(xfuzzrt.Source())
 		return err
+	case "--go":
+		return goBuild(args[1:])
 	}
 
 	cxx := isCXX(os.Args[0], args)

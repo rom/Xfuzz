@@ -114,6 +114,13 @@ type built struct {
 	captureSeed []byte
 	captureNote string
 
+	// counters and counterShm are the inline-counter path, for a target whose
+	// compiler increments an array rather than calling the runtime back. Nil on
+	// every other backend, which is what keeps a clang-instrumented campaign
+	// from paying for a region nothing writes.
+	counters   *feedback.CounterObserver
+	counterShm executor.SharedMemory
+
 	// timing measures how long an execution took, for the latency oracle. Only
 	// built when a campaign asked for that oracle: every observer in the list
 	// costs something on every execution, and a measurement nothing reads is
@@ -404,6 +411,19 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 	b.coverage.SetBackend(cfg.Feedback.Coverage)
 	b.mapFB = feedback.NewMapFeedback("coverage", b.coverage)
 
+	// A second region for a compiler that increments an array rather than
+	// calling back. The target maps its own counter array onto it, so nothing is
+	// copied and an execution that crashes still reports what it covered.
+	if cfg.Feedback.Coverage == campaign.CoverageGocov {
+		cnt, cerr := provider.Create(feedback.CounterRegionSize)
+		if cerr != nil {
+			return fmt.Errorf("worker: creating the counter region: %w", cerr)
+		}
+		b.counterShm = cnt
+		b.closers = append(b.closers, closer{"counter region", cnt.Close})
+		b.counters = feedback.NewCounterObserver("counters", cnt.Bytes(), b.coverage)
+	}
+
 	if err := b.buildDirection(cfg, provider); err != nil {
 		return err
 	}
@@ -525,6 +545,11 @@ func (b *built) observers() []feedback.Observer {
 	if b.blocks != nil {
 		obs = append(obs, b.blocks)
 	}
+	if b.counters != nil {
+		// After the coverage map, because Pre clears the counters and Post folds
+		// them into the map — and a map cleared after the fold would lose them.
+		obs = append(obs, b.counters)
+	}
 	if b.state != nil {
 		// The session executor feeds this one during the session rather than
 		// after it, because that is the only time the replies exist. It still
@@ -634,6 +659,25 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	spawner.Sandbox = b.sandbox
 
 	tier := cfg.Target.Executor
+	// The fork server is not available to an inline-counter target, and the
+	// reason is in the order things happen. The runtime enters the fork server
+	// from a C constructor, before the language runtime has initialised — but
+	// the counter array is registered *by* that language runtime, after the
+	// constructor. So the fork would happen before there were any counters to
+	// map, and every child would pay a full runtime initialisation anyway,
+	// which is most of what the tier exists to avoid.
+	if cfg.Feedback.Coverage == campaign.CoverageGocov {
+		if tier == campaign.ExecutorForkServer {
+			return errors.New("worker: the fork server cannot carry gocov coverage — the " +
+				"runtime forks before the Go runtime registers its counter array, so " +
+				"there is nothing to map at that point; use subprocess, or leave " +
+				"target.executor at auto")
+		}
+		if tier == campaign.ExecutorAuto {
+			tier = campaign.ExecutorSubprocess
+		}
+	}
+
 	if tier == campaign.ExecutorAuto && campaign.IsBinaryOnlyCoverage(cfg.Feedback.Coverage) {
 		// A backend that works by watching the process needs the tier that
 		// watches it. Nothing else can carry it, so there is nothing to choose.
@@ -768,6 +812,7 @@ func (b *built) buildSubprocess(cfg *campaign.Resolved, spawner *safety.Spawner,
 		sub.Backend = cfg.Feedback.Coverage
 	}
 	sub.CmpShm, sub.BlockShm = b.cmpShm, b.blockShm
+	sub.CounterShm = b.counterShm
 	b.executor = sub
 	b.tier = "subprocess"
 	b.closers = append(b.closers, closer{"subprocess executor", sub.Close})

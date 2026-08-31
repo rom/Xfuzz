@@ -39,6 +39,14 @@
 #define XFUZZ_CMP_OPERAND  16
 #define XFUZZ_CMP_ENTRIES  ((XFUZZ_CMP_SIZE - 16) / 40)
 
+/* The inline-counter region, for a compiler whose instrumentation increments a
+ * counter array rather than calling back. Must match feedback.CounterRegionSize.
+ *
+ * The first page is a header the fuzzer reads; the target's counter array is
+ * mapped over the pages after it. See xfuzz_counters_init for why. */
+#define XFUZZ_CNT_SIZE   (1 << 18)
+#define XFUZZ_CNT_MAGIC  0x434E5432u /* "CNT2" */
+
 /* The block trace, for directed fuzzing. Must match feedback.BlockRegionSize. */
 #define XFUZZ_BB_SIZE    (1 << 20)
 #define XFUZZ_BB_ENTRIES ((XFUZZ_BB_SIZE - 32) / 8)
@@ -322,6 +330,99 @@ void __sanitizer_weak_hook_strcmp(void *pc, const char *a, const char *b, int re
     xfuzz_cmp_log(XFUZZ_CMP_MEM, (uint8_t)len,
                   xfuzz_common_prefix((const uint8_t *)a, (const uint8_t *)b, len),
                   a, b, (uintptr_t)pc);
+}
+
+/*
+ * Inline counters.
+ *
+ * Clang's trace-pc-guard gives the runtime a callback per block, so coverage
+ * can be written straight into the shared map. Some compilers instrument
+ * differently: Go's -d=libfuzzer increments a byte in an array of its own and
+ * never calls anything, so there is no place to put a fold. The obvious answer
+ * — copy the array into the map when the process exits — does not work for the
+ * two cases that matter most. Go's runtime exits through the kernel and never
+ * runs a C exit handler, and a target that crashes never reaches one either,
+ * which loses the coverage of exactly the input worth keeping.
+ *
+ * So the array is not copied at all: the pages holding it are re-mapped onto
+ * the shared region, and every increment the target performs lands directly in
+ * memory the fuzzer can read. No fold, no exit hook, and a crash keeps its
+ * coverage because the writes were never in this process's private memory.
+ *
+ * The remapping is page-granular, so it takes whatever else shares those pages
+ * with it. That is safe in the direction that matters — the target still reads
+ * and writes its own data normally, and the fuzzer simply does not look at the
+ * bytes outside the counter range — and the page contents are saved and
+ * restored around the mapping so nothing is lost.
+ */
+struct xfuzz_cnt_hdr {
+    uint32_t magic;
+    uint32_t offset; /* byte offset of counters[0] from the start of the region */
+    uint32_t count;  /* how many counters the target registered */
+    uint32_t failed; /* non-zero if the remapping did not take */
+};
+
+static struct xfuzz_cnt_hdr *xfuzz_cnt;
+
+/* Called once per instrumented object with the bounds of its counter array. */
+void __sanitizer_cov_8bit_counters_init(uint8_t *start, uint8_t *stop) {
+    if (!start || start >= stop) return;
+
+    const char *id = getenv("XFUZZ_CNT_ID");
+    if (!id || !*id) return;
+    int fd = open(id, O_RDWR);
+    if (fd < 0) return;
+
+    /* The header lives in the first page, which the counter mapping must not
+     * cover — so the counters start one page into the region. */
+    long page = sysconf(_SC_PAGESIZE);
+    if (page <= 0) { close(fd); return; }
+
+    void *h = mmap(NULL, (size_t)page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (h == MAP_FAILED) { close(fd); return; }
+    xfuzz_cnt = (struct xfuzz_cnt_hdr *)h;
+    xfuzz_cnt->magic = XFUZZ_CNT_MAGIC;
+    xfuzz_cnt->count = (uint32_t)(stop - start);
+    xfuzz_cnt->failed = 0;
+
+    uintptr_t lo = (uintptr_t)start & ~(uintptr_t)(page - 1);
+    uintptr_t hi = ((uintptr_t)stop + (uintptr_t)page - 1) & ~(uintptr_t)(page - 1);
+    size_t len = (size_t)(hi - lo);
+    /* From the start of the region, not from the start of the mapped pages, so
+     * the fuzzer does not have to know the target's page size to find them. */
+    xfuzz_cnt->offset = (uint32_t)((size_t)page + ((uintptr_t)start - lo));
+
+    /* Only what fits. A target with more counters than the region holds gets
+     * none rather than a truncated array the fuzzer would read as real. */
+    if (len + (size_t)page > XFUZZ_CNT_SIZE) {
+        xfuzz_cnt->failed = 1;
+        close(fd);
+        return;
+    }
+
+    void *save = malloc(len);
+    if (!save) { xfuzz_cnt->failed = 2; close(fd); return; }
+    memcpy(save, (void *)lo, len);
+
+    void *m = mmap((void *)lo, len, PROT_READ | PROT_WRITE,
+                   MAP_FIXED | MAP_SHARED, fd, page);
+    if (m == MAP_FAILED) {
+        xfuzz_cnt->failed = 3;
+        free(save);
+        close(fd);
+        return;
+    }
+    memcpy((void *)lo, save, len);
+    free(save);
+    close(fd);
+}
+
+/* The PC table that accompanies the counters. Recorded rather than used: the
+ * addresses would give a directed campaign what the block trace gives it for a
+ * clang-instrumented target, and nothing reads them yet. */
+void __sanitizer_cov_pcs_init(const uintptr_t *beg, const uintptr_t *end) {
+    (void)beg;
+    (void)end;
 }
 
 static int xfuzz_fd_from_env(const char *name, int fallback) {

@@ -158,6 +158,7 @@ func mergeValue(dst, src reflect.Value) {
 // Coverage backends, named for the same reason the tiers are (ADR-0002).
 const (
 	CoverageSancov   = "sancov"
+	CoverageGocov    = "gocov"
 	CoveragePtraceBB = "ptrace-bb"
 	CoverageQemu     = "qemu"
 	CoverageFrida    = "frida"

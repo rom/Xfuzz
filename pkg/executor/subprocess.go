@@ -48,6 +48,15 @@ const BlockShmEnvVar = "XFUZZ_BB_ID"
 // it. A target that is not given this one never writes a comparison.
 const CmpShmEnvVar = "XFUZZ_CMP_ID"
 
+// CounterShmEnvVar names the environment variable carrying the inline-counter
+// region's identifier.
+//
+// A fourth region, for a compiler that instruments by incrementing an array
+// rather than by calling back. The target maps its own array onto this region,
+// so what the fuzzer reads is the array itself rather than a copy of it — which
+// is why an execution that crashes still reports its coverage.
+const CounterShmEnvVar = "XFUZZ_CNT_ID"
+
 // Subprocess is the T4 executor: one process per input.
 //
 // It is the slowest tier with a process boundary and the one that always works.
@@ -80,6 +89,10 @@ type Subprocess struct {
 	// BlockShm the block trace a directed campaign reads.
 	CmpShm   SharedMemory
 	BlockShm SharedMemory
+
+	// CounterShm is the inline-counter region, for a target whose compiler
+	// increments an array instead of calling back.
+	CounterShm SharedMemory
 
 	// Backend names the instrumentation in use, for reporting.
 	Backend string
@@ -128,6 +141,9 @@ func (e *Subprocess) prepare(in Input) (ProcSpec, error) {
 	}
 	if e.CmpShm != nil {
 		spec.Env = append(append([]string(nil), spec.Env...), CmpShmEnvVar+"="+e.CmpShm.ID())
+	}
+	if e.CounterShm != nil {
+		spec.Env = append(append([]string(nil), spec.Env...), CounterShmEnvVar+"="+e.CounterShm.ID())
 	}
 	if e.BlockShm != nil {
 		spec.Env = append(append([]string(nil), spec.Env...), BlockShmEnvVar+"="+e.BlockShm.ID())
