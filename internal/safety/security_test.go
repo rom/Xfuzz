@@ -90,6 +90,39 @@ func TestSecurityWriteOutsideWorkdir(t *testing.T) {
 		t.Skip("user namespaces are unavailable; the target cannot be deprivileged here")
 	}
 
+	// The half that holds on every host: a target must be able to write inside
+	// the workdir it was given. Checked first and unconditionally, because if
+	// this fails the containment assertion below would pass for the wrong
+	// reason — a sandbox that blocks everything blocks the escape too.
+	workdir := reachableDir(t)
+	allowed := filepath.Join(workdir, "output")
+	res := run(t, confinedIn(t, "write-inside", workdir), 10*time.Second, "write-outside", allowed)
+	if !strings.Contains(out(res), "wrote") {
+		t.Fatalf("the target could not write inside its own workdir: %s", out(res))
+	}
+
+	if os.Geteuid() != 0 {
+		// The other half needs a separate identity, and namespaces are not what
+		// supplies one. sandbox.dropTo returns nothing unless the fuzzer is
+		// root, so an unprivileged fuzzer puts the target in a namespace where
+		// it remains, on the host, the same user — with the same access to the
+		// same corpus. A 0700 directory the fuzzer owns is therefore writable
+		// by its own target, by design and as sandbox.go says in as many words.
+		//
+		// The guard used to be caps.UserNS alone, which is true for any user,
+		// so this asserted containment that cannot hold for most of them. It
+		// passed where it was written because that host runs as root, and
+		// failed the first time CI got far enough to run it.
+		//
+		// ADR-0022 is the reason this skips rather than being deleted or
+		// weakened: the isolation level is a property of how the fuzzer was
+		// started, and the test states which level it is measuring instead of
+		// reporting a pass that would mean nothing.
+		t.Skip("the fuzzer is unprivileged: it cannot give the target a separate " +
+			"identity, so a directory it owns is not protected from its own target " +
+			"(ADR-0022); the in-workdir write above was still checked")
+	}
+
 	// A directory the fuzzer owns and the target must not be able to write to.
 	// Owned by the caller and mode 0700, which is what a corpus directory is:
 	// the failure this prevents is a runaway target corrupting the corpus, and
@@ -100,24 +133,15 @@ func TestSecurityWriteOutsideWorkdir(t *testing.T) {
 	}
 	victim := filepath.Join(protected, "corpus-entry")
 
-	workdir := reachableDir(t)
 	sb := confined(t, "write-outside")
-	sb.Workdir = workdir
+	sb.Workdir = reachableDir(t)
 
-	res := run(t, sb, 10*time.Second, "write-outside", victim)
+	res = run(t, sb, 10*time.Second, "write-outside", victim)
 	if !strings.Contains(out(res), "blocked") {
 		t.Fatalf("the target wrote outside its workdir: %s", out(res))
 	}
 	if _, err := os.Stat(victim); err == nil {
 		t.Fatalf("%s exists; the target escaped", victim)
-	}
-
-	// The same write inside the workdir must succeed, or the test is measuring
-	// a broken sandbox rather than a working one.
-	allowed := filepath.Join(workdir, "output")
-	res = run(t, confinedIn(t, "write-inside", workdir), 10*time.Second, "write-outside", allowed)
-	if !strings.Contains(out(res), "wrote") {
-		t.Fatalf("the target could not write inside its own workdir either: %s", out(res))
 	}
 }
 
