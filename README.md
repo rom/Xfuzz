@@ -78,7 +78,7 @@ Everything lives in [`docs/`](docs/README.md):
 
 ## Building
 
-Requires Go 1.25 or later. No other toolchain is needed for the default build.
+Requires Go 1.26 or later. No other toolchain is needed for the default build.
 
 ```
 make build      # all five commands into bin/
