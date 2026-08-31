@@ -970,6 +970,8 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 			Detail: "a target reaches nothing unless the campaign allows it"},
 		{Name: "seccomp", Available: caps.Seccomp,
 			Detail: "the syscall denylist (ADR-0022)"},
+		{Name: "platform-confinement", Available: caps.Confined,
+			Detail: confinementDetail(caps.Confined)},
 		{Name: "rlimits", Available: caps.Rlimits,
 			Detail: "memory, process and file-size ceilings"},
 		{Name: "cgroups", Available: caps.Cgroups != platform.CgroupNone,
@@ -1037,6 +1039,33 @@ func ptyDetail() string {
 		"and over pipes isatty is false and the program under test behaves differently"
 }
 
+// confinementDetail says what the host's own confinement mechanism is, which is
+// a different mechanism on each platform and none at all on one.
+//
+// Named per platform rather than described generically, because the action an
+// operator can take differs: on macOS a missing sandbox-exec is a real finding,
+// on Linux its absence is the normal state and the namespaces are the answer.
+func confinementDetail(have bool) string {
+	switch runtime.GOOS {
+	case "darwin":
+		if have {
+			return "a Seatbelt profile denies the target writes outside its working " +
+				"directory and denies it the network, which is what takes macOS above " +
+				"the minimal level"
+		}
+		return "sandbox-exec is not present, so a target can write anywhere this account " +
+			"can and reach the network; isolation stays minimal"
+	case "windows":
+		return "Windows confinement would be a restricted or low-integrity token, which " +
+			"Xfuzz does not create yet; the job object caps resources but does not " +
+			"separate the target from the filesystem"
+	case "linux":
+		return "Linux confines with namespaces and a syscall filter installed by the " +
+			"helper, reported above, rather than with a policy applied by wrapping"
+	}
+	return "this platform has no confinement policy Xfuzz knows how to apply"
+}
+
 func cgroupDetail(mode string) string {
 	switch mode {
 	case platform.CgroupV2:
@@ -1044,6 +1073,10 @@ func cgroupDetail(mode string) string {
 	case platform.CgroupV1:
 		return "v1 only: a process is added after it exists, so a target that forks immediately " +
 			"can escape the limit — which is why v1 does not count towards strong isolation"
+	case platform.CgroupJob:
+		return "a Windows job object: memory and process caps, and every target dies when " +
+			"the fuzzer lets go — attached after the process exists, so a target that " +
+			"forks immediately can escape it, the same race cgroups v1 has"
 	default:
 		return "no cgroup interface: memory limits rest on rlimits alone"
 	}

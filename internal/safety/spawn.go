@@ -239,7 +239,17 @@ func (s *Spawner) command(spec executor.ProcSpec, forks bool) (*exec.Cmd, error)
 // real gap and it is why v1 does not count towards the strong level.
 func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
 	cg := s.sandbox().currentCgroup()
-	if cg == nil || cg.Mode() != platform.CgroupV1 || cmd.Process == nil {
+	if cg == nil || cmd.Process == nil {
+		return
+	}
+	switch cg.Mode() {
+	case platform.CgroupV1, platform.CgroupJob:
+		// Both are attached after the process exists and both race the same
+		// way. A Windows job object could be attached at creation with a
+		// suspended process, which os/exec does not offer; until it does, the
+		// window is the same microseconds cgroups v1 has, and it is the reason
+		// neither counts towards a strong level.
+	default:
 		return
 	}
 	_ = cg.Add(cmd.Process.Pid)

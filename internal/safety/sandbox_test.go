@@ -284,3 +284,72 @@ func TestTrustedSpawnerIsUnconfinedAndSaysSo(t *testing.T) {
 		t.Fatal("the ordinary spawner is also unconfined; the default must confine")
 	}
 }
+
+// injectedCaps returns a sandbox whose capabilities are the given ones, with
+// detection burned so Probe does not replace them with the host's.
+//
+// Every non-Linux mechanism has to be testable from Linux, or the policy that
+// decides what macOS and Windows are worth is exercised on no machine anyone
+// runs the tests on.
+func injectedCaps(c platform.SandboxCapabilities) *Sandbox {
+	s := &Sandbox{}
+	s.probeOnce.Do(func() {})
+	s.caps = c
+	return s
+}
+
+func TestPlatformConfinementReachesTheModerateLevel(t *testing.T) {
+	// A Seatbelt profile denies the target file writes outside its working
+	// directory and denies it the network. That is the same separation a mount
+	// namespace and a syscall filter provide, reached differently, so it earns
+	// the same level — otherwise a macOS host reports minimal for ever and a
+	// campaign that requires moderate can never run on one.
+	s := injectedCaps(platform.SandboxCapabilities{
+		Confined: true, Rlimits: true, Cgroups: platform.CgroupNone,
+	})
+	if level, _ := s.Probe(); level != LevelModerate {
+		t.Fatalf("a confined host reported %v, want %v", level, LevelModerate)
+	}
+}
+
+func TestAJobObjectAloneStaysMinimal(t *testing.T) {
+	// A job object caps memory and process count and kills the tree. None of
+	// that keeps a target out of the corpus, and calling it moderate would let a
+	// campaign that requires isolation run on a host that gives it none.
+	s := injectedCaps(platform.SandboxCapabilities{
+		JobLimits: true, Rlimits: true, Cgroups: platform.CgroupJob,
+	})
+	level, _ := s.Probe()
+	if level != LevelMinimal {
+		t.Fatalf("a host with only a job object reported %v, want %v", level, LevelMinimal)
+	}
+	if !strings.Contains(s.Explain(), "job object") {
+		t.Fatalf("Explain does not say what the job object does:\n%s", s.Explain())
+	}
+	if !strings.Contains(s.Explain(), "write anywhere") {
+		t.Fatalf("Explain does not say the target can still write anywhere:\n%s", s.Explain())
+	}
+}
+
+func TestConfinementSuppressesTheMountNamespaceWarning(t *testing.T) {
+	// "no mount namespace: the target can write anywhere" is false on a host
+	// whose profile denies exactly that, and a warning that is not true is one
+	// an operator learns to ignore.
+	s := injectedCaps(platform.SandboxCapabilities{Confined: true, Rlimits: true})
+	if strings.Contains(s.Explain(), "write anywhere") {
+		t.Fatalf("a confined host was warned it can write anywhere:\n%s", s.Explain())
+	}
+}
+
+func TestCapabilityStringNamesTheNonLinuxMechanisms(t *testing.T) {
+	// The line is what a doctor report and an audit record carry, so a mechanism
+	// missing from it is a mechanism nobody can see was in force.
+	got := platform.SandboxCapabilities{
+		Confined: true, JobLimits: true, Rlimits: true, Cgroups: platform.CgroupJob,
+	}.String()
+	for _, want := range []string{"confined", "joblimits", "rlimits", "cgroups-job"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q does not name %s", got, want)
+		}
+	}
+}

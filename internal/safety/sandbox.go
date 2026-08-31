@@ -205,6 +205,17 @@ func (s *Sandbox) level() Level {
 		return LevelStrong
 	case (deprivileged && c.MountNS && c.PIDNS) || (c.UserNS && c.MountNS) || seccomp:
 		return LevelModerate
+
+	// The non-Linux mechanisms. Confined is a kernel-enforced policy denying
+	// the target the two things it can do that reach past the campaign — file
+	// writes outside its working directory, and the network — which is the same
+	// separation a mount namespace and a syscall filter provide, arrived at
+	// differently. A job object is not that: it caps resources and kills the
+	// tree, which is better than nothing and is not separation, so it stays at
+	// minimal and says so.
+	case c.Confined:
+		return LevelModerate
+
 	default:
 		return LevelMinimal
 	}
@@ -249,10 +260,16 @@ func (s *Sandbox) Explain() string {
 	if s.WritableRoot {
 		notes = append(notes, "the root filesystem is writable by configuration")
 	}
-	if !caps.MountNS {
+	if !caps.MountNS && !caps.Confined {
 		notes = append(notes,
-			"no mount namespace: the target can write anywhere its identity permits, "+
-				"including the corpus")
+			"no mount namespace and no platform confinement policy: the target can "+
+				"write anywhere its identity permits, including the corpus")
+	}
+	if caps.JobLimits {
+		notes = append(notes,
+			"a job object caps the campaign's memory and process count and kills every "+
+				"target when the fuzzer lets go, which is what stops an interrupted "+
+				"campaign leaving processes behind")
 	}
 	if !s.privileged() {
 		uid, _ := platform.UnprivilegedID()
@@ -654,7 +671,20 @@ func (s *Sandbox) namespaces(forks bool) platform.SandboxOptions {
 // silently lost its resource limits is worse than one that never had them: the
 // campaign would still report itself as limited.
 func (s *Sandbox) wrap(path string, argv []string, dir string) (string, []string) {
-	if s.Unconfined || s.helper == "" {
+	if s.Unconfined {
+		return path, argv
+	}
+	if s.helper == "" {
+		// No helper, which off Linux is every host: ask the platform whether it
+		// confines by wrapping instead. macOS does, through a Seatbelt profile.
+		p, a, ok := platform.Confine(platform.ConfineRequest{
+			Path: path, Argv: argv,
+			Writable:     append([]string{dir}, s.Writable...),
+			AllowNetwork: s.Network,
+		})
+		if ok {
+			return p, a
+		}
 		return path, argv
 	}
 	args := []string{s.helper}

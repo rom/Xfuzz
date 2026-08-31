@@ -56,13 +56,6 @@ func SeccompAvailable() bool {
 	return strings.Contains(string(b), "Seccomp:")
 }
 
-// Cgroup modes.
-const (
-	CgroupV2   = "v2"
-	CgroupV1   = "v1"
-	CgroupNone = "none"
-)
-
 // CgroupMode reports which cgroup hierarchy the host provides.
 //
 // The difference matters and is not cosmetic. Under v2 a child can be placed in
