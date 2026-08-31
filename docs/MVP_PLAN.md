@@ -719,7 +719,7 @@ names what was run, not what is believed.
 
 | # | Clause | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | Both proof obligations pass | met | `test/e2e/v01_test.go`. Structured against byte-level on the same seeds and budget: 48% corpus validity against 25%, four findings against two, minimisation reducing 45% against 11% |
+| 1 | Both proof obligations pass | met | `test/e2e/v01_test.go`. Structured against byte-level on the same seeds and budget: 48% corpus validity against 25%, four findings against two, minimisation reducing 45% against 11%. Re-run at the end of the audit as part of the whole suite below |
 | 2 | Planted bugs found within budget | met, with a stated cost | All four targets find every planted bug. `stateful_proto`'s slowest needs ~113,000 sessions where the exit criterion budgets 20,000, so two of its four are recorded rather than required. See § 6.2 |
 | 3 | Benchmark gates on every tier | met | `BenchmarkInProc`, `BenchmarkForkServer`, `BenchmarkProcPool`, `BenchmarkSubprocess`, `BenchmarkSession` — one per implemented tier, all in `bench/baseline.txt`. `TestTiersAreOrderedAsADR0009Claims` additionally checks they come out in the order the tier table predicts, which no per-tier gate can see |
 | 4 | Determinism and cross-host replay | met | `test/e2e/determinism_test.go`. Two runs of one file and seed, under separate daemons, produced the same corpus by the same derivation; a third with another seed differed. A store carried to a second data directory, daemon and target binary replayed three findings, three of three trials each |
@@ -729,6 +729,15 @@ names what was run, not what is believed.
 | 8 | Self-fuzzing clean | met | Ten targets across nine packages, M8. The API target found a real path-cleaning defect on its first run |
 | 9 | Docs current | met | `tools/docslint` passes. The audit produced ADR-0026 and corrected four drifts, one of which was a documented Go build incantation that does not link |
 | 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
+
+The suite behind those rows, run once at the end with everything in place:
+`make test-integration` — `-count=1 -race -p 1 -tags integration` across every
+package — exit 0, no failures, 32 packages. `internal/engine` 737s (the
+planted-bug campaigns and the tier-ordering check), `test/e2e` 1727s (every
+milestone's exit criteria, the fault-injection suite, the guide walk, both
+proof obligations, and determinism and cross-host replay). Plus
+`make test-security` (11 tests, no skips), `CGO_ENABLED=0` build and test,
+`make cross` for five platforms, `make lint`, and `make fuzz-all`.
 
 ### 6.2 Clause 2, honestly
 
