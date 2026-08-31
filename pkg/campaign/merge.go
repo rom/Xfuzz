@@ -13,6 +13,7 @@ const (
 	ExecutorPool       = "pool"
 	ExecutorSubprocess = "subprocess"
 	ExecutorInProc     = "inproc"
+	ExecutorEmulated   = "emulated"
 
 	InputStdin = "stdin"
 	InputFile  = "file"
@@ -122,4 +123,28 @@ func mergeValue(dst, src reflect.Value) {
 		}
 		dst.Set(src)
 	}
+}
+
+// Coverage backends, named for the same reason the tiers are (ADR-0002).
+const (
+	CoverageSancov   = "sancov"
+	CoveragePtraceBB = "ptrace-bb"
+	CoverageQemu     = "qemu"
+	CoverageFrida    = "frida"
+	CoverageBlackbox = "blackbox"
+	CoverageNone     = "none"
+)
+
+// IsBinaryOnlyCoverage reports whether a backend works by watching a process run
+// rather than by asking an instrumented build what it did.
+//
+// The distinction decides which tier can carry it, what granularity a campaign
+// may require, and whether the target needs rebuilding at all — so it is one
+// predicate rather than three copies of the same list.
+func IsBinaryOnlyCoverage(backend string) bool {
+	switch backend {
+	case CoveragePtraceBB, CoverageQemu, CoverageFrida:
+		return true
+	}
+	return false
 }

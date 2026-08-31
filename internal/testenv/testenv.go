@@ -157,3 +157,37 @@ func BuildBinary(t testing.TB, dir, command string) string {
 	}
 	return out
 }
+
+// BuildStrippedTarget compiles a planted-bug target with no instrumentation and
+// removes its symbol table, which is the shape the binary-only tier exists for.
+//
+// The ordinary compiler, not xfuzz-cc: the point of a T5 campaign is that the
+// target was never built for fuzzing, so building it with the fuzzer's own
+// wrapper would test something else entirely. Stripped for the same reason —
+// what remains is a program with no symbols, no coverage runtime, and nothing
+// the fuzzer can ask it.
+func BuildStrippedTarget(t testing.TB, name string) string {
+	t.Helper()
+	cc, err := exec.LookPath("clang")
+	if err != nil {
+		if cc, err = exec.LookPath("gcc"); err != nil {
+			t.Skip("no C compiler; a binary-only target cannot be built here")
+		}
+	}
+	out := filepath.Join(ReachableDir(t), name)
+	src := filepath.Join(RepoRoot(t), "testdata", "targets", name+".c")
+	cmd := exec.Command(cc, "-O1", "-o", out, src)
+	cmd.Dir = RepoRoot(t)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building %s without instrumentation: %v\n%s", name, err, b)
+	}
+	if strip, err := exec.LookPath("strip"); err == nil {
+		if b, err := exec.Command(strip, out).CombinedOutput(); err != nil {
+			t.Logf("strip failed on %s (%v): %s; continuing with symbols", name, err, b)
+		}
+	}
+	if err := os.Chmod(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}

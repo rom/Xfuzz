@@ -20,7 +20,9 @@ import (
 	"github.com/rom/Xfuzz/internal/extension"
 	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/safety"
+	"github.com/rom/Xfuzz/internal/tracer"
 	"github.com/rom/Xfuzz/internal/version"
+	"github.com/rom/Xfuzz/pkg/binary"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/codec"
 	"github.com/rom/Xfuzz/pkg/corpus"
@@ -81,6 +83,12 @@ type built struct {
 	// slower tier is visible in the first second rather than in a post-mortem.
 	tier           string
 	fallbackReason string
+
+	// analysisNote says what static recovery found on a binary-only campaign,
+	// so an operator can judge the coverage figures rather than trusting them.
+	// A target whose text is half unaccounted for, or which is full of indirect
+	// branches, produces coverage with holes that the numbers alone do not show.
+	analysisNote string
 }
 
 // closer releases one acquired resource, saying what it is when it fails.
@@ -306,7 +314,19 @@ func parsePortRange(s string) (lo, hi uint16, err error) {
 func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 	b.output = feedback.NewOutputObserver("output")
 
-	if cfg.Feedback.Coverage == "none" {
+	if cfg.Feedback.Coverage == campaign.CoverageNone {
+		return nil
+	}
+
+	// A binary-only backend needs no shared region. Nothing in the target writes
+	// coverage — the fuzzer watches the process and folds what it saw into the
+	// map itself — so the map is ordinary memory that the target never sees. That
+	// is also why these backends work on a program that was never built for
+	// fuzzing: there is nothing to link in.
+	if campaign.IsBinaryOnlyCoverage(cfg.Feedback.Coverage) {
+		b.coverage = feedback.NewCoverageMap("coverage", int(cfg.Feedback.MapSize))
+		b.coverage.SetBackend(cfg.Feedback.Coverage)
+		b.mapFB = feedback.NewMapFeedback("coverage", b.coverage)
 		return nil
 	}
 
@@ -430,6 +450,11 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	spawner.Sandbox = b.sandbox
 
 	tier := cfg.Target.Executor
+	if tier == campaign.ExecutorAuto && campaign.IsBinaryOnlyCoverage(cfg.Feedback.Coverage) {
+		// A backend that works by watching the process needs the tier that
+		// watches it. Nothing else can carry it, so there is nothing to choose.
+		tier = campaign.ExecutorEmulated
+	}
 	if tier == campaign.ExecutorAuto {
 		// With coverage, the fork server; without it, the pool. The pool is
 		// black-box by construction — a process spawned before its input has
@@ -487,6 +512,9 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	case campaign.ExecutorSubprocess:
 		return b.buildSubprocess(cfg, spawner, spec)
 
+	case campaign.ExecutorEmulated:
+		return b.buildEmulated(ctx, cfg, spawner, spec)
+
 	case campaign.ExecutorInProc:
 		return errors.New("worker: the in-process tier is for Go harnesses linked into the fuzzer, " +
 			"which the campaign file cannot express yet; use forkserver or subprocess")
@@ -494,6 +522,56 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	default:
 		return fmt.Errorf("worker: unknown executor tier %q", tier)
 	}
+}
+
+// buildEmulated prepares the T5 tier and the binary-only backend it runs.
+//
+// There is no fallback here, deliberately. Every other tier has a slower one
+// beneath it that always works, so falling back is right when a target turns out
+// not to support the fast path. This tier *is* the answer for a target that
+// supports nothing, and the thing below it collects no coverage at all — so a
+// campaign that asked to watch a stripped binary and silently got a black-box
+// run would be told it was fuzzing with coverage while learning nothing.
+func (b *built) buildEmulated(ctx context.Context, cfg *campaign.Resolved,
+	spawner *safety.Spawner, spec executor.ProcSpec) error {
+
+	backend := cfg.Feedback.Coverage
+	var tr executor.Tracer
+	switch backend {
+	case campaign.CoveragePtraceBB:
+		tr = tracer.NewPtrace(spawner, cfg.Target.Path)
+	case campaign.CoverageQemu:
+		tr = tracer.NewQemu(spawner, cfg.Target.Path)
+	case campaign.CoverageFrida:
+		tr = tracer.NewFrida(spawner, cfg.Target.Path)
+	default:
+		return fmt.Errorf("worker: the emulated tier needs a binary-only coverage "+
+			"backend and feedback.coverage is %q; set it to ptrace-bb, qemu or frida", backend)
+	}
+
+	e := executor.NewEmulated(backend, tr, spec)
+	e.Delivery = deliveryFor(cfg)
+	e.Output = b.output
+	e.Coverage = b.coverage
+	if err := e.Start(ctx); err != nil {
+		return err
+	}
+	b.executor = e
+	b.tier = "emulated"
+	b.closers = append(b.closers, closer{"emulated executor", e.Close})
+
+	// What static recovery found, so an operator can judge the coverage figures
+	// rather than trusting them. A target whose text is half unaccounted for, or
+	// which is full of indirect branches, produces coverage with holes in it —
+	// and the holes are invisible from the numbers alone.
+	if a, ok := tr.(interface{ Analysis() *binary.Analysis }); ok {
+		if an := a.Analysis(); an != nil {
+			b.analysisNote = fmt.Sprintf(
+				"%d blocks recovered from %s, %.0f%% of its executable bytes, %d indirect branches",
+				len(an.Blocks), filepath.Base(cfg.Target.Path), 100*an.Coverage, an.Indirect)
+		}
+	}
+	return nil
 }
 
 func (b *built) buildSubprocess(cfg *campaign.Resolved, spawner *safety.Spawner, spec executor.ProcSpec) error {
@@ -735,11 +813,15 @@ func resolveStoreDir(cfg *campaign.Resolved, override string) string {
 
 // describe renders the executor tier and any fallback for the ready message.
 func (b *built) describe() string {
-	if b.fallbackReason == "" {
-		return b.tier
+	desc := b.tier
+	if b.fallbackReason != "" {
+		reason := strings.SplitN(b.fallbackReason, "\n", 2)[0]
+		desc = fmt.Sprintf("%s (fell back: %s)", desc, reason)
 	}
-	reason := strings.SplitN(b.fallbackReason, "\n", 2)[0]
-	return fmt.Sprintf("%s (fell back: %s)", b.tier, reason)
+	if b.analysisNote != "" {
+		desc = fmt.Sprintf("%s (%s)", desc, b.analysisNote)
+	}
+	return desc
 }
 
 // sessionAddress resolves the campaign's session address for one worker.

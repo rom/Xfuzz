@@ -94,7 +94,7 @@
       "description": "What counts as interesting.",
       "properties": {
         "coverage": {
-          "description": "Coverage backend: sancov, blackbox, or none.",
+          "description": "Coverage backend: sancov, ptrace-bb, qemu, frida, blackbox, or none.",
           "type": "string"
         },
         "map_size": {
@@ -581,7 +581,7 @@
           "type": "object"
         },
         "executor": {
-          "description": "Delivery tier: auto, forkserver, pool, subprocess, or inproc.",
+          "description": "Delivery tier: auto, forkserver, pool, subprocess, inproc, or emulated.",
           "type": "string"
         },
         "input": {

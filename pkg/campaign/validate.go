@@ -103,10 +103,11 @@ func (r *Resolved) validateTarget(add addFunc) {
 	}
 
 	switch t.Executor {
-	case ExecutorAuto, ExecutorForkServer, ExecutorPool, ExecutorSubprocess, ExecutorInProc:
+	case ExecutorAuto, ExecutorForkServer, ExecutorPool, ExecutorSubprocess,
+		ExecutorInProc, ExecutorEmulated:
 	default:
 		add("target.executor", fmt.Sprintf("%q is not a delivery tier", t.Executor),
-			"one of auto, forkserver, pool, subprocess, inproc")
+			"one of auto, forkserver, pool, subprocess, inproc, emulated")
 	}
 	switch t.Input {
 	case InputStdin, InputFile, InputArg:
@@ -176,10 +177,31 @@ func (r *Resolved) validateFormat(add addFunc) {
 func (r *Resolved) validateFeedback(add addFunc) {
 	f := r.Feedback
 	switch f.Coverage {
-	case "sancov", "blackbox", "none":
+	case CoverageSancov, CoverageBlackbox, CoverageNone:
+	case CoveragePtraceBB, CoverageQemu, CoverageFrida:
+		// The binary-only backends (ADR-0002). They need no instrumented build,
+		// so they are the answer for a target nobody can rebuild — and they are
+		// one to two orders of magnitude slower, which is why nothing selects
+		// them automatically.
 	default:
 		add("feedback.coverage", fmt.Sprintf("%q is not a coverage backend", f.Coverage),
-			"one of sancov, blackbox, none")
+			"one of sancov, ptrace-bb, qemu, frida, blackbox, none")
+	}
+
+	// The binary-only backends are the T5 tier and only the T5 tier: they work
+	// by watching the process run, which needs the tier that watches it. Asking
+	// for one under a tier that cannot deliver it would produce a campaign that
+	// reported no coverage for any input and looked like a target with no
+	// branches.
+	if IsBinaryOnlyCoverage(f.Coverage) {
+		switch r.Target.Executor {
+		case ExecutorAuto, ExecutorEmulated:
+		default:
+			add("target.executor", fmt.Sprintf("%q cannot collect %s coverage",
+				r.Target.Executor, f.Coverage),
+				"the binary-only backends run under the emulated tier; "+
+					"set target.executor to emulated or leave it at auto")
+		}
 	}
 	if r.WasSet("feedback.map_size") && (f.MapSize <= 0 || f.MapSize&(f.MapSize-1) != 0) {
 		add("feedback.map_size", fmt.Sprintf("%d is not a power of two", f.MapSize),

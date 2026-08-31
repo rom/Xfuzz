@@ -105,11 +105,11 @@ type Target struct {
 	// identity the sandbox gives the target.
 	Dir string `yaml:"dir,omitempty" json:"dir,omitempty" doc:"Working directory for the target."`
 
-	// Executor selects the delivery tier: forkserver, pool, subprocess, or
-	// inproc.
+	// Executor selects the delivery tier: forkserver, pool, subprocess, inproc,
+	// or emulated.
 	// Empty picks the fastest tier the target supports, which is what a person
 	// wants and would otherwise have to work out themselves.
-	Executor string `yaml:"executor,omitempty" json:"executor,omitempty" doc:"Delivery tier: auto, forkserver, pool, subprocess, or inproc."`
+	Executor string `yaml:"executor,omitempty" json:"executor,omitempty" doc:"Delivery tier: auto, forkserver, pool, subprocess, inproc, or emulated."`
 
 	// Input selects how the input reaches the target: stdin, file, or arg.
 	Input string `yaml:"input,omitempty" json:"input,omitempty" doc:"How input is delivered: stdin, file, or arg."`
@@ -176,8 +176,14 @@ type Mutation struct {
 
 // Feedback is what counts as interesting.
 type Feedback struct {
-	// Coverage selects the instrumentation: sancov, blackbox, or none.
-	Coverage string `yaml:"coverage,omitempty" json:"coverage,omitempty" doc:"Coverage backend: sancov, blackbox, or none."`
+	// Coverage selects the instrumentation.
+	//
+	// sancov reads the map an instrumented build writes and is by far the
+	// fastest. ptrace-bb, qemu and frida are the binary-only backends: they need
+	// no rebuild and work on a stripped executable, at one to two orders of
+	// magnitude the cost (ADR-0002). blackbox is exit status, output and timing
+	// alone, and none turns coverage off.
+	Coverage string `yaml:"coverage,omitempty" json:"coverage,omitempty" doc:"Coverage backend: sancov, ptrace-bb, qemu, frida, blackbox, or none."`
 
 	// MapSize is the coverage map size in bytes. It must match what the target
 	// was instrumented against.

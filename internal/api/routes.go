@@ -18,7 +18,9 @@ import (
 	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/safety"
 	"github.com/rom/Xfuzz/internal/store"
+	"github.com/rom/Xfuzz/internal/tracer"
 	"github.com/rom/Xfuzz/internal/version"
+	"github.com/rom/Xfuzz/pkg/binary"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpusio"
 	"github.com/rom/Xfuzz/pkg/executor"
@@ -982,6 +984,13 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 	cs = append(cs, foundTool(daemon.WorkerBinaryName, "runs a campaign's workers"))
 	cs = append(cs, foundTool("clang", "builds instrumented targets through xfuzz-cc"))
 
+	// The binary-only backends (ADR-0002). These are what a campaign has when
+	// the target cannot be rebuilt, and each is unavailable for its own reason:
+	// the kernel forbids tracing, or a tool is not installed. Saying which is
+	// the difference between an operator who installs one package and one who
+	// concludes that stripped binaries are not supported.
+	cs = append(cs, binaryOnlyCapabilities()...)
+
 	// The three things a new install gets wrong that the mechanism checks
 	// above do not cover. Each is something someone hits on their first
 	// campaign and cannot diagnose from the failure it produces.
@@ -1122,4 +1131,50 @@ func consoleDetail() string {
 	}
 	return "this daemon was built without the console; rebuild with `make build-console` " +
 		"or use the CLI, which reaches every route the console does"
+}
+
+// binaryOnlyCapabilities reports which of the T5 backends this host can run.
+//
+// One row each rather than a single "binary-only" row, because they fail
+// independently and for different reasons, and because the remedy differs: the
+// breakpoint backend needs a kernel setting, and the other two need a package.
+func binaryOnlyCapabilities() []Capability {
+	cs := []Capability{{
+		Name:      "ptrace-bb",
+		Available: platform.TraceSupported(),
+		Detail: "block coverage from breakpoints, on a stripped binary, with no " +
+			"external tool; needs ptrace, which a hardened kernel or a container " +
+			"without CAP_SYS_PTRACE can withhold",
+	}}
+
+	name, ok := tracer.QemuAvailable(hostArch())
+	cs = append(cs, Capability{
+		Name:      "qemu",
+		Available: ok,
+		Detail: "edge coverage from user-mode emulation, on a stripped binary and on " +
+			"a foreign architecture; needs " + name,
+	})
+
+	name, ok = tracer.FridaAvailable()
+	cs = append(cs, Capability{
+		Name:      "frida",
+		Available: ok,
+		Detail: "block coverage from dynamic instrumentation, on all three platforms; " +
+			"needs " + name,
+	})
+	return cs
+}
+
+// hostArch is the architecture a target on this machine is most likely to be,
+// which is what decides which emulator would be needed for it.
+func hostArch() binary.Arch {
+	switch runtime.GOARCH {
+	case "amd64":
+		return binary.ArchAMD64
+	case "arm64":
+		return binary.ArchARM64
+	case "386":
+		return binary.Arch386
+	}
+	return binary.ArchOther
 }
