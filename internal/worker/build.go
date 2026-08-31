@@ -219,6 +219,9 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		return nil, err
 	}
 	b.engine = eng
+	// The engine owns the solver's goroutine and process when a campaign has
+	// one, and nothing else can release them.
+	b.closers = append(b.closers, closer{"engine", eng.Close})
 	ok = true
 	return b, nil
 }

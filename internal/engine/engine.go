@@ -71,6 +71,17 @@ type Config struct {
 	// that did not ask for it pays nothing.
 	Cmp *feedback.CmpObserver
 
+	// Solver, when set, adds the concolic stage: an asynchronous solver running
+	// alongside the loop, whose answers are executed as they arrive (ADR-0007).
+	//
+	// A campaign with one is not reproducible. Which solutions arrive before
+	// which mutation round depends on how long the solver took, and that is
+	// wall-clock — so ASR-0008's guarantee that the same campaign file, seed and
+	// target produce an identical sequence of executions does not hold. It is
+	// the second feature in the system to opt out of that, and like the first it
+	// is off unless asked for.
+	Solver Solver
+
 	// Trace, when set, receives one line per execution. It is what makes the
 	// determinism requirement checkable rather than merely asserted: two runs of
 	// the same campaign must produce byte-identical traces.
@@ -122,6 +133,13 @@ type Stats struct {
 	// the totals.
 	CmpExecs    uint64
 	CmpAdmitted uint64
+
+	// SolverExecs and SolverAdmitted are what the concolic stage cost and what
+	// it bought, reported separately for the same reason the comparison stage's
+	// are: a solver that answers nothing useful is a cost an operator should be
+	// able to see and stop paying.
+	SolverExecs    uint64
+	SolverAdmitted uint64
 
 	// States and Transitions are protocol coverage, reported separately from
 	// code coverage because they answer a different question (ASR-0002). A
@@ -195,6 +213,10 @@ type Engine struct {
 	coverage *feedback.CoverageMap
 	trimBuf  []byte
 
+	// concolic is the solver stage, held separately from the stage list because
+	// it owns a goroutine and a process that have to be released.
+	concolic *concolicStage
+
 	// stages are the ways this campaign derives new inputs, in the order they
 	// run. Fixed at construction: which stages exist is a property of the
 	// configuration, and deciding it per seed would put a branch on the hot path
@@ -238,8 +260,7 @@ func New(cfg Config) (*Engine, error) {
 		cfg.TrimBudget = defaultTrimBudget
 	}
 
-	return &Engine{
-		stages:    stagesFor(cfg),
+	e := &Engine{
 		coverage:  covMap,
 		cfg:       cfg,
 		arena:     arena,
@@ -249,7 +270,32 @@ func New(cfg Config) (*Engine, error) {
 		spliceR:   rng.Derive(cfg.CampaignSeed, cfg.WorkerID, rng.StreamSplice),
 		buckets:   map[string]int{},
 		firstSeen: map[corpus.Digest]bool{},
-	}, nil
+	}
+	e.stages, e.concolic = stagesFor(cfg)
+	return e, nil
+}
+
+// Close releases what the engine acquired.
+//
+// Only the solver, today: everything else the engine holds is owned by the
+// caller that supplied it. It is safe to call on an engine that has none, so a
+// caller never has to know whether the campaign was configured for one.
+func (e *Engine) Close() error {
+	if e.concolic != nil {
+		return e.concolic.Close()
+	}
+	return nil
+}
+
+// SolverStats reports what the concolic stage cost and what it produced: queries
+// sent, queries and answers dropped because one side was not keeping up,
+// solutions produced, solver failures, and solutions executed.
+func (e *Engine) SolverStats() (sent, dropped, solved, failed, executed uint64, ok bool) {
+	if e.concolic == nil {
+		return 0, 0, 0, 0, 0, false
+	}
+	sent, dropped, solved, failed, executed = e.concolic.Stats()
+	return sent, dropped, solved, failed, executed, true
 }
 
 // Findings returns the bugs recorded so far.

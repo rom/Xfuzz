@@ -142,13 +142,24 @@ func (havocStage) run(ctx context.Context, e *Engine, s stageInput) (stageResult
 // told the fuzzer about; havoc costs the seed's whole energy budget on guesses.
 // Running the informed stage first means the guesses are made on an input that
 // has already got past whatever the substitution unlocked.
-func stagesFor(cfg Config) []stage {
+func stagesFor(cfg Config) ([]stage, *concolicStage) {
 	var out []stage
 	if cfg.Cmp != nil {
 		out = append(out, &cmpLogStage{})
 	}
+
+	// The solver stage before havoc as well, for the opposite reason to the
+	// comparison stage's: it costs almost nothing per visit — it hands over a
+	// query and collects what has arrived — and what it collects is worth
+	// executing before the seed's energy is spent rather than after.
+	var con *concolicStage
+	if cfg.Solver != nil {
+		con = newConcolicStage(cfg.Solver)
+		out = append(out, con)
+	}
+
 	out = append(out, havocStage{})
-	return out
+	return out, con
 }
 
 // decode turns candidate bytes into the tree the corpus and the executor want.
