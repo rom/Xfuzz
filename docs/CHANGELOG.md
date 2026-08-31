@@ -179,6 +179,14 @@ these was measured rather than guessed.
   reasons is one people learn to ignore. The Windows job builds every command
   in addition to running the suite.
 
+- **A store written before the marker fix can hold signatures the current
+  normaliser would not produce.** Markers now drop control characters, so a
+  finding filed with one in its message has a bucket key nothing will compute
+  again, and the same crash found after the fix is filed separately. There is
+  no version stamp on a signature to notice this (DESIGN § 4.5). The remedy
+  exists and is not a migration: `xfuzz findings buckets NAME --strategy
+  marker` recomputes the grouping on demand.
+
 - **A campaign's bucket count can go down.** Triage re-buckets from the
   minimised reproducer, which is better evidence than the engine's in-loop
   guess, so two provisional buckets legitimately merge into one. It is correct

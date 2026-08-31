@@ -157,10 +157,22 @@ off the fuzz loop:
 crash ─► classify ─► bucket ─► minimise ─► re-run for reproducibility rate ─► Finding
 ```
 
-Bucketing is **multi-signal and versioned**, not a single stack hash — hashing
-the top frame merges distinct bugs, hashing the full stack splits one bug into
-hundreds. Re-bucketing an existing finding set with a new strategy is a supported
-operation that preserves triage state.
+Bucketing is **multi-signal and re-computable**, not a single stack hash —
+hashing the top frame merges distinct bugs, hashing the full stack splits one
+bug into hundreds. Each finding records the strategy that filed it, and
+re-bucketing an existing finding set under a different strategy is a supported
+operation that preserves triage state: `xfuzz findings buckets NAME --strategy
+frames` answers "what would this look like grouped another way" without
+rewriting anything.
+
+What is deliberately *not* claimed is a version stamp on a signature. Changing
+what a strategy computes — as the v0.1 audit did, when a marker turned out to
+keep control characters — makes new signatures incomparable with ones already in
+a store, and nothing records which normaliser produced which. Re-bucketing is
+the remedy and it is a live operation rather than a migration, which is why a
+stamp has not been worth a schema change; if a future normaliser change is ever
+one a campaign should *not* silently absorb, that is when the stamp earns its
+place.
 
 The strongest signal, where it exists, is the target's own words: a program that
 prints which assertion failed has already told its bugs apart, and no signal
