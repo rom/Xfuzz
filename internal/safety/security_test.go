@@ -130,11 +130,24 @@ func reachableDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
 	for p := dir; p != "/" && p != "."; p = filepath.Dir(p) {
-		if err := os.Chmod(p, 0o777); err != nil {
-			t.Fatal(err)
-		}
+		// Stop *before* chmodding, not after. The old loop tested for the
+		// boundary at the end of the body, so it always chmodded os.TempDir()
+		// itself — which is /tmp, owned by root and mode 1777, and on a CI
+		// runner that is `chmod /tmp: operation not permitted` and a failed
+		// security test that has nothing to do with security.
 		if p == os.TempDir() {
 			break
+		}
+		if err := os.Chmod(p, 0o777); err != nil {
+			// Only fatal if the directory is not already traversable by others.
+			// What this helper needs is a path the target's identity can walk,
+			// not ownership of every component: a directory that is already
+			// world-executable needs nothing done to it, and one somebody else
+			// owns is not ours to change.
+			fi, statErr := os.Stat(p)
+			if statErr != nil || fi.Mode().Perm()&0o001 == 0 {
+				t.Fatalf("%s is not traversable by the target's identity and cannot be made so: %v", p, err)
+			}
 		}
 	}
 	return dir
