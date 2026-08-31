@@ -873,7 +873,7 @@ path is still `blackbox` (ADR-0026). `intelpt` and `agent` remain unimplemented.
 | Piece | Where | Evidence |
 | --- | --- | --- |
 | Comparison operands in the runtime | `runtime/csrc/xfuzz-rt.c` | ABI asserted by building a real instrumented target and requiring the constants its source compares against to come back out |
-| `CmpLogStage` | `internal/engine/cmplog.go` | Three gates of 32, 64 and 16 bits: bug found with the stage, nothing without, same seed and budget |
+| `CmpLogStage` | `internal/engine/cmplog.go` | Three gates of 32, 64 and 16 bits: bug found with the stage, nothing without, same seed and budget. And on `magic_parser` with its dictionary taken away: 23 coverage entries and two distinct bugs with substitution, 2 entries and none without — mutation alone never gets past the header |
 | Value profile | `pkg/feedback/cmplog.go` | An input matching a gate exactly produces new signal where one that does not, does not |
 | Engine stages | `internal/engine/stage.go` | One execute-and-judge path shared by every stage |
 | Distance map and CFG analysis | `pkg/binary/distance.go` | Distance grows with call depth; a function with no route has none; a target address from another build is refused |

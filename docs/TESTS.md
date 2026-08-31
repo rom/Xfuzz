@@ -101,7 +101,7 @@ documented bugs at graded difficulty:
 | Target | Bugs | Difficulty | Exercises |
 | --- | --- | --- | --- |
 | `simple_parser` | 3 | shallow | Basic mutation, crash detection |
-| `magic_parser` | 4 | magic values | CmpLog, dictionary, value profile |
+| `magic_parser` | 4 | magic values | CmpLog, dictionary, value profile — checked both ways: with a dictionary and valid seeds, and with neither, where substitution is the only route past the header |
 | `magic_cmp` | 1 | 32-, 64- and 16-bit gates | Comparison substitution alone: unreachable by mutation, so a finding proves the substitution worked |
 | `deep_target` | 1 | one branch of twelve | Directed fuzzing: a bug four calls down one branch, with siblings that produce coverage and lead nowhere |
 | `chunked_format` | 5 | checksum-gated | Structured IR, fixups |

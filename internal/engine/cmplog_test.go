@@ -328,12 +328,31 @@ func TestCmpLogGetsPastAMagicNumberThatMutationCannot(t *testing.T) {
 // runMagicCampaign fuzzes magic_cmp for a fixed number of executions, with or
 // without the comparison stage.
 func runMagicCampaign(t *testing.T, cmplog bool) Stats {
-	return runMagicCampaignN(t, cmplog, 20000)
+	return runCmpCampaign(t, cmpCampaign{
+		target: "magic_cmp",
+		cmplog: cmplog,
+		seeds:  [][]byte{make([]byte, 16)},
+		budget: Budget{MaxExecs: 20000},
+	})
 }
 
-func runMagicCampaignN(t *testing.T, cmplog bool, budget uint64) Stats {
+// cmpCampaign parameterises a fork-server campaign with the comparison stage on
+// or off, so the two can be compared on any target.
+type cmpCampaign struct {
+	target string
+	cmplog bool
+	seeds  [][]byte
+	budget Budget
+
+	// objective, when set, replaces the plain crash objective. The planted-bug
+	// targets announce which bug they reached, and counting distinct buckets is
+	// the only way to tell "found one bug repeatedly" from "found four".
+	objective func(*feedback.OutputObserver) feedback.Objective
+}
+
+func runCmpCampaign(t *testing.T, c cmpCampaign) Stats {
 	t.Helper()
-	target := buildTarget(t, "magic_cmp")
+	target := buildTarget(t, c.target)
 
 	provider := platform.NewSharedMemoryProvider()
 	if !provider.Available() {
@@ -358,7 +377,7 @@ func runMagicCampaignN(t *testing.T, cmplog bool, budget uint64) Stats {
 
 	observers := []feedback.Observer{cov, out}
 	var cmp *feedback.CmpObserver
-	if cmplog {
+	if c.cmplog {
 		cmpShm, cerr := provider.Create(feedback.CmpRegionSize)
 		if cerr != nil {
 			t.Fatalf("creating the comparison region: %v", cerr)
@@ -374,12 +393,17 @@ func runMagicCampaignN(t *testing.T, cmplog bool, budget uint64) Stats {
 	}
 	defer fs.Close()
 
+	objective := feedback.Objective(feedback.NewCrashObjective("crash", out))
+	if c.objective != nil {
+		objective = c.objective(out)
+	}
+
 	e, err := New(Config{
 		CampaignSeed:  0x5EED,
 		Executor:      fs,
 		Observers:     observers,
 		Feedback:      feedback.NewMapFeedback("coverage", cov),
-		Objective:     feedback.NewCrashObjective("crash", out),
+		Objective:     objective,
 		Corpus:        corpus.New(),
 		Schedule:      corpus.NewFastScheduler(),
 		Mutators:      mutate.Default(),
@@ -391,14 +415,15 @@ func runMagicCampaignN(t *testing.T, cmplog bool, budget uint64) Stats {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A seed long enough to hold every gate, with none of them satisfied. There
-	// is nothing here for mutation to climb: until the first four bytes are
-	// exactly right, every input covers the same code.
-	if err := e.AddSeed(t.Context(), make([]byte, 16), "seed"); err != nil {
-		t.Fatal(err)
+	defer e.Close()
+
+	for i, seed := range c.seeds {
+		if err := e.AddSeed(t.Context(), seed, "seed"); err != nil {
+			t.Fatalf("adding seed %d: %v", i, err)
+		}
 	}
 
-	stats, err := e.Run(t.Context(), Budget{MaxExecs: budget})
+	stats, err := e.Run(t.Context(), c.budget)
 	if err != nil {
 		t.Fatalf("running the campaign: %v", err)
 	}

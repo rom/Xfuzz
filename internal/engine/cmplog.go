@@ -157,8 +157,17 @@ func (s *cmpLogStage) run(ctx context.Context, e *Engine, in stageInput) (stageR
 				continue
 			}
 
-			s.buf = append(s.buf[:0], parentBytes...)
-			copy(s.buf[idx:], sub.want)
+			// Spliced, not overwritten in place. The two are the same only when
+			// the encodings happen to be the same width, and several of the ones
+			// tried are not: 65535 is five characters in decimal and ffff is
+			// four in hex, so writing one over the other either leaves a stray
+			// digit behind or eats the byte after it. Overwriting would produce
+			// a candidate that does not contain the value it was built to insert
+			// — which does not fail, it just quietly never works for text
+			// formats.
+			s.buf = append(s.buf[:0], parentBytes[:idx]...)
+			s.buf = append(s.buf, sub.want...)
+			s.buf = append(s.buf, parentBytes[idx+len(sub.needle):]...)
 
 			tree, ok := decodeCandidate(e, s.buf)
 			if !ok {
