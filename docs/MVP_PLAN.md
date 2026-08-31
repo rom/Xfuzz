@@ -690,9 +690,9 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
 | --- | --- | --- |
 | **v0.2** | Binary-only targets | T5 emulated executor; `frida`, `qemu`, `ptrace-bb` backends; stripped-binary workflow — **done**, see § 7 |
 | **v0.3** | Directed + hybrid | Distance feedback and CFG analysis; `CmpLogStage`; value profile; concolic boundary — **done**, see § 7 |
-| **v0.4** | APIs | Traffic capture (HAR, pcap, recording proxy); data-dependency inference; authorization oracles (ADR-0014) |
-| **v0.5** | TUI and GUI | T7 driver executor; PTY + terminal emulator; UI-state feedback; accessibility drivers (ADR-0013) |
-| **v0.6** | Grammar ecosystem | protobuf, ASN.1, ABNF, Kaitai, JSON Schema, OpenAPI importers |
+| **v0.4** | APIs | Traffic capture (HAR, pcap, recording proxy); data-dependency inference; authorization oracles (ADR-0014) — **done**, see § 7 |
+| **v0.5** | TUI and GUI | T7 driver executor; PTY + terminal emulator; UI-state feedback; accessibility drivers (ADR-0013) — **TUI done**, desktop drivers not, see § 7 |
+| **v0.6** | Grammar ecosystem | protobuf, ASN.1, ABNF, Kaitai, JSON Schema, OpenAPI importers — **done**, see § 7 |
 | **v0.7** | Platform parity | macOS and Windows fast paths and isolation above `minimal` |
 | **v1.0** | Scale | Distributed fuzzing: coordinator, corpus sync protocol, fleet view (needs its own ADR) |
 
@@ -845,10 +845,10 @@ have been checked against the runs rather than inferred. The remedy is
 mechanical and now exists: a release cannot publish without a clean build of
 the tagged commit on a machine that starts from `git clone`.
 
-## 7. v0.2 and v0.3
+## 7. v0.2 to v0.6
 
-Both shipped after v0.1, in the order § 5 sequenced them. What each contains,
-what was measured for it, and what it does not cover.
+Shipped after v0.1, in the order § 5 sequenced them. What each contains, what
+was measured for it, and what it does not cover.
 
 ### 7.1 v0.2 — binary-only targets
 
@@ -888,3 +888,67 @@ fire only when the target also carries a sanitizer. A campaign with a solver is
 not reproducible, and one enabling comparison logging pays for it on every
 comparison the target performs, measured as within the noise of a fork-dominated
 benchmark and not measured on a comparison-dominated one.
+
+### 7.3 v0.4 — API fuzzing from captured traffic
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| Capture readers | `pkg/capture` | HAR, pcap and a flat session file; reassembly stops at gaps, overwrites retransmissions and takes only the non-overlapping tail of an overlap |
+| Recording proxy | `internal/record` | CONNECT tunnelling, its own certificate authority, and every connection through the scope guard |
+| Dependency inference | `pkg/capture/link.go` | Finds the token *and* the identifier in a login-create-use session; refuses values under eight bytes; forward only; deterministic across eight runs of the same capture |
+| Credential handling | `pkg/capture/auth.go` | Recognised in requests and responses; the same secret gets the same placeholder; restoring a redacted session reproduces the original byte for byte |
+| API tier | `pkg/executor/api.go` | Without links the replay 404s on the recorded identifier and with them it does not — the failure inference exists to prevent, measured rather than argued. Boundaries come from the tree, so a length-changing mutation still leaves two requests |
+| Four oracles | `pkg/feedback/api.go` | Each tested for what it must *not* report: a 4xx, a new field, one slow response raising the bar, a public endpoint answering 200 |
+| Campaign wiring | `pkg/campaign`, `internal/worker` | End to end: a capture becomes a seed, the requests reach a live service, and the status oracle produces the finding |
+
+**Not covered.** Inference is textual containment, so a value the client
+transforms between the response and the next request — base64, a hash, a
+concatenation — is not found. Only JSON response bodies can be re-extracted; a
+value that arrived in a header of an earlier *request* is sent unchanged. The
+proxy has been exercised against Go's own client and server, not against a
+browser. HTTP/2 and HTTP/3 are not read or spoken.
+
+### 7.4 v0.5 — terminal user interfaces
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| T7 driver tier | `pkg/executor/driver.go` | Event order, the sequence bound, reset per sequence, the timeout, a backend that dies mid-sequence, and an undeliverable event skipped rather than fatal |
+| Terminal emulator | `pkg/vt` | Deferred wrap, the scrolling region, the alternate buffer, SGR parameter consumption, UTF-8 split across writes, wide characters; a self-fuzzing entry point over a million executions |
+| Pseudo-terminals | `internal/platform`, `internal/safety` | A real program in raw mode on the alternate screen, redrawing on SIGWINCH, driven end to end |
+| Key and mouse encoding | `internal/driver/keys.go` | Application cursor mode changes the arrows and nothing else; a click on a program with no mouse tracking sends nothing |
+| UI-state feedback | `pkg/state/screen.go` | A clock, a spinner and a progress bar are not states; five distinct screens are five states; deterministic across sixteen runs |
+| Three oracles | `pkg/feedback/ui.go` | Each tested for what it must *not* report: an ordinary screen, a screen that never changed, a screen something has escaped from |
+| Campaign wiring | `internal/worker` | End to end: a campaign file with a `driver` block finds the planted unrecoverable screen |
+
+**Not covered.** One backend: `tui`. The four desktop backends ADR-0013 names
+each need a platform, a session and a display, and none is implemented — the
+capability is declared absent rather than approximated. Pseudo-terminals are a
+Unix mechanism; Windows has ConPTY and it is not written. The emulator does not
+implement scrollback, custom tab stops, double-width lines, mouse reporting back
+from the program, or reflow on resize. Waiting for the interface to go quiet is
+a wall-clock input to what the campaign observes, so the tier declares itself
+non-deterministic.
+
+### 7.5 v0.6 — the grammar ecosystem
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| Six importers | `pkg/schemaio` | Each import validates, survives being rendered and re-parsed by the tool's own parser, and generates a non-empty input through the real generator |
+| ABNF | `abnf.go` | Repetition forms, folded continuation lines, incremental alternation, comments inside strings, a group inside an alternation, the core rules |
+| Kaitai | `kaitai.go` | `size: field` inverted into a length derivation, and a generated file whose lengths agree with the fields they describe |
+| JSON Schema | `jsonschema.go` | Sixteen generated documents parsed by `encoding/json`; required and optional members; a recursive `$ref` that terminates |
+| OpenAPI | `openapi.go` | Sixteen generated requests read by the HTTP codec the API tier uses; no query string with a dangling separator |
+| Protocol Buffers | `proto.go` | Sixteen generated frames walked key by key the way a decoder does; keys exact at field number 2000 |
+| ASN.1 | `asn1.go` | Sixteen generated documents walked tag by tag, constructed types recursively |
+| Self-fuzzed | `fuzz_test.go` | A million executions across all six; the two defects found are regression cases |
+
+**Not covered.** The variable-length integer. Protobuf and DER both encode
+values whose width depends on their value, and the schema language has only
+fixed-width ones — so both importers generate the one-byte form and bound their
+payloads to stay inside it, which caps a generated message at 127 bytes per
+length-delimited field. Closing that means a variable-width integer in the IR,
+touching the encoder, the fixup pass and every mutator. Value constraints
+(`minimum`, `pattern`, `INTEGER (1..255)`) are reported rather than solved.
+Kaitai expressions, ABNF prose-vals and JSON Schema's `not`/`if`/`then` have no
+construction and are reported. Each importer is a documented subset and will
+meet documents it does not cover; that is what the report is for.

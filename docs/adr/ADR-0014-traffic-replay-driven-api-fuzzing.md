@@ -77,6 +77,32 @@ becomes an additional grammar importer feeding the same IR, layered on later
 - Because everything lands in the shared IR, adding spec import later changes the
   seed source only, not the engine.
 
+**Implementation status**
+
+- Landed in v0.4. Captures are read from HAR, pcap (with TCP reassembly) and a
+  flat file of HTTP requests; a recording proxy with its own certificate
+  authority produces the first two for a client that will not export one.
+- Dependency inference is a containment match over the values a response
+  produced and the values a later request carries, longest match wins, forward
+  only, with values shorter than eight bytes ignored — a link table full of
+  `"1"` would have the campaign rewriting fields the server was happy with.
+- Credentials are recognised, redacted at rest and substituted immediately
+  before each write, so a token is in memory for the length of one send and is
+  never in the corpus, the store, or a mutation. `xfuzz capture` writes the
+  redacted session and the credentials to separate files, and only the first is
+  meant to be committed.
+- Four oracles landed with it — status, learned response shape, learned latency,
+  and authorization — because a service almost never crashes: it is behind a
+  supervisor, its handler has a recover, and the process outlives anything one
+  request can do to it. Authorization is the class this record says captured
+  traffic makes reachable and a specification does not, and it needs the
+  campaign to say whose credentials it is replaying with and what should happen.
+- The primary/secondary ordering this record sets is visible in the code: an
+  OpenAPI document imports to a grammar
+  ([ADR-0031](ADR-0031-grammar-imports-are-subsets-with-reports.md)) that reaches
+  endpoints a capture never exercised, and carries no identity, so the
+  authorization oracle has nothing to work with.
+
 ## Alternatives considered
 
 - **Spec-driven with stateful sequences.** Strong when a spec exists. Rejected as

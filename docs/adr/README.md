@@ -50,6 +50,8 @@ extended Nygard template.
 | [ADR-0027](ADR-0027-block-traces-are-the-binary-only-currency.md) | Block traces are the currency of the binary-only tier | Accepted | ASR-0003, ASR-0006, ASR-0007 |
 | [ADR-0028](ADR-0028-comparison-logging-in-the-runtime.md) | Comparison operands travel in their own region, written by the runtime | Accepted | ASR-0004, ASR-0007, ASR-0014 |
 | [ADR-0029](ADR-0029-directed-fuzzing-over-block-distance.md) | Direction is block distance, measured over a recovered graph | Accepted | ASR-0004, ASR-0008, ASR-0012 |
+| [ADR-0030](ADR-0030-terminal-emulation-is-the-tui-observable.md) | A TUI's only observable is its screen, so the fuzzer emulates a terminal | Accepted | ASR-0001, ASR-0004, ASR-0008 |
+| [ADR-0031](ADR-0031-grammar-imports-are-subsets-with-reports.md) | An imported grammar is a documented subset with a report | Accepted | ASR-0001, ASR-0009, ASR-0013 |
 
 Three ADRs serve no single ASR: **ADR-0018** and **ADR-0019** are project
 constraints (licensing, identity) rather than responses to a requirement, and

@@ -59,14 +59,20 @@ github.com/rom/Xfuzz
 ├── pkg/                    public, stable API surface
 │   ├── rng/                deterministic, splittable, seekable randomness
 │   ├── ir/                 input IR: nodes, fixups, traversal, arena
-│   ├── schema/             .xfg grammar DSL, importers
+│   ├── schema/             .xfg grammar DSL
+│   ├── schemaio/           importers: ABNF, Kaitai, JSON Schema, OpenAPI,
+│   │                       protobuf, ASN.1 — each a subset with a report
+│   ├── capture/            HAR, pcap and session readers; dependency
+│   │                       inference; credential redaction
+│   ├── vt/                 terminal emulator: bytes in, a screen out
 │   ├── codec/              parse/serialise between bytes and IR, including the
 │   │                       schema-driven one a .xfg grammar becomes
 │   ├── mutate/             mutators, mutator scheduling
 │   ├── generate/           grammar-driven generation
 │   ├── feedback/           Observer, Feedback, Objective + algebra
 │   ├── executor/           Executor interface + tiers T0-T7: T0 in-process,
-│   │                       T2 fork server, T3 pool, T4 subprocess, T6 sessions
+│   │                       T2 fork server, T3 pool, T4 subprocess, T5 emulated,
+│   │                       T6 sessions, the API tier, T7 interface drivers
 │   ├── corpus/             corpus, testcase, provenance, scheduler
 │   ├── corpusio/           AFL and libFuzzer corpus import/export
 │   ├── state/              state model, inference, state feedback, scheduling
@@ -77,7 +83,9 @@ github.com/rom/Xfuzz
 │   ├── engine/             the fuzz loop, stages, worker runtime
 │   ├── store/              SQL metadata + CAS blob store, migrations
 │   ├── triage/             classify, bucket, minimise, verify
-│   ├── safety/             sandbox, scope guard, audit log
+│   ├── safety/             sandbox, scope guard, audit log, pseudo-terminals
+│   ├── driver/             T7 backends: tui (a program on a PTY)
+│   ├── record/             a recording proxy and its certificate authority
 │   ├── extension/          turns a campaign's plugin declarations into running,
 │   │                       confined processes — the one place that may, because
 │   │                       pkg/plugin cannot spawn and internal/safety must not
@@ -711,19 +719,19 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 
 | ASR | Satisfied by |
 | --- | --- |
-| ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014 |
+| ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014, ADR-0030, ADR-0031 |
 | ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
 | ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027 |
-| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029 |
+| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029, ADR-0030 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
 | ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026, ADR-0027 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021, ADR-0027, ADR-0028 |
-| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029 |
-| ASR-0009 Extensibility | ADR-0010, ADR-0025 |
+| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029, ADR-0030 |
+| ASR-0009 Extensibility | ADR-0010, ADR-0025, ADR-0031 |
 | ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022 |
 | ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021 |
 | ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024, ADR-0029 |
-| ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008 |
+| ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008, ADR-0031 |
 | ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021, ADR-0028 |
 | ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023, ADR-0024 |
 

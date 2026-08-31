@@ -104,8 +104,24 @@ var fieldCredentials = map[string]CredentialKind{
 }
 
 // FindCredentials returns the secrets a capture carries.
+// MinCredentialLength is the shortest value worth treating as a credential.
+//
+// Not a heuristic about entropy: a value this short is not a secret, and
+// redacting it is actively harmful. Replacing every occurrence of "0" in a
+// session with a placeholder rewrites the method, the path and half the body —
+// the redacted capture is no longer the capture, and the campaign replays
+// something the client never sent. Eight matches the bound dependency inference
+// uses, for the same reason: below it, a match means nothing.
+const MinCredentialLength = 8
+
 func FindCredentials(c *Capture) []Credential {
 	var out []Credential
+	keep := func(cr Credential) {
+		if len(cr.Value) < MinCredentialLength {
+			return
+		}
+		out = append(out, cr)
+	}
 	for i := range c.Exchanges {
 		r := &c.Exchanges[i].Request
 		for _, h := range r.Headers {
@@ -113,14 +129,14 @@ func FindCredentials(c *Capture) []Credential {
 			if !ok || h.Value == "" {
 				continue
 			}
-			out = append(out, Credential{
+			keep(Credential{
 				Location: Location{Exchange: i, Part: PartHeader, Name: h.Name},
 				Kind:     kind, Value: secretPart(h.Value),
 			})
 		}
 		for _, q := range r.Query() {
 			if kind, ok := fieldCredentials[normaliseField(q.Name)]; ok && q.Value != "" {
-				out = append(out, Credential{
+				keep(Credential{
 					Location: Location{Exchange: i, Part: PartQuery, Name: q.Name},
 					Kind:     kind, Value: q.Value,
 				})
@@ -128,7 +144,7 @@ func FindCredentials(c *Capture) []Credential {
 		}
 		for _, jv := range jsonValues(r.Body) {
 			if kind, ok := fieldCredential(jv.pointer); ok && jv.value != "" {
-				out = append(out, Credential{
+				keep(Credential{
 					Location: Location{Exchange: i, Part: PartBody, Name: jv.pointer},
 					Kind:     kind, Value: jv.value,
 				})
@@ -142,7 +158,7 @@ func FindCredentials(c *Capture) []Credential {
 		resp := &c.Exchanges[i].Response
 		for _, jv := range jsonValues(resp.Body) {
 			if kind, ok := fieldCredential(jv.pointer); ok && jv.value != "" {
-				out = append(out, Credential{
+				keep(Credential{
 					Location: Location{Exchange: i, Part: PartBody, Name: jv.pointer},
 					Kind:     kind, Value: jv.value,
 				})
@@ -152,7 +168,7 @@ func FindCredentials(c *Capture) []Credential {
 			if strings.EqualFold(strings.TrimSpace(h.Name), "set-cookie") && h.Value != "" {
 				_, value, _ := strings.Cut(firstField(h.Value), "=")
 				if value != "" {
-					out = append(out, Credential{
+					keep(Credential{
 						Location: Location{Exchange: i, Part: PartHeader, Name: h.Name},
 						Kind:     CredCookie, Value: value,
 					})

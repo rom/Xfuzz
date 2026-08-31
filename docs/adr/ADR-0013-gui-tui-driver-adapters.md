@@ -79,6 +79,33 @@ standards, needs no display server, and runs identically in CI.
 
 - Phased in ADR-0020 after the v1 domains; interfaces are designed in v1.
 
+**Implementation status**
+
+- The `tui` driver landed in v0.5. What it drives the program through, what the
+  emulator implements, and what it deliberately does not, is
+  [ADR-0030](ADR-0030-terminal-emulation-is-the-tui-observable.md).
+- `UIStateFeedback` is not a new mechanism: this record says the UI state graph
+  is the same object as the protocol state machine, and it is held to literally.
+  The T7 executor feeds `pkg/state`'s observer through the method the plugin
+  boundary already needed, and the model, the novelty scoring, the exemplars and
+  the scheduler are the ones a protocol campaign uses. What is new is a state
+  function that reads a screen, and the normalisation that makes reading one
+  possible: digits (the clock, the counters, the percentages), a narrow spinner
+  rule, and a progress-bar rule that collapses a run over an *alphabet* rather
+  than over a repeated character — a bar at 40% and the same bar at 100% repeat
+  different characters in different proportions.
+- Three oracles landed with it, for the three ways an interface fails while the
+  process stays alive and the exit status stays zero: a diagnostic on the screen,
+  an interface that stopped changing while events kept arriving, and a state no
+  sequence has ever left. The last two are comparisons rather than rules — a
+  screen that never changed is not a hang, and a screen a sequence happened to
+  end on is not a trap — because the only way to tell either from the ordinary
+  case is to have seen the program do better earlier.
+- A finding names the screen rather than its hash. The model has kept an
+  exemplar per label since it was written for protocols, and a bug filed against
+  "state 7" is a bug nobody can act on.
+- `gui-atspi`, `gui-win`, `gui-mac` and `web` are unimplemented.
+
 ## Alternatives considered
 
 - **Accessibility tree as the single universal abstraction.** Elegant. Rejected as

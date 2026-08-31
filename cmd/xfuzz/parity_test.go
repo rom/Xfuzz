@@ -68,6 +68,8 @@ func TestEveryCLICommandMapsToTheAPI(t *testing.T) {
 	local := map[string]string{
 		"init":    "writes a campaign file; no daemon is involved in writing one",
 		"version": "reports the running binary, which no daemon can answer about this process",
+		"capture": "turns a recorded session into files; the credentials it separates out " +
+			"must not travel over an API, and nothing about the translation needs a daemon",
 	}
 
 	for _, c := range commands {

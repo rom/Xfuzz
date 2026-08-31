@@ -101,8 +101,108 @@ both campaigns instrumented and scored identically so only the guidance differs:
 closest 7.00 blocks directed against 8.50 undirected. A one-second-per-query
 solver left 5000 executions taking 7ms against a 6ms baseline.
 
+### Added — v0.4, API fuzzing from captured traffic (ADR-0014)
+
+- **`pkg/capture`** reads a recorded session from a HAR, a pcap (with TCP
+  reassembly that stops at gaps, overwrites retransmissions and takes only the
+  non-overlapping tail of an overlap), or a flat file of HTTP requests.
+  **`internal/record`** is a recording proxy with its own certificate authority,
+  for a client that will not export one.
+- **Dependency inference.** A value a response produced, found inside a later
+  request by containment with the longest match winning, forward only, ignoring
+  anything shorter than eight bytes. Without it a replayed session asks for the
+  identifier from the recording, gets a 404, and everything after the first
+  request addresses an object that does not exist.
+- **Credentials** are recognised in requests *and* responses — a login's
+  response carries the token the next request uses, and redacting one half
+  leaves the secret beside the placeholder that hides it — redacted at rest with
+  a content-derived placeholder so the same token is the same placeholder
+  everywhere, and substituted immediately before each write.
+- **`executor.API`**, the session tier's shape with the two things a captured
+  API session needs: values carried forward, and responses judged. Request
+  boundaries come from the tree rather than the bytes, because a mutation that
+  lengthens a body leaves a `Content-Length` that no longer locates the request's
+  end — and then the session silently becomes one request.
+- **Four oracles**, because a service almost never crashes: 5xx and nothing else
+  (a 4xx is the service telling a fuzzer it sent nonsense); a learned response
+  shape where a *changed type* is a violation and a new field is not; a learned
+  latency norm that does not fold its own outliers back in; and authorization,
+  which is a comparison rather than a rule — a service answering 200 to everyone
+  for a public endpoint is not a finding, and the only way to tell that from a
+  broken check is to have seen the endpoint refuse somebody.
+- **`codec.HTTP`** and an `api` block in the campaign file: address, capture,
+  links, secrets, identity, expectation, oracles.
+- **`xfuzz capture`** writes the redacted session, the credentials and the
+  inferred dependencies as three separate outputs. Only the first is meant to be
+  committed.
+
+### Added — v0.5, terminal user interfaces (ADR-0013, ADR-0030)
+
+- **`executor.Driver`**, tier T7: a sequence of interaction events against a
+  program with a screen. Events are text — `key enter`, `text hello`,
+  `click 10 4`, `wait 200ms`, `resize 80 24` — because a sequence of
+  interactions is something a person writes to seed a campaign, reads to triage
+  a finding, and edits to minimise one.
+- **`pkg/vt`**, a terminal emulator. A TUI has exactly one observable and it is
+  the screen; a fuzzer that wants to know whether a keystroke reached a new part
+  of the program has to interpret the escape sequences or it has no feedback at
+  all. Cursor movement, erase, insert and delete, the scrolling region, SGR with
+  256-colour and 24-bit colour, the alternate screen buffer, autowrap, UTF-8 with
+  a fixed width table, and the modes a driver must consult before encoding an
+  event. It has its own self-fuzzing entry point: it reads bytes from a program
+  being actively mutated into misbehaving.
+- **Pseudo-terminals through the safety layer.** Over pipes `isatty` is false,
+  the size is unknown and there is no controlling terminal, so a campaign over
+  pipes is a campaign against a different program.
+- **UI-state feedback is the protocol state machine**, held to literally: the
+  driver feeds `pkg/state`'s observer, and the model, the novelty scoring, the
+  exemplars and the scheduler are the ones a protocol campaign uses. What is new
+  is a screen state function and its normalisation — digits, a narrow spinner
+  rule, and a progress-bar rule that collapses a run over an alphabet rather than
+  a repeated character.
+- **Three interface oracles**, for the three ways an interface fails while the
+  process stays alive and the exit status stays zero: a diagnostic on the screen,
+  an interface that stopped changing while events kept arriving, and a state no
+  sequence has ever left. A finding names the screen, not its hash.
+- A `driver` block in the campaign file, and `codec.Events` so the sequence
+  operators act on events rather than on characters.
+
+### Added — v0.6, the grammar ecosystem (ADR-0031)
+
+- **`pkg/schemaio`** imports six description languages: ABNF, Kaitai Struct,
+  JSON Schema, OpenAPI, Protocol Buffers and ASN.1. Each returns a schema *and*
+  a report of everything it could not translate, with the reason — a converter
+  that silently dropped what it could not handle would produce a grammar that
+  looks complete and generates inputs a parser rejects at the first field.
+- **`xfuzz grammar import`** prints the report to standard error and the grammar
+  to standard output, so `xfuzz grammar import x.proto > x.xfg` writes the
+  grammar and still shows the limits.
+- The line is between description and predicate: a size bound translates, a
+  value constraint does not. The largest gap is the variable-length integer that
+  protobuf and DER are built on, and both importers generate the one-byte form,
+  bound their payloads to stay inside it, and say so.
+- Every import is checked three ways: it validates, it survives being rendered
+  and re-parsed by the tool's own parser, and it generates a non-empty input
+  through the real generator and fixup path.
+
 ### Changed
 
+- **The per-request bound for an API campaign is one second, not five.** A
+  campaign sends malformed requests constantly, every one that leaves the
+  service waiting costs the whole bound, and then costs it again for each
+  verification and each minimisation step. Measured against a local service:
+  five seconds turned one finding into a ten-minute stall; one second turned the
+  same campaign into two. Triage's budgets come down for the same arithmetic —
+  four thousand executions is right for a parser at ten thousand a second and
+  absurd for an interface at one.
+- **An event the driver backend cannot deliver is skipped and counted, not
+  reported as a harness failure.** "key enter" becomes "key eykm 226" after two
+  mutation operators, so the previous behaviour ended a campaign on its first
+  interesting mutation. A backend that cannot reach the program at all still
+  fails the campaign.
+- An `api` campaign gets `codec.HTTP` and a `driver` campaign `codec.Events`
+  unless the file says otherwise, which is what puts request and event
+  boundaries in the tree where a mutation cannot lose them.
 - `xfuzz-cc` adds `trace-cmp` to the default instrumentation. Measured back to
   back on the same machine, a fork-dominated benchmark ran at 3246 exec/s with it
   and 3323 without — within the noise of that measurement. `XFUZZ_NO_CMPLOG=1`

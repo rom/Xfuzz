@@ -26,10 +26,10 @@ func init() {
 	})
 	register(&Command{
 		Name: "grammar", Group: "inspection",
-		Short: "Compile a grammar and show what it generates",
-		Usage: "grammar FILE [-n COUNT] [--seed N] [--raw]",
+		Short: "Compile a grammar, sample it, or import one from another language",
+		Usage: "grammar [sample] FILE [-n COUNT] | grammar import FILE [--as NAME] [--root TYPE]",
 		API:   []string{"grammar.sample"},
-		Run:   runGrammar,
+		Run:   runGrammarCmd,
 	})
 	register(&Command{
 		Name: "metrics", Group: "inspection", Short: "Show counters, history, and health diagnostics",
@@ -603,7 +603,7 @@ func subcommand(args []string, def string) (string, []string) {
 		return def, args
 	}
 	switch first {
-	case "list", "get", "import", "export", "buckets":
+	case "list", "get", "import", "export", "buckets", "sample":
 		return first, args[1:]
 	}
 	return def, args
@@ -672,6 +672,22 @@ func min(a, b int) int {
 // The workbench's operation from the command line, over the same route, so that
 // a grammar can be checked in a shell loop or a test as readily as in a browser
 // — and so neither interface can inspect a grammar the other cannot.
+// runGrammarCmd dispatches between sampling a grammar and importing one.
+//
+// Sampling is the default because it is what somebody does with a grammar they
+// already have, and importing is what they do once per description.
+func runGrammarCmd(ctx context.Context, args []string) error {
+	sub, rest := subcommand(args, "sample")
+	switch sub {
+	case "sample":
+		return runGrammar(ctx, rest)
+	case "import":
+		return runGrammarImport(ctx, rest)
+	default:
+		return fmt.Errorf("unknown grammar subcommand %q (want sample or import)", sub)
+	}
+}
+
 func runGrammar(ctx context.Context, args []string) error {
 	fs, opts := flags(commands["grammar"])
 	count := fs.Int("n", 0, "how many samples to generate")

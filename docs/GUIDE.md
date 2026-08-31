@@ -388,6 +388,147 @@ If the protocol is one nobody has documented and you know its shape, write the
 labelling rule yourself in four lines of Starlark — see
 [Campaign-local logic](#campaign-local-logic).
 
+## Fuzzing an HTTP API
+
+A campaign becomes an API campaign when it has an `api` block. The starting
+point is a *capture* rather than a specification: a recording carries the
+requests a client actually sends, the values that chain between them, and the
+identity they were sent as, and none of those is in a specification
+([ADR-0014](adr/ADR-0014-traffic-replay-driven-api-fuzzing.md)).
+
+Save a session from your browser as a HAR, or a pcap from `tcpdump`, or paste
+the requests into a file. Then split it into what a campaign needs:
+
+```console
+$ xfuzz capture session.har -o session.http --secrets api.secrets --links
+session.har: 14 exchange(s) across 1 host(s); 2 credential(s)
+  9 dependenc(ies) inferred
+    exchange 0 body /access_token -> exchange 1 header Authorization
+    exchange 1 body /id -> exchange 2 path segment 1
+  wrote api.secrets (mode 0600)
+  wrote session.http (3184 bytes)
+```
+
+`session.http` holds placeholders where the credentials were and is safe to
+commit. `api.secrets` holds the values and is not — it is read once at startup
+and substituted immediately before each request is written, so a token is in
+memory for the length of one send and is never in the corpus or the store.
+
+```yaml
+api:
+  address: tcp:127.0.0.1:8080   # where to send them, which need not be where they were recorded
+  capture: ./session.http
+  secrets: ./api.secrets
+  oracles: [status, schema, latency]
+```
+
+The oracles are the point. A service almost never crashes — it is behind a
+supervisor, its handler has a recover, and the process outlives anything one
+request can do to it — so a campaign judging only crashes finds nothing.
+
+| Oracle | What it reports |
+| --- | --- |
+| `status` | 5xx, and nothing else. A 4xx is the service saying the fuzzer sent nonsense, which is the expected outcome of nearly every mutation |
+| `schema` | A field whose *type* changed from what this endpoint has always produced. A new field is not a violation; services add them |
+| `latency` | A response far outside the norm this service has shown, learned rather than declared, with outliers kept out of the norm |
+| `authorization` | A session replayed as one identity that should not have succeeded |
+
+The authorization oracle needs to be told what it is comparing against:
+
+```yaml
+api:
+  identity: mallory
+  expect: denied
+  oracles: [status, authorization]
+```
+
+Replay the same capture twice — once as the owner with `expect: allowed`, once
+with another identity's credentials and `expect: denied` — and anything that
+still succeeds has no authorization check. This is the class captured traffic
+makes reachable and a specification does not.
+
+## Fuzzing a terminal program
+
+A campaign becomes a user-interface campaign when it has a `driver` block. The
+input is a sequence of interaction events rather than data, and the program runs
+on a pseudo-terminal with an emulator watching what it draws
+([ADR-0013](adr/ADR-0013-gui-tui-driver-adapters.md),
+[ADR-0030](adr/ADR-0030-terminal-emulation-is-the-tui-observable.md)).
+
+```yaml
+target:
+  path: ./myapp
+driver:
+  kind: tui
+  cols: 80
+  rows: 24
+  oracles: [diagnostic, unresponsive, trap]
+seeds:
+  inline:
+    - "key 1\nkey down\nkey enter\n"
+    - "key 2\nkey escape\nkey q\n"
+```
+
+A seed is a text file of events, one per line, so you can write one by hand and
+read a finding without a decoder:
+
+```
+key enter          a named key: enter, tab, up, ctrl-c, f5, alt-x
+text hello world   literal text typed
+click 10 4         a pointer press, sent only if the program asked for mouse reporting
+wait 200ms         let it settle longer than usual
+resize 80 24       change the terminal size, which the program is told about
+```
+
+A line that is not an event is typed literally, so an ordinary file is a usable
+seed.
+
+The three oracles are for the three ways an interface fails while the process
+stays alive and the exit status stays zero:
+
+| Oracle | What it reports |
+| --- | --- |
+| `diagnostic` | A stack trace, a panic or an assertion on the screen. A runtime that catches an error at the top of its event loop prints it and keeps running |
+| `unresponsive` | The interface stopped changing while events kept arriving — and it was responding earlier, which is what separates a hang from a program that ignores keys it does not bind |
+| `trap` | A screen the campaign has reached several times, spent several events in, and never once left |
+
+The tier is slow — a restart per sequence is the dominant cost — so it defaults
+to one worker and much smaller triage budgets than a file campaign.
+
+## Importing a grammar somebody else wrote
+
+Writing a grammar takes hours, and most formats already have a description
+somebody else debugged. `xfuzz grammar import` reads six of those languages:
+
+```console
+$ xfuzz grammar import api.proto -o api.xfg
+proto: 9 types, 57 fields; 3 constructs not translated:
+  imported definition (1): google/protobuf/timestamp.proto is a separate file...
+  varint length (13): a length above 127 needs a multi-byte varint...
+  varint scalar (2): a value above 127 needs a multi-byte varint...
+wrote api.xfg: 9 type(s), root Order
+```
+
+| Language | Extension | Notes |
+| --- | --- | --- |
+| ABNF | `.abnf` | RFC 5234 with RFC 7405's case markers; the core rules are supplied |
+| Kaitai Struct | `.ksy` | `size: field` becomes a length derivation on that field |
+| JSON Schema | `.json` | Produces a grammar for JSON *text*, punctuation immutable |
+| OpenAPI | `.yaml`, `.json` | Produces HTTP requests, one alternative per operation |
+| Protocol Buffers | `.proto` | The wire format; keys are exact, varint values are one byte |
+| ASN.1 | `.asn1` | The DER encoding; tags are exact, lengths are short-form |
+
+The report is the part that matters. Every one of these languages can say things
+the Xfuzz grammar cannot, and an importer that silently dropped them would give
+you a grammar that looks complete and generates inputs the parser rejects at the
+first field. What it could not translate is printed to standard error, so the
+grammar can be redirected and the limits still read
+([ADR-0031](adr/ADR-0031-grammar-imports-are-subsets-with-reports.md)).
+
+A description usually has more than one entry point and a grammar has one root.
+Unreachable types stay in the file and are listed in the report; `--root NAME`
+picks a different one.
+
 ## Making it faster
 
 `xfuzz status` reports health diagnostics as well as counters. The ones that
@@ -636,9 +777,10 @@ against the binary by `cmd/xfuzz/parity_test.go`, so it cannot fall behind it.
 | Command | What it does |
 | --- | --- |
 | `xfuzz audit` | Print the audit log and verify its hash chain |
+| `xfuzz capture` | Turn a recorded session into a seed, its dependencies, and its secrets |
 | `xfuzz corpus` | Browse, fetch, import and export the corpus |
 | `xfuzz findings` | List findings and fetch their reproducers |
-| `xfuzz grammar` | Compile a grammar and show what it generates |
+| `xfuzz grammar` | Compile a grammar, sample it, or import one from another language |
 | `xfuzz metrics` | Show counters, history, and health diagnostics |
 | `xfuzz minimize` | Reduce a finding's reproducer, preserving its failure class |
 | `xfuzz replay` | Re-run a finding's reproducer and report whether it still fails |

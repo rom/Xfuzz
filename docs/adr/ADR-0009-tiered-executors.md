@@ -99,6 +99,26 @@ require a minimum tier.
   is large; on a saturated machine the two converge. The ordering in the table
   holds regardless — T3 is never *slower* — and that is what is asserted.
 
+**Implementation status**
+
+- v0.1 landed T0, T2, T3, T4 and T6. T5 landed in v0.2 over a `Tracer` interface
+  ([ADR-0027](ADR-0027-block-traces-are-the-binary-only-currency.md)).
+- **T7 landed in v0.5**, with one backend: `tui`, a program on a pseudo-terminal
+  with an embedded emulator watching what it draws
+  ([ADR-0030](ADR-0030-terminal-emulation-is-the-tui-observable.md)). The
+  desktop backends ADR-0013 names each need a platform, a session and a display,
+  and none is implemented — the tier declares the capability absent rather than
+  approximating it (ADR-0022).
+- v0.4 added an **API tier** on the session tier's shape: HTTP requests replayed
+  from a capture, with values chained between them and responses judged rather
+  than read ([ADR-0014](ADR-0014-traffic-replay-driven-api-fuzzing.md)). It is
+  not an eighth tier — it is T6 with a codec and a set of oracles — and it is
+  selected by an `api` block in the campaign file rather than by a mode switch.
+- The tier a campaign gets is selected by which block its file carries: a
+  `session` block selects T6, an `api` block the API tier, a `driver` block T7,
+  and none of them the file tiers. A separate mode switch would let a file ask
+  for one thing and configure another.
+
 ## Alternatives considered
 
 - **Pure-Go fork server only, no native shim.** Maximum portability. Rejected as

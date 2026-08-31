@@ -288,7 +288,9 @@ continuously in CI with a persisted corpus (see [SECURITY.md](SECURITY.md) § 3.
 | Campaign file parser | Shared campaign files | `pkg/campaign.FuzzParse` |
 | AFL/libFuzzer corpus import | Downloaded corpora | `pkg/corpusio.FuzzImport` |
 | Dictionary parser | Shared dictionaries | `pkg/mutate.FuzzParseDictionary` |
-| HAR / pcap capture parsers | Captured traffic | v0.4, with the parsers |
+| HAR / pcap capture parsers | Captured traffic | `pkg/capture.FuzzRead` |
+| Terminal emulator | A target being mutated into misbehaving | `pkg/vt.FuzzTerminal` |
+| Grammar importers (six languages) | Descriptions somebody else wrote | `pkg/schemaio.FuzzImport` |
 | Sanitizer output parser | Target output | `internal/triage.FuzzClassify` |
 | Plugin protocol decoder | Third-party plugins | `pkg/plugin.FuzzReceive`, `FuzzServe` |
 | API request handlers | Network clients | `internal/api.FuzzRequest` |
@@ -325,6 +327,16 @@ understands nothing:
   scheduler assumes.
 - The API must **answer every request** and must never let a `/v1` path be
   answered by the console.
+- A terminal emulator must keep its **grid a rectangle and its cursor inside
+  it**, through any byte stream and across a resize. It is the most adversarial
+  parser in the tree by construction: the bytes come from a program the fuzzer
+  is actively mutating into misbehaving, so it is *guaranteed* hostile input
+  rather than merely exposed to it, and a panic there is a crash in the fuzzer
+  reported as a crash in the target.
+- An importer must return **either a schema or an error and never both**, and a
+  schema it returns must validate and have a root among its own types. An
+  importer that returned an invalid schema would push the failure into the
+  campaign, where it is a crashing worker rather than a message.
 
 That last one found a real defect on its first run: the console and the API
 share a listener, and which of them answered was decided on the *cleaned* path,
