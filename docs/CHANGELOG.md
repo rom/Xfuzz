@@ -240,6 +240,13 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
+- **A Go traceback had no frames on Windows**, because the frame pattern
+  required a path with no colon in it and a Windows path begins `C:\`. Without
+  frames, bucketing falls through to the message — and a message carrying the
+  offending values gives every crash of one bug a bucket of its own: six buckets
+  for two planted bugs, in a campaign that had otherwise run perfectly. This is
+  the same failure the traceback parser was written for, arriving by a different
+  route on a different platform.
 - **A campaign was refused on Windows because its target "is not executable".**
   The permission bits are a Unix answer and Windows never returns one — what
   makes a file runnable there is its extension — so the check rejected every

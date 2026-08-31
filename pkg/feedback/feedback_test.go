@@ -634,6 +634,45 @@ func TestFindFeedbackReachesIntoAStack(t *testing.T) {
 // bounds out of range [:255] with capacity 8" — puts every crash in a bucket of
 // its own. Measured before the fix on the portable target: 78 buckets for two
 // planted bugs.
+func TestAGoPanicWithAWindowsPathStillHasFrames(t *testing.T) {
+	// The same traceback, from the same program, on a platform whose paths
+	// start with a drive letter. The frame pattern used to refuse colons in a
+	// path, so on Windows it matched nothing: no frames, bucketing fell through
+	// to the message, and a message carrying the offending values gives every
+	// crash of one bug its own bucket. Measured there: six buckets for two
+	// planted bugs, in a campaign that had otherwise run perfectly.
+	out := "panic: runtime error: index out of range [3] with length 3\n\n" +
+		"goroutine 1 [running]:\n" +
+		"main.parse({0xc000106000, 0x3, 0x200})\n" +
+		"\tC:/Users/RUNNER~1/AppData/Local/Temp/xfuzz-164548162/main.go:48 +0x49a\n" +
+		"main.main()\n" +
+		"\tC:/Users/RUNNER~1/AppData/Local/Temp/xfuzz-164548162/main.go:29 +0xb9\n" +
+		"exit status 2\n"
+
+	f := ParseSanitizer(out)
+	if f.Kind != "panic" {
+		t.Errorf("kind = %q, want panic — a traceback nobody could parse is a "+
+			"traceback nobody could name", f.Kind)
+	}
+	if len(f.Frames) != 2 {
+		t.Fatalf("frames = %v, want the two frames of the traceback", f.Frames)
+	}
+	for _, frame := range f.Frames {
+		if !strings.HasSuffix(frame, ":48") && !strings.HasSuffix(frame, ":29") {
+			t.Errorf("frame %q does not end in its line number, so the drive "+
+				"letter was taken for one", frame)
+		}
+	}
+
+	// And two crashes at the same place still share their frames, which is the
+	// property the bucket count depends on.
+	other := strings.ReplaceAll(out, "[3] with length 3", "[97] with length 12")
+	g := ParseSanitizer(other)
+	if len(g.Frames) != len(f.Frames) || g.Frames[0] != f.Frames[0] {
+		t.Errorf("the same crash produced different frames: %v against %v", g.Frames, f.Frames)
+	}
+}
+
 func TestASanitizerReportCanBeAGoPanic(t *testing.T) {
 	out := "len=3 first='A'\n" +
 		"panic: runtime error: index out of range [3] with length 3\n\n" +

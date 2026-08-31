@@ -320,7 +320,13 @@ var (
 	// like "slice bounds out of range [:255] with capacity 8" contains the
 	// values, so every crash lands in a bucket of its own. Measured on the
 	// portable target: 78 buckets for two bugs.
-	goFrame = regexp.MustCompile(`(?m)^([\w./\[\]*()-]+\.[\w.\[\]*()-]+)\(.*\)\n\t([^\s:]+):(\d+)`)
+	// The file is anything up to the last colon before the line number, and
+	// not "anything without a colon": a Windows path begins C:\, so a pattern
+	// that refused colons matched no frame at all there — and a traceback with
+	// no frames buckets on the message instead, which carries the values, so
+	// every crash of the same bug became its own bug. Measured on Windows: six
+	// buckets for two planted bugs.
+	goFrame = regexp.MustCompile(`(?m)^([\w./\[\]*()-]+\.[\w.\[\]*()-]+)\(.*\)\n\t(\S+):(\d+)`)
 )
 
 // SanitizerObjective recognises a sanitizer diagnostic in a target's output.

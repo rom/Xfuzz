@@ -100,11 +100,22 @@ func TestSeatbeltProfileAllowsThePathTheKernelWillSee(t *testing.T) {
 		t.Skipf("this host cannot make a symbolic link: %v", err)
 	}
 
+	// What must be in the profile is the path the caller gave and the path the
+	// kernel will see, which is the *fully* resolved one — not the intermediate
+	// spelling this test happens to have built it from. On macOS those differ
+	// even when nobody made a link: /var is itself one.
+	resolvedLink, err := filepath.EvalSymlinks(link)
+	if err != nil {
+		t.Skipf("this host cannot resolve %s: %v", link, err)
+	}
 	p := SeatbeltProfile([]string{link}, false)
-	for _, want := range []string{link, real} {
+	for _, want := range []string{link, resolvedLink} {
 		if !strings.Contains(p, `(subpath "`+want+`")`) {
 			t.Errorf("%s is not writable under the profile:\n%s", want, p)
 		}
+	}
+	if resolvedLink == link {
+		t.Errorf("the link resolved to itself, so this test proved nothing: %s", link)
 	}
 
 	// And a path that is *already* the resolved one is named once, not twice: a
