@@ -137,6 +137,29 @@ listed here with its migration path.
   the only reason this was latent.
 - **`make ci` claimed to be "what CI runs on every push"** while running four
   of the ten jobs, and section 10 of TESTS.md listed seven of them.
+- **A crash marker could carry control characters into its bucket key**, found
+  by `FuzzClassify` — the only defect this audit found by running something
+  rather than by reading it. `extractMarker` split the target's output on `\n`
+  only, so a carriage return *after* the marker prefix survived; one before it
+  was already harmless, since the marker is sliced from the prefix onward,
+  which is why this needed a fuzzer. The marker is a bucket key, so a crash
+  whose message contains a CR was filed apart from the same crash without one —
+  and Windows, which is in the v0.1 scope, writes CRLF.
+- **The same marker is printed in the table an operator reads**, and comes
+  verbatim from a program being driven into undefined behaviour, which
+  SECURITY.md treats as hostile output rather than as a diagnostic. A target
+  emitting `\x1b[2J` was choosing what that terminal did. Control characters
+  are now dropped as a class on both paths; bytes at or above 0x80 pass
+  through, since cutting a UTF-8 continuation byte turns a message somebody has
+  to read into mojibake.
+- **The engine had a second copy of that rule and kept it**, whose comment
+  claimed it applied "the same rule triage's own classifier applies" — true
+  when written, false an hour after triage was fixed, with nothing comparing
+  them. It is the copy that matters more: the live marker reaches the bucket
+  key, the event stream, and the line scrolling past during `xfuzz run`.
+  `internal/engine/marker_test.go` now runs both over the same inputs and
+  checks the rules they share, while allowing the differences that are
+  deliberate.
 - **The grammar workbench took its seed as a bare JSON number**, the last place
   one did. Pasting a campaign's own seed to see what that campaign was
   generating — the obvious thing to do with one — sampled a different campaign's
