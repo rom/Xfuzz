@@ -91,11 +91,15 @@ func (o *UIDiagnosticObjective) IsFinding(_ []Observer, _ ExitKind) (bool, Findi
 	if o.obs == nil {
 		return false, Finding{}, nil
 	}
-	// The screen, which the T7 tier records as the execution's output.
-	screen := string(o.obs.Stdout())
-	if screen == "" {
-		screen = o.obs.Combined()
-	}
+	// The screen and whatever the program wrote beside it, together.
+	//
+	// The screen alone was enough for a terminal program, whose standard error
+	// *is* its interface — a Python traceback lands where the interface was.
+	// It is not enough for anything else: a desktop application's toolkit
+	// catches the exception and prints it to a standard error nobody is
+	// looking at, and the widget tree afterwards says nothing went wrong. Both
+	// halves, so the oracle finds the diagnostic wherever the platform put it.
+	screen := o.obs.Combined()
 	for _, re := range o.Patterns {
 		loc := re.FindStringIndex(screen)
 		if loc == nil {

@@ -65,6 +65,21 @@ type UISink interface {
 // first interesting mutation.
 var ErrSkipEvent = errors.New("the backend cannot deliver this event")
 
+// ContextResetter is a backend whose reset can be given a deadline.
+//
+// DriverBackend.Reset takes no context, because a reset is a property of the
+// backend rather than of one execution — and for a terminal program that is
+// fine, because restarting it is a fork and an exec. For a backend that has to
+// wait for something to come back — a browser to relaunch, an application to
+// republish its accessibility tree — it is not: a campaign that has been asked
+// to stop would sit through the whole start timeout first, which is how a
+// worker took thirty seconds to notice it had been stopped.
+//
+// Optional, so a backend that does not need it implements nothing.
+type ContextResetter interface {
+	ResetWith(ctx context.Context) error
+}
+
 // Settler is a backend that knows when the interface has finished redrawing.
 //
 // Optional, and worth implementing wherever it is possible: without it the tier
@@ -290,7 +305,12 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 	// interface — so without a reset every sequence starts wherever the last one
 	// left off and no finding reproduces.
 	if e.opts.Reset != ResetNone {
-		if err := e.backend.Reset(); err != nil {
+		if err := e.reset(ctx); err != nil {
+			if ctx.Err() != nil {
+				// The campaign was stopped while the interface was coming back.
+				// Not a harness failure: there is nothing left to run.
+				return feedback.ExitTimeout, nil
+			}
 			return feedback.ExitError, fmt.Errorf("executor %s: resetting: %w", e.name, err)
 		}
 	}
@@ -381,6 +401,15 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 // deadline. Clamping keeps a wait a wait; a seed that genuinely needs longer
 // can say so twice.
 const MaxEventWait = 5 * time.Second
+
+// reset restarts the interface, giving the backend the sequence's context where
+// it can use one.
+func (e *Driver) reset(ctx context.Context) error {
+	if r, ok := e.backend.(ContextResetter); ok {
+		return r.ResetWith(ctx)
+	}
+	return e.backend.Reset()
+}
 
 // settle waits for the interface to redraw.
 func (e *Driver) settle(ctx context.Context, ev Event) {

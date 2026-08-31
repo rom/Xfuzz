@@ -43,8 +43,9 @@ var (
 // The driver backends. One, for now: ADR-0013's desktop backends each need a
 // platform, a session and a display, and none of them is implemented.
 const (
-	DriverTUI = "tui"
-	DriverWeb = "web"
+	DriverTUI      = "tui"
+	DriverWeb      = "web"
+	DriverGUIAtspi = "gui-atspi"
 )
 
 // The interface oracles.
@@ -57,7 +58,7 @@ const (
 
 // DriverKinds and DriverOracles list what the file may say.
 var (
-	DriverKinds   = []string{DriverTUI, DriverWeb}
+	DriverKinds   = []string{DriverTUI, DriverWeb, DriverGUIAtspi}
 	DriverOracles = []string{
 		DriverOracleDiagnostic, DriverOracleUnresponsive, DriverOracleTrap,
 		DriverOracleException,
@@ -168,6 +169,9 @@ func (r *Resolved) validateDriver(add addFunc) {
 	switch d.Kind {
 	case DriverWeb:
 		r.validateWebDriver(add)
+	case DriverGUIAtspi:
+		// A desktop application is sized by its window manager, not by the
+		// campaign: there is no viewport to set and no terminal to measure.
 	default:
 		if d.Cols < 8 || d.Cols > 1000 {
 			add("driver.cols", fmt.Sprintf("%d is outside 8..1000", d.Cols),

@@ -116,13 +116,20 @@ func TestWorkerReplaysACaptureAndJudgesTheResponses(t *testing.T) {
 		t.Fatalf("loading the campaign: %v\n%s", err, body)
 	}
 
-	obs := runWorker(t, cfg, func(o *observer) bool { return o.findings > 0 },
+	// Waiting for the status oracle by name rather than for any finding at all.
+	//
+	// The campaign's own seed produces a finding of its own under the worker —
+	// its replay draws a 400 there, which it does not when the same capture is
+	// replayed against the same server outside one — and since a seed is now
+	// judged like any other execution, "any finding" would be satisfied before
+	// the thing this test is about had happened.
+	obs := runWorker(t, cfg, func(o *observer) bool { return o.kinds["server-error"] > 0 },
 		"no 5xx was reported against a service that answers 500 to a mutated body",
 		90*time.Second)
 
 	obs.mu.Lock()
 	defer obs.mu.Unlock()
-	t.Logf("ready: %s", obs.ready.Executor)
+	t.Logf("ready: %s findings: %v %v", obs.ready.Executor, obs.kinds, obs.summaries)
 	if !strings.Contains(obs.ready.Executor, "api") {
 		t.Errorf("the worker built the %q tier", obs.ready.Executor)
 	}
@@ -167,19 +174,21 @@ func TestWorkerDrivesATerminalProgram(t *testing.T) {
 
 	obs.mu.Lock()
 	defer obs.mu.Unlock()
-	t.Logf("ready: %s findings: %v", obs.ready.Executor, obs.kinds)
+	t.Logf("ready: %s findings: %v %v", obs.ready.Executor, obs.kinds, obs.summaries)
 	if !strings.Contains(obs.ready.Executor, "tui") {
 		t.Errorf("the worker built the %q tier", obs.ready.Executor)
 	}
 	if obs.execs == 0 {
 		t.Error("the worker reported no executions")
 	}
-	// Whichever oracle spoke first, it must be one of the interface ones or a
-	// crash: what must not happen is a campaign that runs sequences and reports
-	// nothing, which is what an interface campaign without oracles does.
+	// Whichever oracle spoke first, it must be one that judges what the program
+	// said: an interface oracle, a crash, or the diagnostic classifier, which
+	// files a Go panic on the screen under "sanitizer". What must not happen is
+	// a campaign that runs sequences and reports nothing, which is what an
+	// interface campaign without oracles does.
 	var ui int
 	for kind, n := range obs.kinds {
-		if strings.HasPrefix(kind, "ui-") || kind == "crash" {
+		if strings.HasPrefix(kind, "ui-") || kind == "crash" || kind == "sanitizer" {
 			ui += n
 		}
 	}
@@ -279,3 +288,53 @@ document.getElementById('go').addEventListener('click', function () {
 });
 </script>
 </body></html>`
+
+// TestWorkerDrivesADesktopApplication is the second half of the v0.8 path: a
+// GTK program driven through its accessibility tree, where the input is a
+// sequence of clicks and keystrokes and the state is the widget tree.
+//
+// The bug is reachable by activating the same button twice, which is what an
+// event-sequence mutator finds by *duplicating* an event — the operator that
+// exists because a sequence is an IR Repeat rather than a blob of bytes. It
+// fails the way desktop applications fail: the toolkit catches the exception,
+// prints it, and carries on, so the process lives and its exit status is zero.
+func TestWorkerDrivesADesktopApplication(t *testing.T) {
+	python := testenv.Desktop(t)
+	script := filepath.Join(testenv.RepoRoot(t), "testdata", "targets", "gui", "gtk_form.py")
+
+	body := "name: guitest\n" +
+		"target:\n  path: " + python + "\n  args: [\"" + script + "\"]\n" +
+		"driver:\n" +
+		"  kind: gui-atspi\n  settle: 120ms\n  max_events: 8\n" +
+		"  start_timeout: 30s\n  timeout: 60s\n" +
+		"  oracles: [diagnostic, unresponsive]\n" +
+		"seeds:\n  inline: [\"click 160,25\\ntext abc\\nclick 160,67\\nclick 160,67\\n\"]\n" +
+		"feedback:\n  coverage: none\n  novelty: true\n" +
+		"stop:\n  execs: 40\n"
+
+	cfgPath := writeFile(t, t.TempDir(), "c.yaml", body)
+	cfg, err := campaign.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("loading the campaign: %v\n%s", err, body)
+	}
+
+	obs := runWorker(t, cfg, func(o *observer) bool { return o.findings > 0 },
+		"no finding from an application whose handler raises on the second activation",
+		240*time.Second)
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	t.Logf("ready: %s findings: %v execs: %d", obs.ready.Executor, obs.kinds, obs.execs)
+	if !strings.Contains(obs.ready.Executor, "gui-atspi") {
+		t.Errorf("the worker built the %q tier", obs.ready.Executor)
+	}
+	var ui int
+	for kind, n := range obs.kinds {
+		if strings.HasPrefix(kind, "ui-") || kind == "crash" {
+			ui += n
+		}
+	}
+	if ui == 0 {
+		t.Errorf("the findings are %v; none came from the interface", obs.kinds)
+	}
+}

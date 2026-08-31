@@ -450,7 +450,7 @@ loop:
 		// mutation budget; the stages that derive inputs from what the target
 		// said cost what they cost, which is bounded by the target's own
 		// behaviour rather than by the schedule.
-		in := stageInput{parent: parent, aim: aim, energy: energy, budget: b}
+		in := stageInput{parent: parent, aim: aim, energy: energy, budget: b, deadline: deadline}
 		var res stageResult
 		for _, st := range e.stages {
 			one, err := st.run(ctx, e, in)

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"time"
 
 	"github.com/rom/Xfuzz/pkg/corpus"
 	"github.com/rom/Xfuzz/pkg/feedback"
@@ -47,6 +48,22 @@ type stageInput struct {
 	aim    state.Aim
 	energy int
 	budget Budget
+
+	// deadline is when this slice of the budget runs out, zero for unbounded.
+	//
+	// The time budget has to reach the stages, and it did not: Run turned
+	// MaxTime into a deadline and kept it, so the loop checked it once per
+	// *seed* while a stage ran a seed's whole energy without looking. On a fast
+	// tier that is invisible — a stage is milliseconds. On the driver tier,
+	// where one execution restarts an application and takes about a second, a
+	// hundred-millisecond slice became minutes: the worker reported no metrics
+	// and did not notice it had been asked to stop for the whole of it.
+	deadline time.Time
+}
+
+// expired reports whether this slice's time is up.
+func (s stageInput) expired() bool {
+	return !s.deadline.IsZero() && time.Now().After(s.deadline)
 }
 
 // stageResult is what a stage produced.
@@ -82,6 +99,9 @@ func (havocStage) run(ctx context.Context, e *Engine, s stageInput) (stageResult
 			return res, nil
 		}
 		if s.budget.MaxExecs > 0 && e.stats.Execs >= s.budget.MaxExecs {
+			return res, nil
+		}
+		if s.expired() {
 			return res, nil
 		}
 

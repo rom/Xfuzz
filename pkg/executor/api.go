@@ -195,6 +195,7 @@ func (e *API) Run(ctx context.Context, in Input, obs []feedback.Observer) (feedb
 		}
 		out := e.prepare(req, i, carried)
 
+		reused := true
 		if conn == nil || !e.opts.KeepAlive {
 			if conn != nil {
 				conn.Close()
@@ -206,10 +207,32 @@ func (e *API) Run(ctx context.Context, in Input, obs []feedback.Observer) (feedb
 				// a fuzzer loses its credibility (ADR-0007).
 				return feedback.ExitError, fmt.Errorf("executor %s: %w", e.name, err)
 			}
-			conn = c
+			conn, reused = c, false
 		}
 
 		resp, rerr := e.exchange(ctx, conn, out)
+		if rerr != nil && reused {
+			// A keep-alive connection the service had already decided to close.
+			//
+			// This is not the service dying, it is the ordinary race every HTTP
+			// client handles: the server closes an idle connection at the same
+			// moment the client sends on it, and neither side did anything
+			// wrong. Reported as a crash it becomes a finding filed against
+			// whatever input happened to be in flight — which is a finding
+			// nobody can reproduce, from a fuzzer that now cannot be trusted
+			// about the ones that are real.
+			//
+			// So the request is sent again on a fresh connection, once. A
+			// failure there is evidence: the service would not answer a new
+			// connection either.
+			conn.Close()
+			c, cerr := e.connect(ctx)
+			if cerr != nil {
+				return feedback.ExitError, fmt.Errorf("executor %s: %w", e.name, cerr)
+			}
+			conn = c
+			resp, rerr = e.exchange(ctx, conn, out)
+		}
 		if rerr != nil {
 			// A connection that dies mid-session is the strongest black-box
 			// signal an API campaign has: a service that stopped answering

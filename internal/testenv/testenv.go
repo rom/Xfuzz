@@ -252,3 +252,38 @@ func Browser(t testing.TB) string {
 	t.Skip("no browser found: the web driver needs one, and this host has none")
 	return ""
 }
+
+// Desktop returns a Python interpreter with GTK bindings, or skips the test.
+//
+// A desktop campaign needs a display, a session bus, an accessibility bus and
+// an application with an accessibility bridge. That is four things a CI image
+// usually has none of, so this skips rather than fails — the same treatment the
+// browser and the binary-only tools get.
+func Desktop(t testing.TB) string {
+	t.Helper()
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		t.Skip("no display: a desktop campaign has nothing to draw on")
+	}
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		t.Skip("no session bus: there is no accessibility bus to publish a tree on")
+	}
+	if p := os.Getenv("XFUZZ_PYTHON_GTK"); p != "" {
+		if _, err := exec.LookPath(p); err == nil {
+			return p
+		}
+		t.Skipf("XFUZZ_PYTHON_GTK is set to %s, which is not executable", p)
+	}
+	for _, c := range []string{"python3", "python3.12", "python3.11", "python3.13"} {
+		p, err := exec.LookPath(c)
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(p, "-c",
+			"import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk")
+		if cmd.Run() == nil {
+			return p
+		}
+	}
+	t.Skip("no Python with GTK bindings: the desktop driver's test target needs one")
+	return ""
+}

@@ -154,6 +154,11 @@ type Web struct {
 	spawn *safety.Spawner
 	opts  WebOptions
 
+	// done is closed when the backend is closed, so a relaunch in flight stops
+	// waiting rather than holding the worker open for its start timeout.
+	done chan struct{}
+	once sync.Once
+
 	mu  sync.Mutex
 	cur *webSession
 }
@@ -211,7 +216,7 @@ func NewWeb(spawner *safety.Spawner, opts WebOptions) *Web {
 	if opts.MaxStateBytes <= 0 {
 		opts.MaxStateBytes = DefaultMaxStateBytes
 	}
-	return &Web{spawn: spawner, opts: opts}
+	return &Web{spawn: spawner, opts: opts, done: make(chan struct{})}
 }
 
 // Name implements executor.DriverBackend.
@@ -264,9 +269,12 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 	}
 
 	spec := executor.ProcSpec{
-		Path:       path,
-		Args:       append([]string{path}, d.browserArgs(dataDir)...),
-		Env:        d.opts.Env,
+		Path: path,
+		Args: append([]string{path}, d.browserArgs(dataDir)...),
+		// A headless browser needs less of the session than a desktop
+		// application does, and it still needs a home directory to put its
+		// profile beside and a display when the campaign asked to watch it.
+		Env:        WithSessionEnv(d.opts.Env),
 		StderrFile: pw,
 	}
 	startCtx, cancelStart := context.WithTimeout(ctx, d.opts.StartTimeout)
@@ -829,12 +837,17 @@ func (d *Web) Result() executor.ProcResult {
 // what it does not clear on its own is storage for the origin, so that is asked
 // for explicitly.
 func (d *Web) Reset() error {
+	ctx, cancel := closeCtx(d.done, d.opts.StartTimeout)
+	defer cancel()
+	return d.ResetWith(ctx)
+}
+
+// ResetWith implements executor.ContextResetter: the same reset, bounded by the
+// sequence that asked for it.
+func (d *Web) ResetWith(ctx context.Context) error {
 	d.mu.Lock()
 	s := d.cur
 	d.mu.Unlock()
-
-	ctx, cancel := context.WithTimeout(context.Background(), d.opts.StartTimeout)
-	defer cancel()
 
 	if s != nil && d.Alive() {
 		if err := d.newPage(ctx, s); err == nil {
@@ -909,6 +922,7 @@ func originOf(raw string) string {
 
 // Close implements executor.DriverBackend.
 func (d *Web) Close() error {
+	d.once.Do(func() { close(d.done) })
 	d.mu.Lock()
 	s := d.cur
 	d.cur = nil

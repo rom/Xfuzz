@@ -1011,6 +1011,14 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 	// the campaign will run the one that was meant.
 	cs = append(cs, browserCapability())
 
+	// The desktop, which is what a gui-atspi campaign drives (ADR-0034). Its
+	// two ordinary failures — no display and no session bus — are in the
+	// daemon's own environment and cannot be fixed from a campaign file, which
+	// is exactly the kind of thing the doctor exists to say.
+	desktopOK, desktopDetail := driver.DesktopEnvironment()
+	cs = append(cs, Capability{Name: "desktop-accessibility",
+		Available: desktopOK, Detail: desktopDetail})
+
 	// The three things a new install gets wrong that the mechanism checks
 	// above do not cover. Each is something someone hits on their first
 	// campaign and cannot diagnose from the failure it produces.

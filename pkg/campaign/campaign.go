@@ -393,12 +393,13 @@ type API struct {
 // different moments, and the whole thing runs five orders of magnitude slower
 // than a parser — which is why almost everything here is a bound.
 type Driver struct {
-	// Kind is the backend: tui or web.
+	// Kind is the backend: tui, web or gui-atspi.
 	//
-	// The desktop backends ADR-0013 also names — accessibility trees on Linux,
-	// UI Automation on Windows, the accessibility API on macOS — each need a
-	// platform, a session and a display, and none of them is implemented.
-	Kind string `yaml:"kind,omitempty" json:"kind,omitempty" doc:"Driver backend: tui or web."`
+	// The two desktop backends ADR-0013 also names — UI Automation on Windows
+	// and the accessibility API on macOS — need a platform this project cannot
+	// test on, and the macOS one needs C in the fuzzer, which ADR-0017 keeps
+	// out. Neither is implemented (ADR-0034).
+	Kind string `yaml:"kind,omitempty" json:"kind,omitempty" doc:"Driver backend: tui, web or gui-atspi."`
 
 	// URL is the page a web campaign drives.
 	//

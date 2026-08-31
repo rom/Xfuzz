@@ -89,15 +89,16 @@ func newPipes(t *testing.T) *pipes {
 
 // observer collects what a worker reports.
 type observer struct {
-	mu       sync.Mutex
-	ready    *daemon.ReadyInfo
-	execs    uint64
-	corpus   [][]byte
-	findings int
-	kinds    map[string]int
-	plugin   uint64
-	logs     []string
-	stopped  string
+	mu        sync.Mutex
+	ready     *daemon.ReadyInfo
+	execs     uint64
+	corpus    [][]byte
+	findings  int
+	kinds     map[string]int
+	summaries []string
+	plugin    uint64
+	logs      []string
+	stopped   string
 }
 
 func (o *observer) watch(p *pipes) {
@@ -127,6 +128,10 @@ func (o *observer) watch(p *pipes) {
 					o.kinds = map[string]int{}
 				}
 				o.kinds[m.Finding.Kind]++
+				// The summary as well as the kind, because a test that fails on
+				// "the findings are map[crash:1]" tells you nothing about what
+				// was found.
+				o.summaries = append(o.summaries, m.Finding.Kind+": "+m.Finding.Summary)
 			}
 		case daemon.MsgLog:
 			o.logs = append(o.logs, m.Level+": "+m.Text)

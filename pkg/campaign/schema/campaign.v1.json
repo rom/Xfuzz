@@ -118,7 +118,7 @@
           "type": "integer"
         },
         "kind": {
-          "description": "Driver backend: tui or web.",
+          "description": "Driver backend: tui, web or gui-atspi.",
           "type": "string"
         },
         "max_events": {

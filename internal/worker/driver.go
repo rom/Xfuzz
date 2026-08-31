@@ -104,6 +104,22 @@ func (b *built) driverBackend(cfg *campaign.Resolved) (executor.DriverBackend, e
 			MaxOutputBytes: int64(d.MaxOutputBytes),
 		}), nil
 
+	case campaign.DriverGUIAtspi:
+		g := driver.NewGUI(spawner, driver.GUIOptions{
+			Path:         cfg.Target.Path,
+			Args:         append([]string{cfg.Target.Path}, cfg.Target.Args...),
+			Env:          procSpecFor(cfg).Env,
+			Dir:          cfg.Target.Dir,
+			StartTimeout: d.StartTimeout.Std(),
+			Settle:       d.Settle.Std(),
+		})
+		if !g.Supported() {
+			_, detail := driver.DesktopEnvironment()
+			return nil, fmt.Errorf("worker: this host cannot drive a desktop "+
+				"application: %s", detail)
+		}
+		return g, nil
+
 	case campaign.DriverWeb:
 		// A browser cannot start under an address-space limit, and the limit is
 		// not the right instrument for one anyway.

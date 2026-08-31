@@ -38,6 +38,7 @@ Reimplementation from published papers and specifications is the required path.
 | Module | Version | License | Used for |
 | --- | --- | --- | --- |
 | github.com/dustin/go-humanize | v1.0.1 | MIT | Transitive: size formatting in modernc.org/sqlite's shell |
+| github.com/godbus/dbus/v5 | v5.2.2 | BSD-2-Clause | The AT-SPI accessibility protocol behind the `gui-atspi` driver (ADR-0034): D-Bus marshalling and the session handshake |
 | github.com/google/uuid | v1.6.0 | BSD-3-Clause | Transitive: temporary-name generation in modernc.org/libc |
 | github.com/mattn/go-isatty | v0.0.24 | MIT | Transitive: terminal detection in modernc.org/sqlite |
 | github.com/ncruces/go-strftime | v1.0.0 | MIT | Transitive: `strftime` for SQLite's date functions |

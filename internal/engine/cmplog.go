@@ -135,6 +135,9 @@ func (s *cmpLogStage) run(ctx context.Context, e *Engine, in stageInput) (stageR
 		if in.budget.MaxExecs > 0 && e.stats.Execs >= in.budget.MaxExecs {
 			return res, nil
 		}
+		if in.expired() {
+			return res, nil
+		}
 
 		for _, sub := range substitutions(r) {
 			if spent >= maxCmpCandidates {

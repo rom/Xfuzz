@@ -211,6 +211,9 @@ func (s *concolicStage) run(ctx context.Context, e *Engine, in stageInput) (stag
 		if in.budget.MaxExecs > 0 && e.stats.Execs >= in.budget.MaxExecs {
 			return res, nil
 		}
+		if in.expired() {
+			return res, nil
+		}
 		var b []byte
 		select {
 		case b = <-s.results:

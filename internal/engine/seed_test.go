@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rom/Xfuzz/pkg/codec"
 	"github.com/rom/Xfuzz/pkg/corpus"
@@ -153,5 +154,62 @@ func TestALoadedCorpusEntryThatIsAFindingIsReported(t *testing.T) {
 	}
 	if got := len(eng.Findings()); got != 1 {
 		t.Fatalf("a loaded entry that is a finding produced %d findings, want 1", got)
+	}
+}
+
+// slowExecutor takes a measurable amount of time per execution, which is what
+// every tier above T4 does: an emulated target, a protocol session, an
+// interface that has to be restarted.
+type slowExecutor struct {
+	echoExecutor
+	each time.Duration
+}
+
+func (e *slowExecutor) Run(ctx context.Context, in executor.Input, obs []feedback.Observer) (feedback.ExitKind, error) {
+	time.Sleep(e.each)
+	return e.echoExecutor.Run(ctx, in, obs)
+}
+
+// TestATimeBudgetBoundsASliceRatherThanASeed is the gap a desktop campaign
+// exposed. The engine turned Budget.MaxTime into a deadline and checked it once
+// per corpus entry, while a stage ran that entry's whole energy without
+// looking. On a fast tier that is invisible; on a tier where one execution
+// takes about a second it is minutes, during which the worker reports no
+// metrics and does not notice it has been asked to stop.
+func TestATimeBudgetBoundsASliceRatherThanASeed(t *testing.T) {
+	ex := &slowExecutor{each: 20 * time.Millisecond}
+	out := feedback.NewOutputObserver("output")
+	eng, err := New(Config{
+		CampaignSeed:  1,
+		Executor:      ex,
+		Observers:     []feedback.Observer{out},
+		Feedback:      feedback.NewNoveltyFeedback("novelty", out),
+		Objective:     &wordObjective{exec: &ex.echoExecutor, word: "never-appears"},
+		Corpus:        corpus.New(),
+		Schedule:      corpus.NewFastScheduler(),
+		Mutators:      mutate.Default(),
+		Codec:         codec.Raw{},
+		MaxInputBytes: 4096,
+	})
+	if err != nil {
+		t.Fatalf("building the engine: %v", err)
+	}
+	defer eng.Close()
+	if err := eng.AddSeed(context.Background(), []byte("seed input"), "test"); err != nil {
+		t.Fatalf("AddSeed: %v", err)
+	}
+
+	// A slice far shorter than one seed's energy at this speed.
+	start := time.Now()
+	if _, err := eng.Run(context.Background(), Budget{MaxTime: 100 * time.Millisecond}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// Generous, because a slice ends after the execution that crosses the
+	// deadline rather than before it. What this rules out is the old
+	// behaviour, where the slice ran a whole seed's worth of mutations —
+	// seconds, not milliseconds.
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("a 100ms slice took %s: the time budget does not reach the stages, "+
+			"so a slow tier's worker is unresponsive for a whole seed", elapsed)
 	}
 }
