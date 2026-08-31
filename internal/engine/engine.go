@@ -64,6 +64,13 @@ type Config struct {
 	// nil check.
 	State *state.Guidance
 
+	// Cmp, when set, turns on the comparison stage: the target's own comparison
+	// operands are read after each execution and substituted back into the
+	// input, which is what gets a campaign past a magic number or a checksum
+	// (ADR-0007). Nil leaves the stage out of the list entirely, so a campaign
+	// that did not ask for it pays nothing.
+	Cmp *feedback.CmpObserver
+
 	// Trace, when set, receives one line per execution. It is what makes the
 	// determinism requirement checkable rather than merely asserted: two runs of
 	// the same campaign must produce byte-identical traces.
@@ -106,6 +113,15 @@ type Stats struct {
 	TrimExecs    uint64
 	TrimSaved    uint64
 	StopReason   string
+
+	// CmpExecs and CmpAdmitted are what the comparison stage cost and what it
+	// bought. Reported separately because the stage is the one part of the loop
+	// whose value is all-or-nothing: on a target with no magic values it spends
+	// executions and admits nothing, and an operator deciding whether to keep
+	// paying for it needs the two numbers side by side rather than folded into
+	// the totals.
+	CmpExecs    uint64
+	CmpAdmitted uint64
 
 	// States and Transitions are protocol coverage, reported separately from
 	// code coverage because they answer a different question (ASR-0002). A
@@ -178,6 +194,12 @@ type Engine struct {
 	// it to tell whether a shorter input still goes to the same places.
 	coverage *feedback.CoverageMap
 	trimBuf  []byte
+
+	// stages are the ways this campaign derives new inputs, in the order they
+	// run. Fixed at construction: which stages exist is a property of the
+	// configuration, and deciding it per seed would put a branch on the hot path
+	// for a question whose answer never changes.
+	stages []stage
 }
 
 // New builds an engine, rejecting a configuration that cannot fuzz.
@@ -217,6 +239,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	return &Engine{
+		stages:    stagesFor(cfg),
 		coverage:  covMap,
 		cfg:       cfg,
 		arena:     arena,
@@ -362,12 +385,24 @@ loop:
 		parent := e.cfg.Corpus.At(i)
 		energy := e.cfg.Schedule.Energy(e.cfg.Corpus, i)
 
-		admitted, best, stop, err := e.fuzzOne(ctx, parent, aim, energy, b)
-		if err != nil {
-			return e.finish(start, "error"), err
+		// Every stage in turn, on the same seed. The seed's energy is the
+		// mutation budget; the stages that derive inputs from what the target
+		// said cost what they cost, which is bounded by the target's own
+		// behaviour rather than by the schedule.
+		in := stageInput{parent: parent, aim: aim, energy: energy, budget: b}
+		var res stageResult
+		for _, st := range e.stages {
+			one, err := st.run(ctx, e, in)
+			if err != nil {
+				return e.finish(start, "error"), err
+			}
+			res.merge(one)
+			if res.stop {
+				break
+			}
 		}
-		e.cfg.Schedule.Update(e.cfg.Corpus, i, best, admitted)
-		if stop {
+		e.cfg.Schedule.Update(e.cfg.Corpus, i, res.best, res.admitted)
+		if res.stop {
 			reason = "first finding"
 			break loop
 		}
@@ -375,102 +410,83 @@ loop:
 	return e.finish(start, reason), nil
 }
 
-// fuzzOne spends one seed's energy budget.
-func (e *Engine) fuzzOne(ctx context.Context, parent *corpus.Testcase, aim state.Aim, energy int, b Budget) (
-	admitted int, best feedback.Score, stop bool, err error) {
+// candidate is one input a stage has produced and wants judged.
+type candidate struct {
+	tree    *ir.Node
+	encoded []byte
+	ops     []mutate.Op
+	aimed   state.Label
+}
 
-	for k := 0; k < energy; k++ {
-		if ctx.Err() != nil {
-			return admitted, best, false, nil
-		}
-		if b.MaxExecs > 0 && e.stats.Execs >= b.MaxExecs {
-			return admitted, best, false, nil
-		}
+// verdict is what judging a candidate produced.
+type verdict struct {
+	interesting bool
+	finding     bool
+	admitted    bool
+	score       feedback.Score
+}
 
-		e.arena.Reset()
-		tree := e.arena.Clone(parent.Input)
-		e.mctx.Root = tree
-		e.mctx.Donor = e.pickDonor(parent)
+// evaluate executes one candidate and applies the campaign's judgement to it.
+//
+// Every stage funnels through here, and that is the point: executing an input,
+// counting it, asking the feedback whether it is worth keeping and the objective
+// whether it is a bug, and admitting it, are the same six steps whichever stage
+// produced the bytes. A second copy of them in the comparison stage would be a
+// second place for the crash counter to be missed or the feedback state to be
+// left uncommitted, and both are faults that show up as a campaign quietly
+// finding less rather than as anything failing.
+func (e *Engine) evaluate(ctx context.Context, parent *corpus.Testcase, c candidate) (verdict, error) {
+	var v verdict
 
-		// Which part of the input to change. For a stateless campaign that is
-		// the whole thing; for a session it is one message, chosen by aiming at
-		// a state worth exploring past (ADR-0006). The mutation scheduler
-		// restricts itself to the root it is given, so this is the whole of the
-		// state-then-message split.
-		target, aimed := tree, state.Label("")
-		if e.cfg.State != nil {
-			target, aimed = e.cfg.State.Target(aim, parent.ID, tree, e.mctx.Nodes)
-		}
+	execStart := time.Now()
+	ek, rerr := e.cfg.Executor.Run(ctx, executor.Input{Bytes: c.encoded, Node: c.tree}, e.cfg.Observers)
+	elapsed := time.Since(execStart)
+	e.stats.ExecTime += elapsed
+	e.stats.Execs++
+	e.sinceNew++
 
-		ops := e.cfg.Mutators.Mutate(e.mctx, target)
-		if len(ops) == 0 {
-			continue
-		}
-
-		encoded, ferr := e.fixer.Fix(tree, e.cfg.Suppress)
-		if ferr != nil {
-			// A mutation produced a tree whose derivations cannot be resolved.
-			// That is a normal outcome of structural mutation, not an error:
-			// skip the input and carry on.
-			continue
-		}
-
-		execStart := time.Now()
-		ek, rerr := e.cfg.Executor.Run(ctx, executor.Input{Bytes: encoded, Node: tree}, e.cfg.Observers)
-		elapsed := time.Since(execStart)
-		e.stats.ExecTime += elapsed
-		e.stats.Execs++
-		e.sinceNew++
-
-		if rerr != nil {
-			e.stats.HarnessError++
-			return admitted, best, false, fmt.Errorf("engine: %w", rerr)
-		}
-		switch ek {
-		case feedback.ExitCrash:
-			e.stats.Crashes++
-		case feedback.ExitTimeout:
-			e.stats.Timeouts++
-		case feedback.ExitError:
-			e.stats.HarnessError++
-		}
-
-		interesting, score, jerr := e.cfg.Feedback.IsInteresting(e.cfg.Observers, ek)
-		if jerr != nil {
-			return admitted, best, false, fmt.Errorf("engine: feedback: %w", jerr)
-		}
-		isFinding, finding, oerr := e.cfg.Objective.IsFinding(e.cfg.Observers, ek)
-		if oerr != nil {
-			return admitted, best, false, fmt.Errorf("engine: objective: %w", oerr)
-		}
-
-		e.trace(encoded, ek, interesting, isFinding)
-
-		if isFinding {
-			e.record(finding, encoded)
-		}
-		if interesting {
-			e.cfg.Feedback.Append()
-			if id, ok := e.admit(parent, tree, encoded, score, elapsed, ops, aimed); ok {
-				admitted++
-				e.sinceNew = 0
-				if e.cfg.State != nil {
-					e.cfg.State.Record(id)
-				}
-			}
-			if score.NewSignal > best.NewSignal {
-				best = score
-			}
-		} else {
-			e.cfg.Feedback.Discard()
-		}
-		e.cfg.Mutators.RecordOutcome(ops, interesting, isFinding)
-
-		if isFinding && b.StopOnFirstFinding {
-			return admitted, best, true, nil
-		}
+	if rerr != nil {
+		e.stats.HarnessError++
+		return v, fmt.Errorf("engine: %w", rerr)
 	}
-	return admitted, best, false, nil
+	switch ek {
+	case feedback.ExitCrash:
+		e.stats.Crashes++
+	case feedback.ExitTimeout:
+		e.stats.Timeouts++
+	case feedback.ExitError:
+		e.stats.HarnessError++
+	}
+
+	interesting, score, jerr := e.cfg.Feedback.IsInteresting(e.cfg.Observers, ek)
+	if jerr != nil {
+		return v, fmt.Errorf("engine: feedback: %w", jerr)
+	}
+	isFinding, finding, oerr := e.cfg.Objective.IsFinding(e.cfg.Observers, ek)
+	if oerr != nil {
+		return v, fmt.Errorf("engine: objective: %w", oerr)
+	}
+
+	e.trace(c.encoded, ek, interesting, isFinding)
+
+	if isFinding {
+		e.record(finding, c.encoded)
+	}
+	if interesting {
+		e.cfg.Feedback.Append()
+		if id, ok := e.admit(parent, c.tree, c.encoded, score, elapsed, c.ops, c.aimed); ok {
+			v.admitted = true
+			e.sinceNew = 0
+			if e.cfg.State != nil {
+				e.cfg.State.Record(id)
+			}
+		}
+	} else {
+		e.cfg.Feedback.Discard()
+	}
+
+	v.interesting, v.finding, v.score = interesting, isFinding, score
+	return v, nil
 }
 
 // admit copies an interesting input out of the arena and into the corpus.

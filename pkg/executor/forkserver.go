@@ -64,6 +64,11 @@ type ForkServer struct {
 	Coverage *feedback.CoverageMap
 	Shm      SharedMemory
 
+	// CmpShm is the comparison table, when the campaign asked for one. Handed
+	// to the fork server at startup like the coverage region, so every forked
+	// child inherits the mapping and no per-execution setup is needed.
+	CmpShm SharedMemory
+
 	// HandshakeTimeout bounds how long Start waits for the fork server to
 	// announce itself. Zero means DefaultHandshakeTimeout.
 	//
@@ -159,6 +164,9 @@ func (e *ForkServer) Start(ctx context.Context) error {
 	)
 	if e.Shm != nil {
 		spec.Env = append(spec.Env, ShmEnvVar+"="+e.Shm.ID())
+	}
+	if e.CmpShm != nil {
+		spec.Env = append(spec.Env, CmpShmEnvVar+"="+e.CmpShm.ID())
 	}
 
 	h, err := e.spawner.Start(ctx, spec)

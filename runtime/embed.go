@@ -13,7 +13,10 @@
 // enabling cgo here would defeat the point.
 package xfuzzrt
 
-import _ "embed"
+import (
+	_ "embed"
+	"strings"
+)
 
 //go:embed csrc/xfuzz-rt.c
 var source string
@@ -40,10 +43,24 @@ const (
 	// EnvDeferInit suppresses the automatic constructor so a target can start
 	// the fork server itself, after its own initialisation.
 	EnvDeferInit = "XFUZZ_DEFER_INIT"
+	// EnvCmpID names the file backing the comparison table. A target that is not
+	// given it records no comparisons, which is how a campaign that does not
+	// want them avoids paying for them.
+	EnvCmpID = "XFUZZ_CMP_ID"
 )
 
 // Hello is the handshake word a live runtime writes on startup.
-const Hello uint32 = 0x58465A31 // "XFZ1"
+//
+// It must match XFUZZ_HELLO in the C source and forkServerHello in
+// pkg/executor. It read XFZ1 here while the runtime and the fork server had both
+// moved to XFZ2: nothing used this copy, so nothing broke, and the first caller
+// to reach for it would have rejected every working target as not carrying a
+// runtime at all.
+const Hello uint32 = 0x58465A32 // "XFZ2"
+
+// CmpRegionSize is the size of the comparison table the runtime writes, matching
+// XFUZZ_CMP_SIZE. It must equal feedback.CmpRegionSize.
+const CmpRegionSize = 1 << 18
 
 // InstrumentFlags are the compiler flags that install the coverage callbacks.
 //
@@ -64,4 +81,44 @@ const Hello uint32 = 0x58465A31 // "XFZ1"
 // reporting needs, and lossy for answering "did this input go somewhere new",
 // which is what a fuzzer needs. On the planted-bug targets it roughly doubled
 // the coverage signal: 8 entries against 15 across the same inputs.
-var InstrumentFlags = []string{"-fsanitize-coverage=bb,no-prune,trace-pc-guard"}
+var InstrumentFlags = []string{"-fsanitize-coverage=bb,no-prune,trace-pc-guard,trace-cmp"}
+
+// CmpFlag is the part of the instrumentation that logs comparison operands.
+//
+// Included by default, and removable with XFUZZ_NO_CMPLOG, because it is what
+// gets a campaign past a magic number and a checksum — the comparisons a fuzzer
+// cannot guess (ADR-0007). The callbacks are inert unless the fuzzer attached
+// the comparison region, so a target built with it and fuzzed without it pays
+// one predictable branch per comparison rather than a write.
+//
+// Separable rather than always-on because the branch is not free on a target
+// whose hot loop is comparisons, and because someone auditing what Xfuzz asks
+// their compiler to do should be able to turn each piece off by name.
+const CmpFlag = "trace-cmp"
+
+// InstrumentFlagsWithout returns the instrumentation flags with one feature
+// removed.
+func InstrumentFlagsWithout(feature string) []string {
+	out := make([]string, 0, len(InstrumentFlags))
+	for _, f := range InstrumentFlags {
+		out = append(out, removeFeature(f, feature))
+	}
+	return out
+}
+
+// removeFeature drops one comma-separated feature from a -fsanitize-coverage
+// argument, leaving the rest as they were.
+func removeFeature(flag, feature string) string {
+	const prefix = "-fsanitize-coverage="
+	if !strings.HasPrefix(flag, prefix) {
+		return flag
+	}
+	parts := strings.Split(flag[len(prefix):], ",")
+	kept := parts[:0]
+	for _, p := range parts {
+		if p != feature {
+			kept = append(kept, p)
+		}
+	}
+	return prefix + strings.Join(kept, ",")
+}

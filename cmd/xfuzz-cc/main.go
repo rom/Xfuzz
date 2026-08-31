@@ -34,6 +34,7 @@ Environment:
   XFUZZ_CC        underlying compiler (default: clang, then cc)
   XFUZZ_CXX       underlying C++ compiler (default: clang++, then c++)
   XFUZZ_NO_INST   set to build without instrumentation, for comparison
+  XFUZZ_NO_CMPLOG set to build without comparison logging, keeping coverage
   XFUZZ_SANITIZE  extra sanitizers, e.g. "address,undefined"
 
 The runtime is embedded in this binary; --print-runtime writes it out for
@@ -87,7 +88,15 @@ func run(args []string) error {
 
 	final := make([]string, 0, len(args)+8)
 	if instrument {
-		final = append(final, xfuzzrt.InstrumentFlags...)
+		// Comparison logging is on by default because it is what gets a campaign
+		// past a magic number, and removable by name because someone auditing
+		// what this wrapper asks their compiler to do should be able to turn any
+		// one piece of it off.
+		if os.Getenv("XFUZZ_NO_CMPLOG") != "" {
+			final = append(final, xfuzzrt.InstrumentFlagsWithout(xfuzzrt.CmpFlag)...)
+		} else {
+			final = append(final, xfuzzrt.InstrumentFlags...)
+		}
 	}
 	if sanitize != "" {
 		final = append(final, "-fsanitize="+sanitize, "-fno-omit-frame-pointer")

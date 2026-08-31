@@ -32,6 +32,13 @@
 /* Must match feedback.DefaultMapSize on the fuzzer side. */
 #define XFUZZ_MAP_SIZE (1 << 16)
 
+/* The comparison log. Must match feedback.CmpRegionSize and the record layout
+ * in feedback.CmpRecord; a mismatch means the fuzzer reads a different table
+ * than the target writes, and every operand it recovers is nonsense. */
+#define XFUZZ_CMP_SIZE     (1 << 18)
+#define XFUZZ_CMP_OPERAND  16
+#define XFUZZ_CMP_ENTRIES  ((XFUZZ_CMP_SIZE - 16) / 40)
+
 /* Default control and status descriptors, matching AFL so that a binary built
  * against either runtime can be driven by either fuzzer (ASR-0013). Both are
  * overridable through the environment, because passing descriptor 198 through
@@ -104,6 +111,168 @@ void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
     xfuzz_prev_loc = loc >> 1;
 }
 
+/*
+ * Comparison logging.
+ *
+ * A fuzzer that cannot get past `if (magic != 0xDEADBEEF)` is stuck behind a
+ * one-in-four-billion guess, and no amount of mutation fixes that. What does
+ * fix it is knowing what the comparison wanted: record both operands of every
+ * comparison the program performs, and the fuzzer can find the value it
+ * supplied in its own input and substitute the value the program expected.
+ * That turns a four-byte magic number from a four-billion-to-one guess into a
+ * single directed edit (ADR-0007).
+ *
+ * The same records answer a second question. A comparison that failed on one
+ * byte out of four is closer to passing than one that failed on all four, and
+ * treating "closer" as new coverage lets a campaign climb a comparison it
+ * cannot jump. That is value profiling, and it needs exactly this data.
+ *
+ * The table is a flat array in a second shared region, written from the front
+ * and truncated when full. Truncated rather than wrapped: the first comparisons
+ * an execution performs are the ones nearest the input's entry to the program,
+ * which is where a substitution is most likely to matter, and a wrap would
+ * throw those away in favour of whatever a loop did ten thousand iterations
+ * later.
+ *
+ * Everything here is inert unless a fuzzer attached the region. That is one
+ * predictable branch per comparison in a target nobody is fuzzing, which is the
+ * price of not needing two builds of the program.
+ */
+
+#define XFUZZ_CMP_INT 1 /* an integer comparison: operands are little-endian */
+#define XFUZZ_CMP_MEM 2 /* a memory or string comparison: operands are bytes */
+
+struct xfuzz_cmp_hdr {
+    uint32_t count;    /* entries written */
+    uint32_t capacity; /* entries the region can hold */
+    uint32_t dropped;  /* entries lost because the table was full */
+    uint32_t reserved;
+};
+
+struct xfuzz_cmp_rec {
+    uint32_t loc;  /* the comparison's identity, spread across the table */
+    uint8_t kind;  /* XFUZZ_CMP_INT or XFUZZ_CMP_MEM */
+    uint8_t size;  /* bytes of each operand that are meaningful */
+    uint16_t hit;  /* how many bytes matched, for a memory comparison */
+    uint8_t a[XFUZZ_CMP_OPERAND];
+    uint8_t b[XFUZZ_CMP_OPERAND];
+};
+
+static struct xfuzz_cmp_hdr *xfuzz_cmp;
+static struct xfuzz_cmp_rec *xfuzz_cmp_recs;
+
+/* Record one comparison. Returns immediately when no fuzzer is attached. */
+static void xfuzz_cmp_log(uint8_t kind, uint8_t size, uint16_t hit,
+                          const void *a, const void *b, uintptr_t pc) {
+    struct xfuzz_cmp_hdr *h = xfuzz_cmp;
+    if (!h) return;
+    if (h->count >= h->capacity) {
+        h->dropped++;
+        return;
+    }
+    struct xfuzz_cmp_rec *r = &xfuzz_cmp_recs[h->count++];
+    r->loc = xfuzz_spread((uint32_t)(pc ^ (pc >> 32)));
+    r->kind = kind;
+    r->size = size;
+    r->hit = hit;
+    if (size > XFUZZ_CMP_OPERAND) size = XFUZZ_CMP_OPERAND;
+    memcpy(r->a, a, size);
+    memcpy(r->b, b, size);
+}
+
+static void xfuzz_cmp_int(uint64_t a, uint64_t b, uint8_t size, uintptr_t pc) {
+    /* Equal operands say nothing: the comparison already passed, and there is
+     * nothing for the fuzzer to substitute or to get closer to. Skipping them
+     * is most of what keeps the table from filling with a loop counter. */
+    if (a == b) return;
+    xfuzz_cmp_log(XFUZZ_CMP_INT, size, 0, &a, &b, pc);
+}
+
+/* The suffix on these callbacks is the operand width in *bytes*, not in bits:
+ * __sanitizer_cov_trace_cmp1 compares two bytes' worth, cmp8 two eight-byte
+ * words. Reading it as bits divides every width by eight, which makes a
+ * four-byte comparison record a size of zero and an eight-byte one a size of
+ * one — so the reader drops the narrow comparisons entirely and decodes the
+ * wide ones as their lowest byte. Everything still compiles and runs; the
+ * table simply arrives almost empty and the substitutions that would use it
+ * never happen. */
+#define XFUZZ_TRACE_CMP(bytes, type)                                           \
+    void __sanitizer_cov_trace_cmp##bytes(type a, type b) {                    \
+        xfuzz_cmp_int((uint64_t)a, (uint64_t)b, bytes,                         \
+                      (uintptr_t)__builtin_return_address(0));                 \
+    }                                                                          \
+    void __sanitizer_cov_trace_const_cmp##bytes(type a, type b) {              \
+        xfuzz_cmp_int((uint64_t)a, (uint64_t)b, bytes,                         \
+                      (uintptr_t)__builtin_return_address(0));                 \
+    }
+
+XFUZZ_TRACE_CMP(1, uint8_t)
+XFUZZ_TRACE_CMP(2, uint16_t)
+XFUZZ_TRACE_CMP(4, uint32_t)
+XFUZZ_TRACE_CMP(8, uint64_t)
+
+/* A switch is a comparison against every one of its labels. Recording all of
+ * them is what lets the fuzzer reach a case it has never taken: the label it
+ * needs is in the table even though the program never compared against it in
+ * any way a single comparison hook would see. */
+void __sanitizer_cov_trace_switch(uint64_t val, uint64_t *cases) {
+    if (!xfuzz_cmp || !cases) return;
+    uint64_t n = cases[0];
+    uint64_t bits = cases[1];
+    uint8_t size = (uint8_t)(bits / 8);
+    if (size == 0 || size > 8) size = 8;
+    for (uint64_t i = 0; i < n; i++) {
+        xfuzz_cmp_int(val, cases[2 + i], size,
+                      (uintptr_t)__builtin_return_address(0) + i);
+    }
+}
+
+/* The memory-comparison hooks.
+ *
+ * These are called by the sanitizer runtime's interceptors, so they fire only
+ * when the target was also built with a sanitizer. Defining them regardless
+ * costs nothing and means a build that has one gets string and buffer
+ * comparisons logged for free — which is where a format's magic bytes usually
+ * live, as opposed to its integer fields.
+ *
+ * The matching prefix is recorded as well as the operands. A comparison that
+ * matched three bytes of four is nearly right, and that is precisely the signal
+ * value profiling turns into coverage. */
+static uint16_t xfuzz_common_prefix(const uint8_t *a, const uint8_t *b, size_t n) {
+    size_t i = 0;
+    while (i < n && a[i] == b[i]) i++;
+    return (uint16_t)(i > 0xFFFF ? 0xFFFF : i);
+}
+
+void __sanitizer_weak_hook_memcmp(void *pc, const void *a, const void *b,
+                                  size_t n, int result) {
+    if (!xfuzz_cmp || result == 0 || n == 0 || !a || !b) return;
+    size_t size = n > XFUZZ_CMP_OPERAND ? XFUZZ_CMP_OPERAND : n;
+    xfuzz_cmp_log(XFUZZ_CMP_MEM, (uint8_t)size,
+                  xfuzz_common_prefix(a, b, size), a, b, (uintptr_t)pc);
+}
+
+void __sanitizer_weak_hook_strncmp(void *pc, const char *a, const char *b,
+                                   size_t n, int result) {
+    if (!xfuzz_cmp || result == 0 || !a || !b) return;
+    size_t len = 0;
+    while (len < n && len < XFUZZ_CMP_OPERAND && a[len] && b[len]) len++;
+    if (len == 0) return;
+    xfuzz_cmp_log(XFUZZ_CMP_MEM, (uint8_t)len,
+                  xfuzz_common_prefix((const uint8_t *)a, (const uint8_t *)b, len),
+                  a, b, (uintptr_t)pc);
+}
+
+void __sanitizer_weak_hook_strcmp(void *pc, const char *a, const char *b, int result) {
+    if (!xfuzz_cmp || result == 0 || !a || !b) return;
+    size_t len = 0;
+    while (len < XFUZZ_CMP_OPERAND && a[len] && b[len]) len++;
+    if (len == 0) return;
+    xfuzz_cmp_log(XFUZZ_CMP_MEM, (uint8_t)len,
+                  xfuzz_common_prefix((const uint8_t *)a, (const uint8_t *)b, len),
+                  a, b, (uintptr_t)pc);
+}
+
 static int xfuzz_fd_from_env(const char *name, int fallback) {
     const char *v = getenv(name);
     if (!v || !*v) return fallback;
@@ -112,17 +281,41 @@ static int xfuzz_fd_from_env(const char *name, int fallback) {
     return (int)n;
 }
 
-/* Attach the shared coverage map, if the fuzzer published one. */
-static void xfuzz_attach_map(void) {
-    const char *id = getenv("XFUZZ_SHM_ID");
-    if (!id || !*id) return;
+/* Map a region the fuzzer published, or return NULL. */
+static void *xfuzz_attach(const char *name, size_t size) {
+    const char *id = getenv(name);
+    if (!id || !*id) return NULL;
 
     int fd = open(id, O_RDWR);
-    if (fd < 0) return;
+    if (fd < 0) return NULL;
 
-    void *p = mmap(NULL, XFUZZ_MAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *p = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     close(fd);
-    if (p != MAP_FAILED) __xfuzz_area = (uint8_t *)p;
+    return p == MAP_FAILED ? NULL : p;
+}
+
+/* Attach the shared coverage map, if the fuzzer published one. */
+static void xfuzz_attach_map(void) {
+    void *p = xfuzz_attach("XFUZZ_SHM_ID", XFUZZ_MAP_SIZE);
+    if (p) __xfuzz_area = (uint8_t *)p;
+}
+
+/* Attach the comparison table, if the campaign asked for one.
+ *
+ * Separate from the coverage map and separately optional, because it is
+ * separately expensive: a campaign that does not need it should not pay for the
+ * writes, and one that does should not have to rebuild the target to get them.
+ * The capacity is published by the target rather than assumed by the fuzzer, so
+ * that a target built against an older runtime is read correctly instead of
+ * being read past its end. */
+static void xfuzz_attach_cmp(void) {
+    void *p = xfuzz_attach("XFUZZ_CMP_ID", XFUZZ_CMP_SIZE);
+    if (!p) return;
+    xfuzz_cmp = (struct xfuzz_cmp_hdr *)p;
+    xfuzz_cmp_recs = (struct xfuzz_cmp_rec *)((uint8_t *)p + sizeof(struct xfuzz_cmp_hdr));
+    xfuzz_cmp->capacity = XFUZZ_CMP_ENTRIES;
+    xfuzz_cmp->count = 0;
+    xfuzz_cmp->dropped = 0;
 }
 
 /*
@@ -206,6 +399,7 @@ void xfuzz_manual_init(void) {
     if (xfuzz_started) return;
     xfuzz_started = 1;
     xfuzz_attach_map();
+    xfuzz_attach_cmp();
     if (getenv("XFUZZ_FORKSERVER")) xfuzz_fork_server();
 }
 
@@ -217,3 +411,5 @@ __attribute__((constructor(101))) static void xfuzz_auto_init(void) {
 /* Exposed for tests and for a harness that wants to inspect its own coverage. */
 uint8_t *xfuzz_map(void) { return __xfuzz_area; }
 unsigned xfuzz_map_size(void) { return XFUZZ_MAP_SIZE; }
+unsigned xfuzz_cmp_capacity(void) { return XFUZZ_CMP_ENTRIES; }
+unsigned xfuzz_cmp_count(void) { return xfuzz_cmp ? xfuzz_cmp->count : 0; }

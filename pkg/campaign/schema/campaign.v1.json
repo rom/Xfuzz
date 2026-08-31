@@ -93,6 +93,10 @@
       "additionalProperties": false,
       "description": "What counts as interesting.",
       "properties": {
+        "cmplog": {
+          "description": "Substitute the target's own comparison operands into the input.",
+          "type": "boolean"
+        },
         "coverage": {
           "description": "Coverage backend: sancov, ptrace-bb, qemu, frida, blackbox, or none.",
           "type": "string"
@@ -114,6 +118,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "value_profile": {
+          "description": "Treat getting closer to passing a comparison as new coverage.",
+          "type": "boolean"
         }
       },
       "type": "object"

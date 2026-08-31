@@ -42,7 +42,15 @@ type built struct {
 	mapFB    *feedback.MapFeedback
 	output   *feedback.OutputObserver
 	shm      executor.SharedMemory
-	sandbox  *safety.Sandbox
+
+	// cmp is the comparison table, when the campaign asked for substitution.
+	// Its own region rather than a corner of the coverage map: the two are
+	// written at different rates and read for different reasons, and a campaign
+	// that wants coverage and not comparisons should not map the second.
+	cmp     *feedback.CmpObserver
+	cmpShm  executor.SharedMemory
+	valueP  *feedback.ValueProfile
+	sandbox *safety.Sandbox
 
 	// sessionAddr is the resolved per-worker address, empty on a file campaign.
 	// Resolved before the sandbox because the sandbox has to know about it: a
@@ -190,6 +198,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		MaxChildren:   maxChildrenFor(cfg),
 		TrimBudget:    cfg.Mutation.TrimBudget,
 		State:         b.state,
+		Cmp:           b.cmp,
 	}
 	eng, err := engine.New(ecfg)
 	if err != nil {
@@ -349,6 +358,19 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 	b.coverage.SetBuffer(shm.Bytes())
 	b.coverage.SetBackend(cfg.Feedback.Coverage)
 	b.mapFB = feedback.NewMapFeedback("coverage", b.coverage)
+
+	if cfg.Feedback.CmpLog {
+		cmpShm, err := provider.Create(feedback.CmpRegionSize)
+		if err != nil {
+			return fmt.Errorf("worker: creating the comparison region: %w", err)
+		}
+		b.cmpShm = cmpShm
+		b.closers = append(b.closers, closer{"comparison region", cmpShm.Close})
+		b.cmp = feedback.NewCmpObserver("cmp", cmpShm.Bytes())
+		if cfg.Feedback.ValueProfile {
+			b.valueP = feedback.NewValueProfile("value-profile", b.cmp, 0)
+		}
+	}
 	return nil
 }
 
@@ -356,6 +378,9 @@ func (b *built) observers() []feedback.Observer {
 	obs := []feedback.Observer{b.output}
 	if b.coverage != nil {
 		obs = append([]feedback.Observer{b.coverage}, obs...)
+	}
+	if b.cmp != nil {
+		obs = append(obs, b.cmp)
 	}
 	if b.state != nil {
 		// The session executor feeds this one during the session rather than
@@ -409,6 +434,14 @@ func (b *built) feedbackStack(cfg *campaign.Resolved) feedback.Feedback {
 	}
 	if cfg.Feedback.Novelty {
 		stack = append(stack, feedback.NewNoveltyFeedback("output-novelty", b.output))
+	}
+	if b.valueP != nil {
+		// A peer of coverage, not a replacement for it. Value profiling admits
+		// inputs that got *closer* to passing a comparison, which coverage
+		// cannot see at all — and admits a great many of them, which is why it
+		// is opt-in and why it sits in an Any stack where coverage can still
+		// admit what it would have admitted anyway.
+		stack = append(stack, b.valueP)
 	}
 	if b.state != nil {
 		// The reason ADR-0006 exists. Two sessions can execute identical lines
@@ -474,6 +507,7 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	case campaign.ExecutorForkServer:
 		fs := executor.NewForkServer("forkserver", spawner, spec)
 		fs.Coverage, fs.Shm, fs.Output = b.coverage, b.shm, b.output
+		fs.CmpShm = b.cmpShm
 		fs.Timeout = cfg.Target.Timeout.Std()
 		if err := fs.Start(ctx); err != nil {
 			if cfg.Target.Executor != campaign.ExecutorAuto {
@@ -582,6 +616,7 @@ func (b *built) buildSubprocess(cfg *campaign.Resolved, spawner *safety.Spawner,
 		sub.Coverage, sub.Shm = b.coverage, b.shm
 		sub.Backend = cfg.Feedback.Coverage
 	}
+	sub.CmpShm = b.cmpShm
 	b.executor = sub
 	b.tier = "subprocess"
 	b.closers = append(b.closers, closer{"subprocess executor", sub.Close})

@@ -30,6 +30,16 @@ const FilePlaceholder = "@@"
 // identifier to an instrumented child.
 const ShmEnvVar = "XFUZZ_SHM_ID"
 
+// CmpShmEnvVar names the environment variable carrying the comparison table's
+// identifier.
+//
+// A second variable rather than a second field in the first, because the two
+// regions are separately optional: comparison logging costs a write per
+// comparison and a campaign that does not need it should not pay for it, while
+// a campaign that does should not need a different build of the target to get
+// it. A target that is not given this one never writes a comparison.
+const CmpShmEnvVar = "XFUZZ_CMP_ID"
+
 // Subprocess is the T4 executor: one process per input.
 //
 // It is the slowest tier with a process boundary and the one that always works.
@@ -57,6 +67,9 @@ type Subprocess struct {
 	// instrumented target writes into, so no copy happens per execution.
 	Coverage *feedback.CoverageMap
 	Shm      SharedMemory
+
+	// CmpShm is the comparison table, when the campaign asked for one.
+	CmpShm SharedMemory
 
 	// Backend names the instrumentation in use, for reporting.
 	Backend string
@@ -102,6 +115,9 @@ func (e *Subprocess) prepare(in Input) (ProcSpec, error) {
 
 	if e.Shm != nil {
 		spec.Env = append(append([]string(nil), spec.Env...), ShmEnvVar+"="+e.Shm.ID())
+	}
+	if e.CmpShm != nil {
+		spec.Env = append(append([]string(nil), spec.Env...), CmpShmEnvVar+"="+e.CmpShm.ID())
 	}
 
 	switch e.Delivery {

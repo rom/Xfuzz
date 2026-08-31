@@ -193,6 +193,22 @@ type Feedback struct {
 	// instrumentation but informative output.
 	Novelty bool `yaml:"novelty,omitempty" json:"novelty,omitempty" doc:"Treat novel output as interesting."`
 
+	// CmpLog turns on comparison-operand substitution: the target's own
+	// comparisons are read back and written into the input, which is what gets a
+	// campaign past a magic number or a checksum (ADR-0007).
+	//
+	// It needs a target built with the comparison instrumentation, which
+	// xfuzz-cc installs by default, and it costs a second shared region and a
+	// handful of executions per corpus entry. Off unless asked for, because on a
+	// target with no constants to match it spends those executions and admits
+	// nothing.
+	CmpLog bool `yaml:"cmplog,omitempty" json:"cmplog,omitempty" doc:"Substitute the target's own comparison operands into the input."`
+
+	// ValueProfile treats a comparison that nearly passed as new coverage, so a
+	// campaign can climb a comparison it cannot jump. It reads the same table
+	// CmpLog does and is enabled with it.
+	ValueProfile bool `yaml:"value_profile,omitempty" json:"value_profile,omitempty" doc:"Treat getting closer to passing a comparison as new coverage."`
+
 	// Objectives selects what counts as a finding.
 	Objectives []string `yaml:"objectives,omitempty" json:"objectives,omitempty" doc:"What counts as a finding: crash, hang, oom, sanitizer."`
 }

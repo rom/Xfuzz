@@ -207,6 +207,25 @@ func (r *Resolved) validateFeedback(add addFunc) {
 		add("feedback.map_size", fmt.Sprintf("%d is not a power of two", f.MapSize),
 			"the edge index is masked, so a non-power-of-two size would fold edges together")
 	}
+	// Comparison substitution reads a table the *target* writes, so it needs an
+	// instrumented build. A binary-only backend watches the process from outside
+	// and there is no table to read; a black-box campaign has no instrumentation
+	// at all. Either combination would cost the executions and admit nothing,
+	// which looks like a target with no constants in it.
+	if f.CmpLog || f.ValueProfile {
+		switch f.Coverage {
+		case CoverageSancov:
+		default:
+			add("feedback.cmplog", fmt.Sprintf("needs an instrumented build and coverage is %q", f.Coverage),
+				"comparison operands come from the runtime linked into the target by "+
+					"xfuzz-cc; set feedback.coverage to sancov, or turn cmplog off")
+		}
+	}
+	if f.ValueProfile && !f.CmpLog {
+		add("feedback.value_profile", "needs feedback.cmplog",
+			"both read the same comparison table, and nothing collects it unless cmplog is on")
+	}
+
 	if len(f.Objectives) == 0 {
 		add("feedback.objectives", "is empty",
 			"a campaign with nothing to find cannot report anything")
