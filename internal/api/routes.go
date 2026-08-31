@@ -1029,11 +1029,17 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 // is missing.
 func ptyDetail() string {
 	if safety.PTYSupported() {
+		if runtime.GOOS == "windows" {
+			return "terminal programs can be driven on a pseudo-console (tier T7); a " +
+				"resize does not signal the target the way SIGWINCH does on Unix, so a " +
+				"program that only redraws on the signal does not redraw here"
+		}
 		return "terminal programs can be driven with a real controlling terminal (tier T7)"
 	}
 	if runtime.GOOS == "windows" {
-		return "Windows has ConPTY and Xfuzz does not implement it yet; there is no " +
-			"terminal driver on this platform, and pipes are not a substitute"
+		return "a pseudo-console could not be created: ConPTY needs Windows 10 1809 or " +
+			"later, and a fuzzer already inside a restricted console may not get one; " +
+			"pipes are not a substitute"
 	}
 	return "no /dev/ptmx or no writable /dev/pts: a terminal campaign cannot run here, " +
 		"and over pipes isatty is false and the program under test behaves differently"

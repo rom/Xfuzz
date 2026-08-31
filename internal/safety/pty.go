@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"os/exec"
 	"sync"
 	"time"
 
@@ -30,14 +28,14 @@ func PTYSupported() bool { return platform.PTYSupported() }
 // to call from different goroutines, which is what the driver does: one
 // goroutine drains the terminal continuously while the other delivers events.
 type PTY struct {
-	cmd    *exec.Cmd
-	master *os.File
-	slave  *os.File
+	tty  *platform.TTY
+	proc platform.TTYProcess
 
-	mu      sync.Mutex
-	closed  bool
-	state   *os.ProcessState
-	waitErr error
+	mu       sync.Mutex
+	closed   bool
+	exit     platform.TTYExit
+	haveExit bool
+	waitErr  error
 
 	exited chan struct{}
 	start  time.Time
@@ -54,35 +52,33 @@ func (s *Spawner) StartPTY(ctx context.Context, spec executor.ProcSpec, cols, ro
 	if !platform.PTYSupported() {
 		return nil, fmt.Errorf("safety: %w", platform.ErrNoPTY)
 	}
-	master, slave, err := platform.OpenPTY(cols, rows)
+	tty, err := platform.OpenTTY(cols, rows)
 	if err != nil {
 		return nil, fmt.Errorf("safety: %w", err)
 	}
 
 	cmd, err := s.command(spec, false)
 	if err != nil {
-		master.Close()
-		slave.Close()
+		tty.Close()
 		return nil, err
 	}
 	cmd.ExtraFiles = spec.ExtraFiles
-	// After command, which sets the process attributes this replaces: a
-	// controlling terminal needs a session, and a session is a process group.
-	platform.ConfigureTTY(cmd, slave)
 
-	p := &PTY{cmd: cmd, master: master, slave: slave, exited: make(chan struct{}), start: time.Now()}
-	if err := cmd.Start(); err != nil {
-		master.Close()
-		slave.Close()
+	// Start on the terminal rather than through cmd.Start: the platform owns
+	// how a target acquires one, because the two mechanisms have nothing in
+	// common. On Unix it is a session and a controlling-terminal ioctl applied
+	// to the command this layer built; on Windows the pseudo-console arrives in
+	// a process attribute os/exec cannot carry, so that platform starts the
+	// command itself — from the same path, argv, directory and environment the
+	// sandbox put on it.
+	proc, err := tty.Start(cmd)
+	if err != nil {
+		tty.Close()
 		return nil, fmt.Errorf("safety: starting %s on a terminal: %w", spec.Path, err)
 	}
-	s.placeInCgroup(cmd)
 
-	// The parent's copy of the slave goes now. Holding it open would keep the
-	// terminal from ever reporting end-of-file, so a driver waiting for the
-	// program to finish drawing would wait for ever after the program exited.
-	slave.Close()
-	p.slave = nil
+	p := &PTY{tty: tty, proc: proc, exited: make(chan struct{}), start: time.Now()}
+	s.placeInCgroupPid(proc.Pid())
 
 	go p.reap()
 	if ctx != nil && ctx.Done() != nil {
@@ -98,20 +94,15 @@ func (s *Spawner) StartPTY(ctx context.Context, spec executor.ProcSpec, cols, ro
 }
 
 func (p *PTY) reap() {
-	err := p.cmd.Wait()
+	exit, err := p.proc.Wait()
 	p.mu.Lock()
-	p.state, p.waitErr = p.cmd.ProcessState, err
+	p.exit, p.haveExit, p.waitErr = exit, true, err
 	p.mu.Unlock()
 	close(p.exited)
 }
 
 // Pid returns the process identifier.
-func (p *PTY) Pid() int {
-	if p.cmd.Process == nil {
-		return 0
-	}
-	return p.cmd.Process.Pid
-}
+func (p *PTY) Pid() int { return p.proc.Pid() }
 
 // Read returns whatever the program has drawn.
 //
@@ -119,7 +110,7 @@ func (p *PTY) Pid() int {
 // is a kernel detail no caller should have to know: it is translated to
 // io.EOF here so that a drain loop ends the way every other drain loop does.
 func (p *PTY) Read(b []byte) (int, error) {
-	n, err := p.master.Read(b)
+	n, err := p.tty.Read(b)
 	if err != nil && n == 0 && platform.IsTerminalEOF(err) {
 		return 0, io.EOF
 	}
@@ -127,11 +118,11 @@ func (p *PTY) Read(b []byte) (int, error) {
 }
 
 // Write types into the program.
-func (p *PTY) Write(b []byte) (int, error) { return p.master.Write(b) }
+func (p *PTY) Write(b []byte) (int, error) { return p.tty.Write(b) }
 
 // Resize changes the terminal's window size, which sends the program SIGWINCH.
 func (p *PTY) Resize(cols, rows int) error {
-	if err := platform.SetPTYSize(p.master, cols, rows); err != nil {
+	if err := p.tty.Resize(cols, rows); err != nil {
 		return fmt.Errorf("safety: %w", err)
 	}
 	return nil
@@ -155,28 +146,29 @@ func (p *PTY) Result() executor.ProcResult {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	res := executor.ProcResult{Duration: time.Since(p.start)}
-	if p.state == nil {
+	if !p.haveExit {
 		return res
 	}
-	res.ExitCode = p.state.ExitCode()
-	res.Signal = platform.SignalOf(p.state)
+	res.ExitCode = p.exit.ExitCode
+	res.Signal = p.exit.Signal
 	return res
 }
 
 // Signal sends a signal to the target's process group.
 func (p *PTY) Signal(kill bool) error {
-	if p.cmd.Process == nil {
+	pid := p.proc.Pid()
+	if pid == 0 {
 		return nil
 	}
 	if kill {
-		return platform.KillGroup(p.cmd.Process.Pid)
+		return platform.KillGroup(pid)
 	}
-	return platform.TerminateGroup(p.cmd.Process.Pid)
+	return platform.TerminateGroup(pid)
 }
 
 // Kill terminates the target and everything it started.
 func (p *PTY) Kill() error {
-	if p.cmd.Process == nil || !p.Alive() {
+	if p.proc.Pid() == 0 || !p.Alive() {
 		return nil
 	}
 	_ = p.Signal(false)
@@ -202,10 +194,10 @@ func (p *PTY) Close() error {
 	var err error
 	p.once.Do(func() {
 		err = p.Kill()
-		// The master last: closing it first sends the target SIGHUP, which is a
-		// second, racing way of killing it, and a target that died of SIGHUP
+		// The terminal last: closing it first sends the target SIGHUP, which is
+		// a second, racing way of killing it, and a target that died of SIGHUP
 		// rather than of the campaign's own kill looks like a crash.
-		if cerr := p.master.Close(); cerr != nil && err == nil {
+		if cerr := p.tty.Close(); cerr != nil && err == nil {
 			err = cerr
 		}
 		p.mu.Lock()

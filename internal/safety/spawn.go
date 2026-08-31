@@ -238,8 +238,18 @@ func (s *Spawner) command(spec executor.ProcSpec, forks bool) (*exec.Cmd, error)
 // window is microseconds and the alternative is no limit at all, but it is a
 // real gap and it is why v1 does not count towards the strong level.
 func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
+	if cmd.Process == nil {
+		return
+	}
+	s.placeInCgroupPid(cmd.Process.Pid)
+}
+
+// placeInCgroupPid is the same by identifier, for a target this layer did not
+// start through os/exec — a Windows pseudo-console target, which the platform
+// starts itself because os/exec cannot hand a console to a child.
+func (s *Spawner) placeInCgroupPid(pid int) {
 	cg := s.sandbox().currentCgroup()
-	if cg == nil || cmd.Process == nil {
+	if cg == nil || pid == 0 {
 		return
 	}
 	switch cg.Mode() {
@@ -252,7 +262,7 @@ func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
 	default:
 		return
 	}
-	_ = cg.Add(cmd.Process.Pid)
+	_ = cg.Add(pid)
 }
 
 // ReapTimeout bounds how long a caller waits for a killed process to be

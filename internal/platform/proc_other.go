@@ -1,4 +1,4 @@
-//go:build !unix
+//go:build !unix && !windows
 
 package platform
 
@@ -7,8 +7,7 @@ import (
 	"os/exec"
 )
 
-// ConfigureProcess is a no-op where process groups work differently. Windows
-// gets Job Objects in M4.
+// ConfigureProcess is a no-op where there is no process-group mechanism.
 func ConfigureProcess(cmd *exec.Cmd, quarantine bool) {}
 
 // TerminateGroup kills the process; platforms without process groups cannot
