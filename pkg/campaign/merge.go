@@ -66,6 +66,16 @@ const (
 	// Driver defaults. Settle is the tier's throughput: the driver waits for
 	// the interface to go quiet rather than for a fixed interval, and this is
 	// how long quiet has to last.
+	// Learning's bounds. Every one of them is a budget of *sessions*, which on
+	// a protocol target is a connection and a handshake each — so the defaults
+	// are what a campaign can afford to spend before it starts rather than what
+	// would learn the most.
+	defaultLearnAlphabet   = 8
+	defaultLearnMaxQueries = 2000
+	defaultLearnMaxStates  = 16
+	defaultLearnWords      = 150
+	defaultLearnMaxLength  = 10
+
 	defaultDriverCols = 80
 	defaultDriverRows = 24
 

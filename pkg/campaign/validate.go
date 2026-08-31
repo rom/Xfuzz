@@ -78,6 +78,7 @@ func (r *Resolved) Validate() error {
 	r.validateStorage(add)
 	r.validateSeeds(add)
 	r.validateSession(add)
+	r.validateLearn(add)
 	r.validateAPI(add)
 	r.validateDriver(add)
 	r.validateExtensions(add)
@@ -847,5 +848,38 @@ func (r *Resolved) validateStorage(add addFunc) {
 			"distilling keeps the smallest set of entries that reaches everything the "+
 				"corpus reaches, and without coverage there is nothing to compare — "+
 				"dropping any entry would be dropping it at random")
+	}
+}
+
+// validateLearn checks the active-learning block.
+func (r *Resolved) validateLearn(add addFunc) {
+	if r.State == nil || r.State.Learn == nil {
+		return
+	}
+	l := r.State.Learn
+	if r.Session == nil && r.API == nil {
+		add("state.learn", "needs a session or api block",
+			"learning drives a conversation: it sends a chosen sequence of messages "+
+				"and reads what each one is answered with, and a campaign that sends "+
+				"one input per process has no conversation to drive")
+	}
+	if l.Alphabet < 2 {
+		add("state.learn.alphabet", fmt.Sprintf("%d is fewer than two symbols", l.Alphabet),
+			"a machine over one message can only have one transition")
+	}
+	if l.MaxQueries < 1 {
+		add("state.learn.max_queries", "must be at least 1", "")
+	}
+	if l.MaxStates < 2 {
+		add("state.learn.max_states", fmt.Sprintf("%d is fewer than two states", l.MaxStates),
+			"a protocol with one state is a protocol with no state")
+	}
+	if l.MaxLength < 1 {
+		add("state.learn.max_length", "must be at least 1", "")
+	}
+	if len(r.Seeds.Inline) == 0 && len(r.Seeds.Dirs) == 0 && r.Seeds.Generate == 0 {
+		add("state.learn", "needs seeds",
+			"the alphabet is the distinct messages the campaign's seeds contain: "+
+				"without one there is nothing to learn over")
 	}
 }

@@ -338,3 +338,73 @@ func TestWorkerDrivesADesktopApplication(t *testing.T) {
 		t.Errorf("the findings are %v; none came from the interface", obs.kinds)
 	}
 }
+
+// TestWorkerLearnsAProtocolBeforeFuzzingIt is the v0.9 path: before the
+// campaign starts, the worker drives the target on purpose — chosen sequences,
+// not mutated ones — and works out its state machine. What it seeds the corpus
+// with is a path to every state it found, which is the thing a stateful
+// campaign is otherwise short of.
+func TestWorkerLearnsAProtocolBeforeFuzzingIt(t *testing.T) {
+	target := testenv.BuildTarget(t, "stateful_proto")
+	sock := filepath.Join(os.TempDir(), fmt.Sprintf("xfuzz-learn-%d.sock", os.Getpid()))
+	defer os.Remove(sock)
+
+	// One seed spoken correctly. The alphabet is the distinct messages in it:
+	// asking an operator to write the alphabet out separately would be asking
+	// them to describe what they have already shown.
+	seed := "HELLO 1\\r\\nAUTH LETMEIN\\r\\nSET k v\\r\\nGET k\\r\\nQUIT\\r\\n"
+
+	body := "name: learntest\n" +
+		"target:\n  path: " + target + "\n" +
+		"session:\n  address: unix:" + sock + "\n  framing: line\n  reset: restart\n" +
+		"state:\n  fn: status\n" +
+		"  learn:\n    alphabet: 3\n    max_queries: 1500\n    max_states: 8\n" +
+		"    words: 40\n    max_length: 5\n    seed: 11\n" +
+		"seeds:\n  inline: [\"" + seed + "\"]\n" +
+		"feedback:\n  coverage: none\n  novelty: true\n" +
+		"stop:\n  execs: 50\n"
+
+	cfgPath := writeFile(t, t.TempDir(), "c.yaml", body)
+	cfg, err := campaign.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("loading the campaign: %v\n%s", err, body)
+	}
+
+	obs := runWorker(t, cfg, func(o *observer) bool { return o.ready != nil && o.execs > 0 },
+		"the worker never fuzzed after learning", 180*time.Second)
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	t.Logf("ready: seeds=%d execs=%d\nlogs:\n  %s",
+		obs.ready.Seeds, obs.execs, joinLines(obs.logs))
+
+	var learned, seeded string
+	for _, line := range obs.logs {
+		if strings.Contains(line, "learned") && strings.Contains(line, "states") {
+			learned = line
+		}
+		if strings.Contains(line, "seeded the corpus") {
+			seeded = line
+		}
+	}
+	if learned == "" {
+		t.Fatalf("the worker did not report learning anything:\n  %s", joinLines(obs.logs))
+	}
+	// Three states at least: before the greeting, after it, and authenticated.
+	// The protocol has four; how many the learner finds depends on how far the
+	// alphabet reaches, and asserting an exact count would be asserting the
+	// bound rather than the behaviour.
+	for _, n := range []string{"learned 1 states", "learned 2 states"} {
+		if strings.Contains(learned, n) {
+			t.Errorf("%s: the protocol has a handshake and an authentication, so it "+
+				"has at least three", learned)
+		}
+	}
+	if seeded == "" {
+		t.Errorf("nothing was seeded from the learned machine:\n  %s", joinLines(obs.logs))
+	}
+	if obs.ready.Seeds < 2 {
+		t.Errorf("the campaign started with %d seeds; learning should have added the "+
+			"access sequences to the one it was given", obs.ready.Seeds)
+	}
+}

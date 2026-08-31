@@ -692,6 +692,42 @@
           "description": "Treat new states and transitions as interesting. Defaults to true.",
           "type": "boolean"
         },
+        "learn": {
+          "additionalProperties": false,
+          "description": "Infer the protocol's state machine before fuzzing, and seed the corpus from it.",
+          "properties": {
+            "alphabet": {
+              "description": "How many distinct seed messages to learn over.",
+              "type": "integer"
+            },
+            "dot": {
+              "description": "Write the learned machine here as a Graphviz diagram.",
+              "type": "string"
+            },
+            "max_length": {
+              "description": "Longest sequence the check uses.",
+              "type": "integer"
+            },
+            "max_queries": {
+              "description": "Most sessions to run while learning.",
+              "type": "integer"
+            },
+            "max_states": {
+              "description": "Most states to infer before stopping.",
+              "type": "integer"
+            },
+            "seed": {
+              "description": "Seed for the sequences learning tries. 0 uses the campaign's.",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "words": {
+              "description": "How many random sequences to check the machine against.",
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "normalise": {
           "description": "What fingerprinting removes before hashing: digits, quoted, space.",
           "items": {

@@ -519,6 +519,24 @@ func defaults(f *File, set KeySet) {
 	if f.Storage == nil {
 		f.Storage = &Storage{}
 	}
+	if f.State != nil && f.State.Learn != nil {
+		l := f.State.Learn
+		if l.Alphabet == 0 {
+			l.Alphabet = defaultLearnAlphabet
+		}
+		if l.MaxQueries == 0 {
+			l.MaxQueries = defaultLearnMaxQueries
+		}
+		if l.MaxStates == 0 {
+			l.MaxStates = defaultLearnMaxStates
+		}
+		if l.Words == 0 {
+			l.Words = defaultLearnWords
+		}
+		if l.MaxLength == 0 {
+			l.MaxLength = defaultLearnMaxLength
+		}
+	}
 	if f.Storage.CheckpointInterval == 0 && unset("storage.checkpoint_interval") {
 		f.Storage.CheckpointInterval = Duration(defaultCheckpointInterval)
 	}

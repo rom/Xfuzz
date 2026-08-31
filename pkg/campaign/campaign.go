@@ -519,6 +519,49 @@ type State struct {
 	// TailBias is how often an aimed mutation lands at or after the targeted
 	// state rather than before it.
 	TailBias float64 `yaml:"tail_bias,omitempty" json:"tail_bias,omitempty" doc:"How often an aimed mutation lands at or after the target state, 0..1."`
+
+	// Learn asks the campaign to work out the protocol's state machine before
+	// it starts fuzzing, by driving the target on purpose.
+	Learn *Learn `yaml:"learn,omitempty" json:"learn,omitempty" doc:"Infer the protocol's state machine before fuzzing, and seed the corpus from it."`
+}
+
+// Learn configures active automata learning (ADR-0035).
+//
+// The difference from the inference beside it is what the fuzzer does with its
+// executions. Inference labels whatever the mutator happened to send; learning
+// chooses the sequences, and what comes back is a machine with a path to every
+// state it found. Those paths are what a stateful campaign is short of: a corpus
+// seeded with them starts from every reachable state rather than from the
+// handshake.
+//
+// It costs executions before the campaign begins — one reset and one session
+// per question — which is why every bound here exists and why it is off unless
+// asked for.
+type Learn struct {
+	// Alphabet caps how many distinct messages to learn over, taken from the
+	// campaign's seeds. Everything scales with it: the table has a column per
+	// symbol before it has anything else.
+	Alphabet int `yaml:"alphabet,omitempty" json:"alphabet,omitempty" doc:"How many distinct seed messages to learn over."`
+
+	// MaxQueries and MaxStates bound the learning. Reaching either returns what
+	// was learned so far, reported as partial rather than presented as complete.
+	MaxQueries int `yaml:"max_queries,omitempty" json:"max_queries,omitempty" doc:"Most sessions to run while learning."`
+	MaxStates  int `yaml:"max_states,omitempty" json:"max_states,omitempty" doc:"Most states to infer before stopping."`
+
+	// Words and MaxLength bound the search for a counterexample, which is where
+	// the algorithm's exactness becomes a sample: no oracle can prove a program
+	// equivalent to a machine.
+	Words     int `yaml:"words,omitempty" json:"words,omitempty" doc:"How many random sequences to check the machine against."`
+	MaxLength int `yaml:"max_length,omitempty" json:"max_length,omitempty" doc:"Longest sequence the check uses."`
+
+	// Seed, when set, makes the sequences the learner tries reproducible
+	// independently of the campaign seed.
+	Seed uint64 `yaml:"seed,omitempty" json:"seed,omitempty" doc:"Seed for the sequences learning tries. 0 uses the campaign's."`
+
+	// Dot writes the learned machine to this path, in Graphviz's language. A
+	// learned machine is something a person looks at, and that is most of its
+	// value beside its use as a seed source.
+	Dot string `yaml:"dot,omitempty" json:"dot,omitempty" doc:"Write the learned machine here as a Graphviz diagram."`
 }
 
 // Workers is how the campaign is parallelised.

@@ -172,6 +172,15 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 
+	// Learning, before the fuzzing and after the seeds: its alphabet is the
+	// messages the seeds contain, and what it adds is a path to every state it
+	// found (ADR-0035). It never ends the campaign — a campaign that could not
+	// learn fuzzes from its own seeds, which is what it would have done anyway.
+	if learnConfigured(w.opts.Config) {
+		w.learnAndSeed(ctx)
+		seeds = b.engine.CorpusLen()
+	}
+
 	w.send(&daemon.Message{Type: daemon.MsgReady, Ready: &daemon.ReadyInfo{
 		Pid:             os.Getpid(),
 		Strategy:        w.opts.Strategy,
