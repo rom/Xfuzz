@@ -714,8 +714,8 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
 
 ### 6.1 Where each clause stands
 
-Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30. Each row
-names what was run, not what is believed.
+Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30 and
+2026-08-31. Each row names what was run, not what is believed.
 
 | # | Clause | Status | Evidence |
 | --- | --- | --- | --- |
@@ -724,10 +724,10 @@ names what was run, not what is believed.
 | 3 | Benchmark gates on every tier | met | `BenchmarkInProc`, `BenchmarkForkServer`, `BenchmarkProcPool`, `BenchmarkSubprocess`, `BenchmarkSession` — one per implemented tier, all in `bench/baseline.txt`. `TestTiersAreOrderedAsADR0009Claims` additionally checks they come out in the order the tier table predicts, which no per-tier gate can see |
 | 4 | Determinism and cross-host replay | met | `test/e2e/determinism_test.go`. Two runs of one file and seed, under separate daemons, produced the same corpus by the same derivation; a third with another seed differed. A store carried to a second data directory, daemon and target binary replayed three findings, three of three trials each |
 | 5 | Security tests pass | met | `make test-security`: eleven tests, no skips. Now a CI job that fails on a skip, which it was not before this audit |
-| 6 | Fault injection; clean resume | met | Nine of nine, M8. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
+| 6 | Fault injection; clean resume | met | Nine of nine, M8, re-run in the suite below. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, a store from the future refused, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
 | 7 | CI green on three platforms, with and without cgo | met | Ten jobs. `CGO_ENABLED=0` builds and tests clean; `make cross` compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`. The three stated gaps of § 10 of TESTS.md stand: no race detector on Windows, no native arm64 runner, instrumented targets skip without clang |
 | 8 | Self-fuzzing clean | met | Ten targets across nine packages, M8. The API target found a real path-cleaning defect on its first run |
-| 9 | Docs current | met | `tools/docslint` passes. The audit produced ADR-0026 and corrected four drifts, one of which was a documented Go build incantation that does not link |
+| 9 | Docs current | met | `tools/docslint` passes; CHANGELOG complete, with a known-issues section. The audit produced ADR-0026 and eleven corrections, of which the sharpest was a documented Go build incantation that does not link |
 | 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
 
 The suite behind those rows, run once at the end with everything in place:
