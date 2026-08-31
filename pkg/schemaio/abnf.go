@@ -408,6 +408,11 @@ func groupOf(alts []abnfElem) abnfElem {
 }
 
 func parseCharVal(l *abnfLexer) (abnfElem, error) {
+	// The caller is not always looking at a quote: %s and %i are RFC 7405's
+	// case markers and a truncated one leaves the lexer wherever it stopped.
+	if l.peek() != '"' {
+		return abnfElem{}, fmt.Errorf("expected a quoted string")
+	}
 	l.pos++ // the opening quote
 	j := strings.IndexByte(l.src[l.pos:], '"')
 	if j < 0 {

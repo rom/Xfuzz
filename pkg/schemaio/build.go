@@ -102,6 +102,7 @@ func (b *builder) finish(root string) (*schema.Schema, *Report, error) {
 		return nil, nil, fmt.Errorf("schemaio: the import produced no root type")
 	}
 	b.s.Root = root
+	b.flattenInline()
 	b.noteUnreachable()
 	b.rep.Types = len(b.s.Types)
 	for _, t := range b.s.Types {
@@ -111,6 +112,66 @@ func (b *builder) finish(root string) (*schema.Schema, *Report, error) {
 		return nil, b.rep, fmt.Errorf("schemaio: the imported schema is not usable: %w", err)
 	}
 	return b.s, b.rep, nil
+}
+
+// flattenInline gives every anonymous struct a name.
+//
+// The grammar language has no inline struct: a field's type may be a scalar, a
+// bytes run, a choice, a repeat, an opt or a named type, and a struct only ever
+// appears as a declaration. So a translation that nested one — a JSON object
+// inside a JSON object, an ABNF concatenation inside an alternation — produces a
+// schema that is correct in memory and renders as the word "struct", which is
+// not a type the parser knows.
+//
+// Done once, here, rather than at each of the twenty places an importer builds
+// a field: this is the kind of rule that is remembered in five of them.
+func (b *builder) flattenInline() {
+	// To a fixpoint, because an extracted struct may itself hold one.
+	for pass := 0; pass < 64; pass++ {
+		changed := false
+		for _, owner := range sortedKeys(b.s.Types) {
+			t := b.s.Types[owner]
+			if b.extractFrom(owner, t) {
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+// extractFrom replaces every struct-typed field of t with a reference to a
+// newly declared type, and reports whether it changed anything.
+//
+// It descends through the types that stay inline — a choice's alternatives are
+// written inside it — because a struct nested two levels down is just as
+// unwritable as one nested at the top, and a oneof of message fields is exactly
+// that shape.
+func (b *builder) extractFrom(owner string, t *schema.Type) bool {
+	if t == nil || len(t.Fields) == 0 {
+		return false
+	}
+	changed := false
+	for i := range t.Fields {
+		ft := t.Fields[i].Type
+		if ft == nil {
+			continue
+		}
+		if ft.Kind == schema.KindStruct {
+			name := b.nameFor(owner + "_" + t.Fields[i].Name)
+			b.s.Types[name] = ft
+			t.Fields[i].Type = refTo(name)
+			changed = true
+			continue
+		}
+		if ft.Kind == schema.KindChoice {
+			if b.extractFrom(owner+"_"+t.Fields[i].Name, ft) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // noteUnreachable reports the declared types the root cannot reach.

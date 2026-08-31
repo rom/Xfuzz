@@ -129,7 +129,7 @@ func (r *Report) String() string {
 
 // registry holds the importers, in the order a report should list them.
 var registry = []Importer{
-	ABNF{}, Kaitai{},
+	ABNF{}, Kaitai{}, JSONSchema{}, OpenAPI{}, Proto{}, ASN1{},
 }
 
 // Importers lists every importer.
