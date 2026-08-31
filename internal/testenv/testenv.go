@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -129,11 +130,26 @@ func BuildPlugin(t testing.TB, dir, name string) string {
 	return out
 }
 
+// ExeName is command with whatever this platform puts on the end of an
+// executable.
+//
+// Windows will not run a file without one. `go build -o xfuzz` writes exactly
+// `xfuzz`, and exec then reports "executable file not found in %PATH%" for a
+// file that is sitting right there — which is how every Windows e2e test in
+// this project failed, from the first one written to the first CI run that
+// could compile.
+func ExeName(command string) string {
+	if runtime.GOOS == "windows" {
+		return command + ".exe"
+	}
+	return command
+}
+
 // BuildBinary compiles one of Xfuzz's own commands into dir and returns its
 // path.
 func BuildBinary(t testing.TB, dir, command string) string {
 	t.Helper()
-	out := filepath.Join(dir, command)
+	out := filepath.Join(dir, ExeName(command))
 	cmd := exec.Command("go", "build", "-o", out, "./cmd/"+command)
 	cmd.Dir = RepoRoot(t)
 	if b, err := cmd.CombinedOutput(); err != nil {

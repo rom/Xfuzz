@@ -95,7 +95,7 @@ func (e *env) reapTargets() {
 // xfuzz runs a client command and returns its combined output.
 func (e *env) xfuzz(timeout time.Duration, args ...string) (string, error) {
 	e.t.Helper()
-	cmd := exec.Command(filepath.Join(e.binDir, "xfuzz"), args...)
+	cmd := exec.Command(filepath.Join(e.binDir, testenv.ExeName("xfuzz")), args...)
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"XFUZZ_DATA_DIR="+e.dataDir)
@@ -361,7 +361,7 @@ stop:
 
 	// Run it by its bare name, from its own directory. The daemon's working
 	// directory is elsewhere, which is the whole point.
-	cmd := exec.Command(filepath.Join(e.binDir, "xfuzz"), "run", "campaign.yaml")
+	cmd := exec.Command(filepath.Join(e.binDir, testenv.ExeName("xfuzz")), "run", "campaign.yaml")
 	cmd.Env = append(os.Environ(),
 		"PATH="+e.binDir+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"XFUZZ_DATA_DIR="+e.dataDir)

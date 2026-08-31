@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -479,15 +480,38 @@ func (s *Sandbox) findHelper() (string, error) {
 // boundary is for (ARCHITECTURE section 2).
 func FindTool(name string) (string, error) {
 	if self, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(self), name)
-		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
-			return candidate, nil
+		dir := filepath.Dir(self)
+		// Both spellings, because on Windows the file beside the binary is
+		// xfuzz-worker.exe and the caller asks for xfuzz-worker. Without this
+		// the "beside the running binary" branch never matches there — which is
+		// exactly the released-tarball layout this function prefers — and the
+		// daemon falls through to PATH to find its own worker, or does not find
+		// it at all.
+		for _, candidate := range []string{
+			filepath.Join(dir, name),
+			filepath.Join(dir, name+exeSuffix()),
+		} {
+			if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+				return candidate, nil
+			}
 		}
 	}
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
 	return "", fmt.Errorf("safety: %s was not found beside the running binary or on PATH", name)
+}
+
+// exeSuffix is what this platform puts on the end of an executable.
+//
+// A runtime check rather than a build tag: the architecture lint keeps GOOS
+// constraints inside internal/platform, and this is one branch on one string
+// rather than a platform implementation.
+func exeSuffix() string {
+	if runtime.GOOS == "windows" {
+		return ".exe"
+	}
+	return ""
 }
 
 // privileged reports whether the fuzzer itself runs as root.

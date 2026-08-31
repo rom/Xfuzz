@@ -44,7 +44,7 @@ func newPortableEnv(t *testing.T) *env {
 		binDir:  bin,
 		dataDir: testenv.ReachableDir(t),
 		target: testenv.BuildAt(t,
-			filepath.Join(bin, "portable"+exeSuffix()),
+			filepath.Join(bin, testenv.ExeName("portable")),
 			"./testdata/targets/go/portable"),
 	}
 	t.Cleanup(e.reapTargets)
@@ -64,13 +64,6 @@ func portableCommands() []string {
 		cmds = append(cmds, "xfuzz-sandbox")
 	}
 	return cmds
-}
-
-func exeSuffix() string {
-	if runtime.GOOS == "windows" {
-		return ".exe"
-	}
-	return ""
 }
 
 // writeBlackBoxCampaign writes a campaign with no coverage and no isolation,
