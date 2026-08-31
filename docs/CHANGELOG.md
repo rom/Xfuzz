@@ -221,6 +221,17 @@ these was measured rather than guessed.
   exists and is not a migration: `xfuzz findings buckets NAME --strategy
   marker` recomputes the grouping on demand.
 
+- **A managed session server can still outlive its worker**, unchanged since
+  M6, where it is described in full under that milestone's known issues. One
+  per worker survives a finished campaign; every target runs in its own process
+  group so that killing it kills what it started, which also means the worker's
+  group does not contain it. It costs startup rather than correctness — the
+  abandoned servers hold no address the next campaign wants — but they are
+  contention, and a campaign short enough for startup to be most of its budget
+  is where that shows. Carried forward here rather than left under M6, because
+  a reader asking "what is wrong with v0.1" should not have to read three
+  milestones back to find out.
+
 - **A campaign's bucket count can go down.** Triage re-buckets from the
   minimised reproducer, which is better evidence than the engine's in-loop
   guess, so two provisional buckets legitimately merge into one. It is correct
