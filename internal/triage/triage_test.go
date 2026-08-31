@@ -64,6 +64,59 @@ func TestClassifyExtractsAndNormalisesMarkers(t *testing.T) {
 	}
 }
 
+func TestAMarkerIsOneLineAndPrintable(t *testing.T) {
+	// FuzzClassify found this: extractMarker split on "\n" only, so a carriage
+	// return inside a line survived into the marker. The marker is a bucket
+	// key, so the consequence was not cosmetic.
+
+	// The same crash, reported by a target that writes CRLF and one that
+	// writes LF, is one bug. Windows is in the v0.1 scope (ADR-0020) and
+	// writes CRLF, so without this the same finding on two platforms is two
+	// bugs — and nothing would say so, because both buckets look reasonable.
+	crlf := Classify(crash(6, "panic: runtime error: bad index\r\ngoroutine 1\r\n"))
+	lf := Classify(crash(6, "panic: runtime error: bad index\ngoroutine 1\n"))
+	if !crlf.Equal(lf) {
+		t.Errorf("CRLF and LF gave different classifications: %q against %q",
+			crlf.Marker, lf.Marker)
+	}
+
+	// A bare carriage return is how a program overwrites its own progress line,
+	// which a long-running target does constantly. A CR *before* the prefix was
+	// already harmless — the marker is sliced from the prefix, so anything
+	// earlier is discarded — and this pins that rather than catching it.
+	progress := Classify(crash(6, "working 10%\rworking 90%\rpanic: runtime error: bad index\n"))
+	if progress.Marker != lf.Marker {
+		t.Errorf("a progress line changed the marker: %q against %q",
+			progress.Marker, lf.Marker)
+	}
+
+	// A CR *after* the prefix is the case that was broken, and it is the one
+	// the fuzzer minimised to. Everything up to the break belongs to the
+	// marker and everything after it is the next line; splitting on "\n" alone
+	// kept both, so the bucket key carried a control character and the
+	// findings table carried a cursor movement.
+	split := Classify(crash(6, "panic: bad index\rgoroutine 1 [running]:\n"))
+	if split.Marker != "panic: bad index" {
+		t.Errorf("marker ran past the carriage return: %q", split.Marker)
+	}
+
+	// And a target's output is hostile by assumption (SECURITY.md), while a
+	// marker is printed in a table an operator reads. A target that emits an
+	// escape sequence must not thereby control that terminal.
+	esc := Classify(crash(6, "panic: \x1b[2J\x1b[H runtime error\n"))
+	if strings.ContainsAny(esc.Marker, "\x00\x1b\r\n\t") {
+		t.Errorf("marker carries control characters: %q", esc.Marker)
+	}
+	for _, r := range esc.Marker {
+		if r < 0x20 || r == 0x7f {
+			t.Errorf("marker contains %q, which a terminal will act on: %q", r, esc.Marker)
+		}
+	}
+	if !strings.HasPrefix(esc.Marker, "panic:") {
+		t.Errorf("stripping the escape lost the message: %q", esc.Marker)
+	}
+}
+
 func TestClassifyIgnoresUnknownMarkers(t *testing.T) {
 	// A target's own convention is not in the generic set, and inventing a
 	// marker from an arbitrary line would split one bug across buckets.

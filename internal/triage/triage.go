@@ -179,7 +179,17 @@ func extractMarker(out string, prefixes []string) string {
 	if out == "" || len(prefixes) == 0 {
 		return ""
 	}
-	for _, line := range strings.Split(out, "\n") {
+	// Split on either terminator, not just "\n". A carriage return is a line
+	// break to every terminal, and targets use it two ways that both land
+	// here: CRLF from anything built on Windows, and a bare CR to overwrite a
+	// progress line, which is what most long-running programs do. Splitting on
+	// "\n" alone leaves the CR inside the line, so the marker becomes two of
+	// the target's lines glued together — and the marker is a bucket key, so
+	// the same crash reported with CRLF and with LF would be filed as two
+	// different bugs. Found by FuzzClassify.
+	for _, line := range strings.FieldsFunc(out, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	}) {
 		line = strings.TrimSpace(line)
 		for _, p := range prefixes {
 			if idx := strings.Index(line, p); idx >= 0 {
@@ -203,6 +213,20 @@ func normaliseMarker(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for i := 0; i < len(s); {
+		// Control characters never survive. A marker is written into a bucket
+		// key and printed in a table the operator reads, and it comes verbatim
+		// from a program being driven into undefined behaviour — which
+		// SECURITY.md treats as hostile output rather than as a diagnostic. A
+		// bare escape byte in `xfuzz findings` is the target choosing what the
+		// operator's terminal does; dropping the whole class is cheaper than
+		// arguing about which ones are safe. Bytes at or above 0x80 are left
+		// alone: they are UTF-8 continuation bytes, and cutting one produces
+		// mojibake in a message somebody has to read.
+		if s[i] < 0x20 || s[i] == 0x7f {
+			b.WriteByte(' ')
+			i++
+			continue
+		}
 		if s[i] == '0' && i+1 < len(s) && (s[i+1] == 'x' || s[i+1] == 'X') {
 			j := i + 2
 			for j < len(s) && isHexDigit(s[j]) {
@@ -229,7 +253,10 @@ func normaliseMarker(s string) string {
 		i++
 	}
 	const maxMarker = 160
-	out := strings.TrimSpace(b.String())
+	// Fields/Join rather than TrimSpace alone: replacing controls with spaces
+	// can leave runs of them mid-message, and a bucket key that differs only
+	// in whitespace is two buckets for one bug.
+	out := strings.Join(strings.Fields(b.String()), " ")
 	if len(out) > maxMarker {
 		out = out[:maxMarker]
 	}
