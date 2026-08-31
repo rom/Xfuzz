@@ -51,4 +51,4 @@ little and preserves independence at the *implementation* level.
 
 ## Satisfied by
 
-ADR-0001, ADR-0005, ADR-0008, ADR-0031
+ADR-0001, ADR-0005, ADR-0008, ADR-0031, ADR-0034

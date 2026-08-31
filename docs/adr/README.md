@@ -54,6 +54,8 @@ extended Nygard template.
 | [ADR-0031](ADR-0031-grammar-imports-are-subsets-with-reports.md) | An imported grammar is a documented subset with a report | Accepted | ASR-0001, ASR-0009, ASR-0013 |
 | [ADR-0032](ADR-0032-gocov-via-shared-inline-counters.md) | `gocov` lands by mapping the target's counters into the fuzzer | Accepted | ASR-0003, ASR-0006 |
 | [ADR-0033](ADR-0033-platform-isolation-and-terminal-parity.md) | Each platform gets its own confinement mechanism, not one with gaps | Accepted | ASR-0006, ASR-0010, ASR-0011 |
+| [ADR-0034](ADR-0034-web-and-desktop-driver-backends.md) | A browser and an accessibility tree are two more driver backends | Accepted | ASR-0001, ASR-0010, ASR-0013 |
+| [ADR-0035](ADR-0035-active-automata-learning.md) | The campaign learns the protocol before it fuzzes it | Accepted | ASR-0002, ASR-0004, ASR-0008 |
 
 Three ADRs serve no single ASR: **ADR-0018** and **ADR-0019** are project
 constraints (licensing, identity) rather than responses to a requirement, and

@@ -4,6 +4,12 @@
 - **Date:** 2026-08-28
 - **Serves:** ASR-0002, ASR-0004
 
+> **Amendment (v0.9).** The active automata learning this record defers by name
+> is now implemented, and has its own record:
+> [ADR-0035](ADR-0035-active-automata-learning.md). Nothing here changes —
+> inference stays, guidance stays, and learning runs before both — so a campaign
+> that does not ask for it behaves exactly as this record describes.
+
 ## Context
 
 ASR-0002 requires genuine stateful fuzzing: reaching bugs that need a specific

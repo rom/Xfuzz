@@ -4,6 +4,20 @@
 - **Date:** 2026-08-28
 - **Serves:** ASR-0008, ASR-0011, ASR-0012, ASR-0013, ASR-0015
 
+> **Amendment (v0.9).** The corpus gains an operation this record does not
+> describe: **distillation**, which re-measures every entry and keeps the
+> smallest subset that still reaches everything the corpus reached, dropping the
+> rest. It is a different question from the favoured set — that asks which entry
+> is the cheapest way to reach each feature and uses the answer to bias the
+> schedule, leaving every entry in place — and it is what makes a day-old corpus
+> something a person can read or hand to somebody else. Greedy set cover, which
+> is within a logarithmic factor of optimal and takes milliseconds; deterministic
+> by construction, because a corpus that distilled differently on each run would
+> mean a resumed campaign fuzzing something other than its checkpoint describes.
+> It is off unless `storage.distill_interval` asks for it, because it costs one
+> execution per entry, and it refuses a campaign with no coverage: there would be
+> nothing to compare, and dropping any entry would be dropping it at random.
+
 ## Context
 
 The store must serve three uses with different access patterns:

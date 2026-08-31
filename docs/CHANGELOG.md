@@ -249,6 +249,109 @@ planted bug whose budget is an order of magnitude above the criterion that
 looks for it.
 
 
+### Added — v0.9, learning and distillation (ADR-0035, ADR-0008)
+
+- **Active automata learning**, which ADR-0006 deferred by name. Before the
+  campaign starts, the worker drives the target on purpose — chosen sequences,
+  not mutated ones — and works out its state machine with Angluin's L* in its
+  Mealy form. What it seeds the corpus with is a path to every state it found,
+  which is the thing a stateful campaign is otherwise short of: a protocol
+  behind a handshake and an authentication spends most of a budget
+  rediscovering the prefix. Measured against `stateful_proto`: three states and
+  nine transitions from thirty sessions, two access sequences seeded, in two
+  seconds.
+- The output alphabet is the campaign's own state labels and the input alphabet
+  is the distinct messages its seeds already contain, so a campaign that has
+  configured state guidance has already done the work. `state.learn` turns it
+  on; every bound is a budget of *sessions*, and reaching one returns what was
+  learned marked partial, saying which bound was reached.
+- It claims nothing it cannot show: the equivalence oracle samples, the report
+  says how many sequences it checked, and a target that answers the same
+  question two different ways is named as not deterministic from a reset rather
+  than modelled from noise. `state.learn.dot` writes the machine out as a
+  Graphviz diagram — the first artefact this project produces that describes the
+  *target* rather than the campaign.
+- **Corpus distillation**: re-measure every entry and keep the smallest subset
+  that still reaches everything the corpus reached. A campaign admits an entry
+  whenever it sees anything new, and after the first hour most of what it admits
+  is a slightly different route to somewhere it has already been. This is what
+  turns that back into a corpus a person could read or hand to somebody else.
+  `storage.distill_interval` asks for it; it is off by default because it costs
+  one execution per entry, and it refuses a campaign with no coverage rather
+  than dropping entries at random.
+
+### Fixed
+
+- **A seed that was already a finding was never reported.** Neither `AddSeed`
+  nor the corpus-tracing pass judged what it ran, so an operator who handed the
+  fuzzer a reproducer — the obvious thing to do with one — got silence until a
+  mutation rediscovered the same bug. On a fast tier that is a few thousand
+  executions; on the driver tier it can be never.
+- **The engine's time budget never reached the stages.** `Run` turned
+  `MaxTime` into a deadline and checked it once per corpus entry, while a stage
+  ran that entry's whole energy without looking. On a fast tier that is
+  invisible; on a tier where one execution restarts an application, a worker's
+  hundred-millisecond slice became minutes — no metrics reported and a stop
+  command unnoticed for all of it.
+- **`Event.String` did not round-trip through `ParseEvent`.** It printed
+  "click 100,20" and "resize 80x24" while the parser wanted spaces, so an event
+  copied out of an error message into a seed file was silently dropped. Both
+  directions agree now, and a comma or an "x" is accepted because that is what
+  people type.
+- **A `Send` interrupted by the sequence's own deadline was reported as a
+  harness failure**, which ends a campaign the first time a mutated sequence is
+  slower than its budget. It is a timeout. Waits are clamped for the same
+  reason: "wait 2562047h" parses.
+- **The interface diagnostic oracle read only the screen.** Enough for a
+  terminal program, whose standard error *is* its interface; not enough for a
+  desktop application, whose toolkit catches the exception and prints it where
+  nobody was looking.
+- **An API keep-alive connection the service had already closed** was reported
+  as the service dying. It is the ordinary race every HTTP client handles, and
+  the request is now retried once on a fresh connection before anything is
+  called a finding.
+
+### Added — v0.8, the last domains (ADR-0034)
+
+The two remaining entries in ASR-0001's domain list, and the tier's claim tested
+against three backends instead of one.
+
+- **`web`**: a browser driven over the Chrome DevTools Protocol. Navigate, type,
+  click, resize, and read the document — no display server needed. The browser
+  is a harness and the target is whatever answers `driver.url`, so a web
+  campaign needs no `target.path`, the browser's exit status is not a finding,
+  and the failures are collected from the protocol: an uncaught exception, a
+  renderer that died, a modal nobody dismissed. The `exception` oracle reports
+  them, and a JavaScript dialog is dismissed rather than left to stall the
+  campaign.
+- The page's state is a structural outline of the DOM rather than its HTML:
+  which elements exist, which are hidden, which has focus, whether a field has
+  content. Raw HTML changes on every keystroke, so every sequence would reach
+  somewhere new and the state model would learn nothing.
+- **`gui-atspi`**: a Linux desktop application driven through its accessibility
+  tree over D-Bus. The tree is a better observable than a screenshot — two
+  screens that differ by an animation frame are different pixels and the same
+  screen — and it is the only one that says which widget has focus. Clicks are
+  window-relative, because a window does not land in the same place twice.
+- **One event vocabulary across all three backends.** "key enter" is a byte
+  sequence on a terminal, a DOM key value in a browser and an X keysym on a
+  desktop, and a test fails if any backend does not know a name the others do.
+  Where a backend cannot deliver an event it says so and the tier skips it:
+  AT-SPI cannot hold a modifier down, so `ctrl-c` is refused rather than
+  delivered as the wrong keystroke.
+- `xfuzz doctor` gains `browser` and `desktop-accessibility`, the second of
+  which names which part of a desktop session is missing — that failure is
+  otherwise the hardest here to diagnose.
+
+**Known limits.** `gui-win` and `gui-mac` are not implemented: UI Automation is
+COM on Windows, the macOS accessibility API needs Objective-C which ADR-0017
+keeps out of the fuzzer, and neither can be exercised by this project. A browser
+cannot start under a campaign's ordinary address-space cap — a JavaScript engine
+reserves address space by the terabyte — so its sandbox drops that one limit and
+raises the process floor, keeping everything else the campaign asked for. The
+scope guard cannot constrain a browser's own traffic: it runs in the host's
+network namespace because it must reach the page.
+
 ### Added — v0.7, platform parity (ADR-0032, ADR-0033)
 
 The three platforms stop being one platform and two footnotes.

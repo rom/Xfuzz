@@ -60,4 +60,4 @@ semantics, not a chapter in the manual.
 
 ## Satisfied by
 
-ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022, ADR-0033
+ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022, ADR-0033, ADR-0034

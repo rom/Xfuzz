@@ -399,6 +399,27 @@ type StateScheduler interface {
 }
 ```
 
+### 3.4a Learning — `pkg/learn`
+
+Angluin's L* in its Mealy form, which infers a protocol's state machine by
+asking chosen questions rather than labelling whatever the mutator produced
+(ADR-0035). It sits beside the state model rather than inside it: what it
+returns is a machine and, more usefully, an access sequence for every state,
+which the worker adds to the corpus before fuzzing starts.
+
+```go
+type Teacher interface {
+    // One output symbol per input symbol, from a reset.
+    Output(ctx context.Context, word []string) ([]string, error)
+}
+
+func Learn(ctx context.Context, t Teacher, opts Options) (*Mealy, Report, error)
+```
+
+The teacher is a session: `internal/worker` implements it over the T6 executor,
+with the campaign's own state labels as the output alphabet and the distinct
+messages in its seeds as the input alphabet.
+
 ### 3.5 Safety — `internal/safety`
 
 Every process spawn and every outbound connection routes through here. There is
@@ -631,13 +652,17 @@ code only behind `//go:build cgo` with a fallback (ADR-0017).
 | Crash classification | signals | signals | NTSTATUS exception codes translated to the equivalent signal (ADR-0033) |
 | Coverage | sancov, gocov, fork server, Frida, QEMU, Intel PT | sancov, gocov, fork server, Frida | gocov; blackbox for anything else |
 | Terminal driver | `/dev/ptmx` | `/dev/ptmx` | ConPTY, with no resize signal |
-| GUI driver | AT-SPI + X11/Wayland | Accessibility API | UI Automation |
+| GUI driver | AT-SPI over D-Bus | Accessibility API — *not implemented* | UI Automation — *not implemented* |
+| Web driver | Chrome DevTools Protocol | the same | the same |
 
-Read that table as of v0.7, with two qualifications it would otherwise imply
-away. Intel PT and the three GUI drivers are designed and unimplemented. The
-macOS and Windows rows are cross-built, cross-vetted and unit-tested where the
-logic is pure, and have not been run on their own operating systems — MVP_PLAN
-§ 7.6 says exactly which parts that leaves unverified.
+Read that table as of v0.9, with two qualifications it would otherwise imply
+away. Intel PT and two of the three GUI drivers are designed and unimplemented:
+UI Automation is COM and the macOS accessibility API needs Objective-C, which
+ADR-0017 keeps out of the fuzzer, and neither can be exercised by this project
+(ADR-0034). The macOS and Windows rows are cross-built, cross-vetted and
+unit-tested where the logic is pure, and have not been run on their own
+operating systems — MVP_PLAN § 7.6 says exactly which parts that leaves
+unverified.
 
 `xfuzz doctor` reports what is available on the running host and *why* anything
 is not, so degraded capability is visible rather than mysterious.
@@ -727,19 +752,19 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 
 | ASR | Satisfied by |
 | --- | --- |
-| ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014, ADR-0030, ADR-0031 |
-| ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
+| ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014, ADR-0030, ADR-0031, ADR-0034 |
+| ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014, ADR-0035 |
 | ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027, ADR-0032 |
-| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029, ADR-0030 |
+| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029, ADR-0030, ADR-0035 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
 | ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026, ADR-0027, ADR-0032, ADR-0033 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021, ADR-0027, ADR-0028 |
-| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029, ADR-0030 |
+| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029, ADR-0030, ADR-0035 |
 | ASR-0009 Extensibility | ADR-0010, ADR-0025, ADR-0031 |
-| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022, ADR-0033 |
+| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022, ADR-0033, ADR-0034 |
 | ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021, ADR-0033 |
 | ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024, ADR-0029 |
-| ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008, ADR-0031 |
+| ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008, ADR-0031, ADR-0034 |
 | ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021, ADR-0028 |
 | ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023, ADR-0024 |
 

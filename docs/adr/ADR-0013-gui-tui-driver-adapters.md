@@ -4,6 +4,13 @@
 - **Date:** 2026-08-28
 - **Serves:** ASR-0001, ASR-0002, ASR-0004
 
+> **Amendment (v0.8).** Two of the backends this record names are implemented
+> and one pair is deferred with a reason:
+> [ADR-0034](ADR-0034-web-and-desktop-driver-backends.md) adds `web` over the
+> Chrome DevTools Protocol and `gui-atspi` over Linux accessibility, and records
+> why `gui-win` and `gui-mac` are not written. The tier, the event vocabulary
+> and the oracles here are unchanged.
+
 ## Context
 
 GUI and TUI targets are the most unusual in ASR-0001. They differ from every

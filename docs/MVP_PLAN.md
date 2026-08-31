@@ -694,8 +694,8 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
 | **v0.5** | TUI and GUI | T7 driver executor; PTY + terminal emulator; UI-state feedback; accessibility drivers (ADR-0013) — **TUI done**, desktop drivers not, see § 7 |
 | **v0.6** | Grammar ecosystem | protobuf, ASN.1, ABNF, Kaitai, JSON Schema, OpenAPI importers — **done**, see § 7 |
 | **v0.7** | Platform parity | Go coverage without clang; macOS Seatbelt and Windows job objects; ConPTY; Windows crashes classified as crashes — **done**, see § 7 |
-| **v0.8** | The last domains | The web driver over the Chrome DevTools Protocol, and the desktop accessibility drivers ADR-0013 names (`gui-atspi`, `gui-win`, `gui-mac`) |
-| **v0.9** | Learning | Active automata learning, which ADR-0006 defers by name and says needs its own ADR; corpus distillation |
+| **v0.8** | The last domains | The web driver over the Chrome DevTools Protocol, and `gui-atspi` over Linux accessibility — **done**, see § 7; `gui-win` and `gui-mac` deferred with a reason (ADR-0034) |
+| **v0.9** | Learning | Active automata learning, which ADR-0006 defers by name; corpus distillation — **done**, see § 7 |
 | **v1.0** | Scale | Distributed fuzzing: coordinator, corpus sync protocol, fleet view (needs its own ADR) |
 
 v0.8 and v0.9 were unsequenced when this table was written: § 5 named v0.7 and
@@ -854,7 +854,7 @@ have been checked against the runs rather than inferred. The remedy is
 mechanical and now exists: a release cannot publish without a clean build of
 the tagged commit on a machine that starts from `git clone`.
 
-## 7. v0.2 to v0.7
+## 7. v0.2 to v0.9
 
 Shipped after v0.1, in the order § 5 sequenced them. What each contains, what
 was measured for it, and what it does not cover.
@@ -991,3 +991,44 @@ ADR-0026's platform gap and not the C half. A ConPTY resize sends no signal,
 because Windows has none to send, so a program that redraws only on `SIGWINCH`
 does not redraw there. `gocov` reports block granularity, not edges, and refuses
 the fork server.
+
+### 7.7 v0.8 — the last domains
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| WebSocket client and CDP session | `internal/cdp` | Framing exercised against a server written in the test rather than against itself: replies correlated out of order, a fragmented message reassembled, a ping answered, an unmasked frame rejected, an oversized frame refused, a wrong handshake key refused, a dead browser failing every waiting call |
+| `web` backend | `internal/driver/web.go` | End to end against real Chromium: the page's shape is read, typing does not become a new state and opening a panel does, a planted exception is found and an ordinary sequence produces nothing, a reset clears both the screen and the collected problems, a modal is dismissed rather than stalling, a resize takes effect |
+| The whole machine on a web target | `internal/worker/tier_test.go` | A worker campaign reports the planted exception through the corpus, the mutators, the state model and the oracles |
+| `gui-atspi` backend | `internal/atspi`, `internal/driver/gui.go` | End to end against a real GTK application: the accessibility tree is read, clicks land where the widget says it is, the state separates screens without letting a keystroke become one, a reset restarts the program |
+| The whole machine on a desktop target | `internal/worker/tier_test.go` | A worker campaign finds a planted exception in four executions, reached by *duplicating* an event — the operator that exists because a sequence is an IR Repeat |
+| One event vocabulary, three backends | `internal/driver/webkeys.go`, `guikeys.go` | Every key name the terminal backend knows is known to the other two, or the test fails |
+
+**Not covered.** `gui-win` and `gui-mac`: UI Automation is COM on Windows and
+the macOS accessibility API needs Objective-C, which ADR-0017 keeps out of the
+fuzzer, and neither can be exercised by this project (ADR-0034). The desktop
+backend cannot hold a modifier down — AT-SPI presses a keysym and releases it —
+so `ctrl-c` is a skipped event with a stated reason rather than the wrong
+keystroke. A desktop campaign needs a display, a session bus, an accessibility
+bus and a toolkit bridge, so its tests skip where a CI image has none. A browser
+cannot start under a campaign's ordinary address-space cap, so its sandbox drops
+that one limit and raises the process floor.
+
+### 7.8 v0.9 — learning and distillation
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| L* over Mealy machines | `pkg/learn` | Recovers a known protocol exactly and agrees with it on words it was never asked; finds an access sequence for every state; stops and says so on a target with no finite machine; never asks the target the same word twice; two runs learn the same machine; returns what it has when the target dies |
+| The counterexample handling that terminates | `pkg/learn/lstar_test.go` | A three-state machine whose first two states differ only two symbols later, which the prefix-adding form never finishes on |
+| Learning a real protocol | `internal/worker/tier_test.go` | Three states and nine transitions from thirty sessions against `stateful_proto`, two access sequences seeded, in two seconds |
+| Corpus distillation | `pkg/corpus/distill.go` | Keeps a covering subset and never loses a feature; prefers the smaller entry; identical across twenty runs; the index agrees with the entries afterwards and a dropped input can be readmitted |
+| Distillation against real coverage | `internal/engine` | One execution per entry and no more; refuses a campaign with no coverage rather than dropping entries at random |
+
+**Not covered.** Learning needs a target that is deterministic from a reset. A
+protocol whose replies carry a counter, or a session tier whose framing is
+timing-based, makes the learner report exactly that rather than produce a
+machine — which is the right answer and is not a machine. The equivalence
+oracle samples rather than proves: there is none that can prove a program
+equivalent to a machine, so the report says how many sequences it checked.
+Distillation is not offered as a command; it runs on the interval a campaign
+configures, and an operator who wants it once sets the interval and stops the
+campaign.

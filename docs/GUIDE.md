@@ -547,6 +547,143 @@ stays alive and the exit status stays zero:
 The tier is slow — a restart per sequence is the dominant cost — so it defaults
 to one worker and much smaller triage budgets than a file campaign.
 
+## Fuzzing a web application
+
+The same `driver` block, a different backend. Xfuzz drives a real browser over
+its debugging protocol and the target is whatever answers the URL:
+
+```yaml
+driver:
+  kind: web
+  url: http://127.0.0.1:8080/app
+  width: 1280
+  height: 800
+  oracles: [exception, unresponsive]
+safety:
+  network: true
+  scope:
+    allow: ["127.0.0.1:8080"]
+  authorization:
+    operator: "you@example.com"
+    reference: "PENTEST-2026-014"
+    attestation: "authorised to test the declared scope"
+seeds:
+  inline: ["click 100 20\ntext hello\nkey enter\n"]
+```
+
+There is no `target.path`: the browser is the harness, and Xfuzz finds it on
+PATH unless `driver.browser` names one. Everything else is the machine every
+other campaign uses — the same corpus, the same sequence operators, the same
+state model.
+
+**What the oracles catch is the point.** A web application almost never crashes:
+the process lives, the HTTP status is 200, and the page carries on looking
+exactly as it did. An uncaught exception is reported to the debugging protocol
+and nowhere else, which is what `exception` reads. A dialog is dismissed rather
+than left to block the renderer, because one `alert()` in a fuzzed path would
+otherwise stall the campaign rather than end the sequence.
+
+**The state is the shape of the page, not its HTML.** Which elements exist,
+which are hidden, which has focus, whether a field has content — not what was
+typed into it. Raw HTML changes on every keystroke, so every sequence would
+reach somewhere new and the model would learn nothing.
+
+Two things to know. The browser's own sandbox stays on unless you turn it off
+with `driver.browser_sandbox: false`; if it refuses to start, the browser's own
+words are in the error. And the scope guard cannot constrain the browser: it
+runs in the host's network namespace because it has to reach the page, so the
+allowlist here is a declaration of where you are authorised to test rather than
+an enforcement of it.
+
+## Fuzzing a desktop application
+
+On Linux, through the accessibility tree the application already publishes:
+
+```yaml
+target:
+  path: ./my-gtk-app
+driver:
+  kind: gui-atspi
+  settle: 150ms
+  oracles: [diagnostic, unresponsive]
+seeds:
+  inline: ["click 100 20\ntext hello\nclick 50 70\n"]
+```
+
+`xfuzz doctor` line **`desktop-accessibility`** says whether this host can run
+one, and names which part is missing — a display, a session bus, or `at-spi`
+itself. That failure is otherwise the hardest here to diagnose: the campaign
+starts, the program runs, and the driver waits for a tree that never appears.
+
+Clicks are **window-relative**, so a sequence means the same thing the next time
+the window opens somewhere else. Two limits: this backend cannot hold a modifier
+down — AT-SPI presses a key and releases it — so `ctrl-c` is skipped with a
+reason rather than delivered as a plain `c`; and there is no window resize.
+
+`gui-win` and `gui-mac` are not implemented. The reasons are in
+[ADR-0034](adr/ADR-0034-web-and-desktop-driver-backends.md).
+
+## Learning a protocol before fuzzing it
+
+A stateful campaign's hardest problem is reaching the interesting states at all.
+Xfuzz can work out the state machine first, by driving the target on purpose:
+
+```yaml
+session:
+  address: tcp:127.0.0.1:9000
+  framing: line
+  reset: restart
+state:
+  fn: status
+  learn:
+    alphabet: 6           # how many distinct seed messages to learn over
+    max_queries: 2000     # each one is a reset and a session
+    dot: ./protocol.dot   # optional: the machine as a Graphviz diagram
+seeds:
+  inline: ["HELLO 1\nAUTH LETMEIN\nSET k v\nGET k\n"]
+```
+
+The input alphabet is the distinct messages your seeds already contain, and the
+output alphabet is the state labels your `state.fn` already produces — so a
+campaign with state guidance has already done the configuration. What learning
+adds to the corpus is **one sequence per state it found**, which is a campaign
+that starts from everywhere rather than from the handshake.
+
+It reports what it did and what it cost:
+
+```
+learned 4 states and 20 distinct transitions from 300 sessions
+  (6916 answered from the table), checked against 40 sequences
+seeded the corpus with 3 sequences, one for each state the machine reaches
+```
+
+Read the machine as evidence, not proof. There is no oracle that can prove a
+program equivalent to a machine, so the check is a sample and the report says
+how large it was. Learning needs a target that answers the same question the
+same way from a reset; one that does not is reported as such rather than
+modelled, and the campaign carries on from its own seeds.
+
+## Keeping a long campaign's corpus readable
+
+A campaign admits an entry whenever it sees anything new, so after a day the
+corpus is thousands of entries and most of them are slightly different routes to
+somewhere it has already been. Distillation re-measures every entry and keeps
+the smallest set that still reaches everything:
+
+```yaml
+storage:
+  distill_interval: 30m
+```
+
+Off by default, because it costs one execution per corpus entry — seconds on a
+fast target, minutes on the driver tier. It refuses a campaign with no coverage:
+there would be nothing to compare, and dropping any entry would be dropping it
+at random. What it drops is gone, and the worker says so:
+
+```
+distilled the corpus: 2841 entries to 96, 4.1 MB to 138 kB, covering 12094 features
+```
+
 ## Importing a grammar somebody else wrote
 
 Writing a grammar takes hours, and most formats already have a description
