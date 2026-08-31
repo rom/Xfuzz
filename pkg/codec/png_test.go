@@ -7,6 +7,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"sort"
 	"testing"
 
 	"github.com/rom/Xfuzz/pkg/ir"
@@ -362,9 +363,17 @@ func TestRegistry(t *testing.T) {
 	if _, err := Get("nope"); err == nil {
 		t.Error("an unknown codec must not resolve")
 	}
+	// Membership and order, not position: the list is sorted, so asserting that
+	// png is first was an assertion about which codecs happen to exist, and it
+	// broke the moment one was added whose name sorts earlier.
 	names := Names()
-	if len(names) < 2 || names[0] != "png" {
-		t.Errorf("Names = %v, want a sorted list including png and raw", names)
+	if !sort.StringsAreSorted(names) {
+		t.Errorf("Names = %v, want them sorted", names)
+	}
+	for _, want := range []string{"png", "raw"} {
+		if sort.SearchStrings(names, want) >= len(names) || !contains(names, want) {
+			t.Errorf("Names = %v, want it to include %q", names, want)
+		}
 	}
 	if c, ok := ForExtension(".png"); !ok || c.Name() != "png" {
 		t.Errorf("ForExtension(.png) = %v, %v", c, ok)
@@ -445,4 +454,13 @@ func BenchmarkPNGDecodeFixEncode(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+func contains(names []string, want string) bool {
+	for _, n := range names {
+		if n == want {
+			return true
+		}
+	}
+	return false
 }
