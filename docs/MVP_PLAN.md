@@ -726,7 +726,7 @@ Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30 and
 | 5 | Security tests pass | met | `make test-security`: eleven tests, no skips. Now a CI job that fails on a skip, which it was not before this audit |
 | 6 | Fault injection; clean resume | met | Nine of nine, M8, re-run in the suite below. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, a store from the future refused, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
 | 7 | CI green on three platforms, with and without cgo | met | Ten jobs. `CGO_ENABLED=0` builds and tests clean; `make cross` compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`. The three stated gaps of § 10 of TESTS.md stand: no race detector on Windows, no native arm64 runner, instrumented targets skip without clang |
-| 8 | Self-fuzzing clean | met | Ten targets across eight packages, M8. The API target found a real path-cleaning defect on its first run |
+| 8 | Self-fuzzing clean | met, after a fix | Ten targets across eight packages, re-run at 120s each after the audit's code changes: 35.1M executions, no crash. It failed the first time — `FuzzClassify` found a crash marker carrying a carriage return into its bucket key, which is the only defect this audit found by running something rather than by reading it. Clean on the re-run after the fix. In M8 the API target found a real path-cleaning defect on its first run |
 | 9 | Docs current | met | `tools/docslint` passes; CHANGELOG complete, with a known-issues section. The audit produced ADR-0026 and fourteen corrections, of which thirteen came from reading the decision records against the code and one from a fuzzer. The sharpest was a documented Go build incantation that does not link |
 | 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
 
@@ -737,7 +737,28 @@ planted-bug campaigns and the tier-ordering check), `test/e2e` 1727s (every
 milestone's exit criteria, the fault-injection suite, the guide walk, both
 proof obligations, and determinism and cross-host replay). Plus
 `make test-security` (11 tests, no skips), `CGO_ENABLED=0` build and test,
-`make cross` for five platforms, `make lint`, and `make fuzz-all`.
+`make cross` for five platforms, and `make lint`.
+
+`make fuzz-all FUZZTIME=120s`, by target:
+
+| Target | Executions |
+| --- | --- |
+| `pkg/mutate.FuzzParseDictionary` | 8,255,555 |
+| `pkg/plugin.FuzzReceive` | 7,769,428 |
+| `pkg/codec.FuzzPNGDecode` | 6,106,663 |
+| `pkg/plugin.FuzzServe` | 3,000,395 |
+| `internal/triage.FuzzClassify` | 2,689,251 |
+| `pkg/codec.FuzzSchemaDecode` | 2,454,195 |
+| `internal/api.FuzzRequest` | 1,457,107 |
+| `pkg/corpusio.FuzzImport` | 1,446,575 |
+| `pkg/campaign.FuzzParse` | 988,731 |
+| `pkg/schema.FuzzParse` | 959,518 |
+
+The two that mattered most for this audit are near the bottom of that table
+rather than the top, which is the point of running all of them:
+`internal/api.FuzzRequest` and `pkg/campaign.FuzzParse` cover the request
+decoder and the campaign file parser, both changed here. Rate is a property of
+the target, not of how much it is worth fuzzing.
 
 ### 6.2 Clause 2, honestly
 
