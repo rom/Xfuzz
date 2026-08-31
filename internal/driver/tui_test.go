@@ -236,17 +236,21 @@ func TestTUIThroughTheExecutorTier(t *testing.T) {
 			t.Errorf("%q exited %v", seq, ek)
 		}
 	}
-	if len(ui.seen) != 2 {
-		t.Fatalf("the campaign saw %d states for 2 sequences", len(ui.seen))
+	// The screen the reset left, then one per event: a single state per sequence
+	// gives the campaign screens and no transitions, and the transitions are
+	// where the signal is.
+	if len(ui.seen) != 5 {
+		t.Fatalf("the campaign saw %d states for a 2-event sequence and a 1-event one",
+			len(ui.seen))
 	}
-	if ui.seen[0] == ui.seen[1] {
-		t.Errorf("two different sequences produced the same state:\n%s", ui.seen[0])
+	if !strings.Contains(ui.seen[0], "1) items") {
+		t.Errorf("the sequence did not start from the menu:\n%s", ui.seen[0])
 	}
-	if !strings.Contains(ui.seen[0], "selected: beta") {
-		t.Errorf("the first sequence ended at:\n%s", ui.seen[0])
+	if !strings.Contains(ui.seen[2], "selected: beta") {
+		t.Errorf("the first sequence ended at:\n%s", ui.seen[2])
 	}
-	if !strings.Contains(ui.seen[1], "no settings yet") {
-		t.Errorf("the second sequence ended at:\n%s", ui.seen[1])
+	if !strings.Contains(ui.seen[4], "no settings yet") {
+		t.Errorf("the second sequence ended at:\n%s", ui.seen[4])
 	}
 	// Each sequence restarted the program, which is what makes the second one's
 	// state a function of the second one's events alone.

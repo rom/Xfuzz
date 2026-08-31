@@ -1,5 +1,9 @@
 // Command tui_menu is a terminal program with a planted bug, for the T7 tier.
 //
+// It carries two planted bugs of different kinds, because the tier exists to
+// find both: one that kills the program, and one that leaves it running and
+// unusable.
+//
 // It is a small but complete TUI: it takes the alternate screen buffer, puts the
 // terminal in raw mode, hides the cursor, reads single keystrokes, redraws on
 // SIGWINCH, and restores everything on the way out. All of that is here because
@@ -7,10 +11,15 @@
 // that reads lines from a pipe would prove nothing about a fuzzer meant to drive
 // programs that do not.
 //
-// The bug: deleting the last item in the list leaves the selection pointing one
-// past the end, and the next redraw reads it. Two keystrokes in the right order
-// find it; no single keystroke does, which is the property that makes a
-// *sequence* the unit of input for this tier.
+// The first bug: deleting the last item in the list leaves the selection
+// pointing one past the end, and the next redraw reads it. Four keystrokes in
+// the right order find it; no single keystroke does, which is the property that
+// makes a *sequence* the unit of input for this tier.
+//
+// The second: the confirmation dialog under settings has no handler at all, so
+// nothing dismisses it and nothing quits from it. The process stays alive, the
+// exit status stays zero and the screen still looks like a screen, which is
+// exactly why ADR-0013 wants an oracle for it.
 package main
 
 import (
@@ -92,9 +101,18 @@ func (a *app) key(k string) bool {
 			a.screen = "settings"
 		}
 	case "settings":
-		if k == "escape" || k == "q" {
+		switch k {
+		case "escape", "q":
 			a.screen = "menu"
+		case "x":
+			// The second bug, and the one no crash detector can see. This
+			// confirmation has no handler for anything: escape does not dismiss
+			// it and q does not quit, so a program that reaches it is running,
+			// drawing, and unusable. A person hitting this closes the terminal
+			// and files a bug.
+			a.screen = "confirm"
 		}
+	case "confirm":
 	case "list":
 		switch k {
 		case "escape":
@@ -138,7 +156,9 @@ func (a *app) draw() {
 	case "menu":
 		b.WriteString("1) items\r\n2) settings\r\nq) quit\r\n")
 	case "settings":
-		b.WriteString("no settings yet\r\n\r\nesc) back\r\n")
+		b.WriteString("no settings yet\r\nx) reset everything\r\n\r\nesc) back\r\n")
+	case "confirm":
+		b.WriteString("Reset everything?\r\n\r\n  [ yes ]   [ no ]\r\n")
 	case "list":
 		for i, it := range a.items {
 			marker := "  "

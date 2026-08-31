@@ -85,6 +85,16 @@ func (o *Observer) Response(resp []byte) {
 	}
 }
 
+// RecordUI records the interface state observed after one event.
+//
+// It is what makes this observer an executor.UISink, structurally: pkg/executor
+// declares the method it needs and never names this package, and pkg/state never
+// names pkg/executor. The T7 driver calls it after every event, so a sequence of
+// keystrokes produces a trace through the same state machine a protocol session
+// produces — which is ADR-0013's claim that a UI state graph *is* a protocol
+// state machine, held to literally rather than by analogy.
+func (o *Observer) RecordUI(screen []byte) { o.Response(screen) }
+
 // Hangup records that the target closed the connection.
 func (o *Observer) Hangup() { o.trace.Observe(Closed) }
 

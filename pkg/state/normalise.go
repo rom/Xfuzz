@@ -142,6 +142,10 @@ func NormaliserNamed(name string) Normaliser {
 		return CollapseQuoted{}
 	case "space":
 		return CollapseSpace{}
+	case "spinner":
+		return CollapseSpinner{}
+	case "runs":
+		return CollapseRuns{}
 	default:
 		return nil
 	}

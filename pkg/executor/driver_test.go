@@ -246,11 +246,18 @@ func TestDriverFeedsTheUISink(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(ui.states) != 2 {
-		t.Fatalf("the sink saw %d states for 2 sequences", len(ui.states))
+	// Two per sequence: the screen the reset left, and the screen after the
+	// event. The first is the state every sequence starts from and the second is
+	// where it got to, and a campaign needs both to have a transition at all.
+	if len(ui.states) != 4 {
+		t.Fatalf("the sink saw %d states for 2 one-event sequences", len(ui.states))
 	}
-	if ui.states[0] == ui.states[1] {
+	if ui.states[1] == ui.states[3] {
 		t.Error("two different sequences produced the same state; the sink is reading a stale screen")
+	}
+	if ui.states[0] != ui.states[2] {
+		t.Errorf("the two sequences started from different screens: %q and %q",
+			ui.states[0], ui.states[2])
 	}
 }
 

@@ -269,6 +269,15 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 		events = events[:e.opts.MaxEvents]
 	}
 
+	// The screen the reset left the program showing, before any event. It is a
+	// state like any other, and the state every sequence starts from — so
+	// without it the campaign has no transitions out of the one screen it can
+	// always reach, and an oracle asking whether a program can get *back* has
+	// nothing to compare against.
+	if e.UI != nil {
+		e.UI.RecordUI(e.backend.State())
+	}
+
 	start := time.Now()
 	ek := feedback.ExitOK
 	for _, ev := range events {
@@ -285,13 +294,18 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 			return feedback.ExitError, fmt.Errorf("executor %s: %v: %w", e.name, ev, err)
 		}
 		e.settle(ctx, ev)
+		// After every event, not once at the end. A single state per sequence
+		// gives the campaign screens and no *transitions*, and it is the
+		// transitions that carry the signal: a target with a dozen screens has a
+		// hundred and forty-four ordered pairs, and the bugs live in the pairs
+		// nobody expected to be reachable (ADR-0006, ADR-0013).
+		if e.UI != nil {
+			e.UI.RecordUI(e.backend.State())
+		}
 	}
 
 	elapsed := time.Since(start)
 	state := e.backend.State()
-	if e.UI != nil {
-		e.UI.RecordUI(state)
-	}
 
 	res := e.backend.Result()
 	if ek == feedback.ExitOK {
