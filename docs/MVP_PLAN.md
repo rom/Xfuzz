@@ -725,7 +725,7 @@ Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30 and
 | 4 | Determinism and cross-host replay | met | `test/e2e/determinism_test.go`. Two runs of one file and seed, under separate daemons, produced the same corpus by the same derivation; a third with another seed differed. A store carried to a second data directory, daemon and target binary replayed three findings, three of three trials each |
 | 5 | Security tests pass | met | `make test-security`: eleven tests, no skips. Now a CI job that fails on a skip, which it was not before this audit |
 | 6 | Fault injection; clean resume | met | Nine of nine, M8, re-run in the suite below. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, a store from the future refused, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
-| 7 | CI green on three platforms, with and without cgo | met | Ten jobs. `CGO_ENABLED=0` builds and tests clean; `make cross` compiles `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`. The three stated gaps of § 10 of TESTS.md stand: no race detector on Windows, no native arm64 runner, instrumented targets skip without clang |
+| 7 | CI green on three platforms, with and without cgo | **was claimed on the wrong evidence; see § 6.3** | The commands were run locally and pass. CI itself was red for every run of this audit, and nobody looked until the release workflow checked out a tag |
 | 8 | Self-fuzzing clean | met, after a fix | Ten targets across eight packages, re-run at 120s each after the audit's code changes: 35.1M executions, no crash. It failed the first time — `FuzzClassify` found a crash marker carrying a carriage return into its bucket key, which is the only defect this audit found by running something rather than by reading it. Clean on the re-run after the fix. In M8 the API target found a real path-cleaning defect on its first run |
 | 9 | Docs current | met | `tools/docslint` passes; CHANGELOG complete, with a known-issues section. The audit produced ADR-0026 and fourteen corrections, of which thirteen came from reading the decision records against the code and one from a fuzzer. The sharpest was a documented Go build incantation that does not link |
 | 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
@@ -812,3 +812,35 @@ one longer one. Narrowing it is also the one place where a new mutation stage
 would obviously pay: bugs 2 and 3 are both about a value or a connection being
 pushed past what the protocol suggests, which nothing in the current stage set
 targets on purpose.
+
+### 6.3 The clause that was wrong, and why the rest are not
+
+Clause 7 says "CI green on Linux, macOS, and Windows, with and without cgo".
+It was marked met on the strength of `CGO_ENABLED=0 go build ./...`,
+`make cross` and `make lint` passing **here**. Those are the same commands CI
+runs, so the inference felt safe. It was not: CI had failed on every run of
+this audit, and on every run for a long time before it.
+
+The cause was one missing slash in `.gitignore`. The rule `corpus/`, written to
+keep campaign output out of the repository, is unanchored — and an unanchored
+gitignore pattern matches a directory of that name at any depth, so it also
+matched `pkg/corpus/`. That package has never been committed. Every clone of
+this repository has been a module that fails at `go build ./...`, and 11 of
+CI's 14 jobs — every job that compiles Go — have been failing accordingly.
+
+Nothing local could have caught it, and that is the point worth keeping. The
+files are on disk here, so every build, test, lint, benchmark and campaign in
+this session ran against a tree the repository does not contain. The audit's
+whole method — read the record, check it against the code — cannot see a
+difference between the code and *the code that was committed*. It took a fresh
+checkout on a machine that had never seen this working tree, which is exactly
+what the release workflow's verify job does and what no other job in the
+project did.
+
+The other nine clauses rest on measurements taken here, and are true of this
+tree; the fix makes them true of the repository too, and `test/e2e` builds the
+shipped binaries from source in the same checkout. But the honest statement is
+that "it passes here" was never evidence for "CI is green", and this row should
+have been checked against the runs rather than inferred. The remedy is
+mechanical and now exists: a release cannot publish without a clean build of
+the tagged commit on a machine that starts from `git clone`.

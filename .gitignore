@@ -15,12 +15,19 @@
 /internal/console/dist/
 
 # Local campaign state (never commit corpora, findings, or captures)
+#
+# Anchored to the repository root, all three of them. Unanchored, a gitignore
+# pattern matches a directory of that name at *any* depth — and `corpus/` then
+# matches `pkg/corpus/`, which silently kept an entire package out of the
+# repository. Everything built and tested here, because the files were on disk;
+# a clone had a module that did not compile. Found when the release workflow ran
+# `go vet` on a fresh checkout of the tag.
 /var/
 /.xfuzz/
 *.xfuzzdb
-corpus/
-findings/
-captures/
+/corpus/
+/findings/
+/captures/
 
 # Editor / OS
 .DS_Store

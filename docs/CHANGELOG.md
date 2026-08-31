@@ -158,6 +158,15 @@ looks for it.
   the only reason this was latent.
 - **`make ci` claimed to be "what CI runs on every push"** while running four
   of the ten jobs, and section 10 of TESTS.md listed seven of them.
+- **`pkg/corpus` had never been committed, so the repository did not build.**
+  `.gitignore` carried `corpus/` to keep campaign output out of the tree, and
+  an unanchored gitignore pattern matches a directory of that name at any
+  depth — so it also matched `pkg/corpus/`, and `git add -A` skipped the
+  package in silence. Every clone was a module that failed at
+  `go build ./...`, and 11 of CI's 14 jobs had been failing on it. All three
+  such patterns are now anchored to the repository root. Found by the release
+  workflow, on the first build this project has ever done from a fresh
+  checkout rather than from a working tree.
 - **A crash marker could carry control characters into its bucket key**, found
   by `FuzzClassify` — the only defect this audit found by running something
   rather than by reading it. `extractMarker` split the target's output on `\n`
@@ -241,6 +250,14 @@ these was measured rather than guessed.
   no version stamp on a signature to notice this (DESIGN § 4.5). The remedy
   exists and is not a migration: `xfuzz findings buckets NAME --strategy
   marker` recomputes the grouping on demand.
+
+- **Nothing in this project built from a clean checkout until the release
+  workflow did.** Every job in `ci.yml` runs on one, which is how the missing
+  package was failing 11 of 14 jobs unnoticed; what was missing was anybody
+  reading those runs. The audit's method — read the record, check it against
+  the code — cannot see a difference between the code and the code that was
+  *committed*. Clause 7 of the definition of done was marked met on local
+  command output for exactly that reason (MVP_PLAN § 6.3).
 
 - **A managed session server can still outlive its worker**, unchanged since
   M6, where it is described in full under that milestone's known issues. One
