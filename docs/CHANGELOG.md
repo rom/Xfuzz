@@ -145,6 +145,46 @@ listed here with its migration path.
   always writes a string, so an existing console keeps working and nothing new
   loses its low bits.
 
+### Known issues — v0.1
+
+Stated because a limitation nobody wrote down becomes a surprise, and each of
+these was measured rather than guessed.
+
+- **`stateful_proto`'s slowest bug needs ~113,000 sessions**, against an exit
+  criterion budgeted at 20,000. It is reached — one run found all four — but
+  where in a 42,000-to-113,000 window it typically falls is a claim about a
+  distribution and one observation does not make it. Two of the four are
+  recorded rather than required for that reason (MVP_PLAN § 6.2). The place a
+  new mutation stage would obviously pay is here: bugs 2 and 3 are both about a
+  value or a connection pushed past what the protocol suggests, and nothing in
+  the current stage set targets that on purpose.
+
+- **Windows is black-box in every configuration.** `sancov` needs shared
+  memory, which `internal/platform` provides on Unix only, so even an
+  instrumented target has nowhere to write its map. T3 makes that black-box
+  path about twice as fast as it was, which is a different thing from closing
+  the gap ([ADR-0026](adr/ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)).
+
+- **A pure-Go target behind a process boundary gets no coverage.** Not "unless
+  it is rebuilt" — there is no build of it this version can read. In process it
+  is fully covered, so the gap is exactly the Go target that must run out of
+  process.
+
+- **No native `linux/arm64` job.** arm64 is covered by compilation only.
+  Compilation is not execution, and this is a real hole in the ASR-0006 claim
+  rather than a formality.
+
+- **The race detector does not run on Windows.** It needs a cgo toolchain the
+  hosted image does not guarantee, and a job that fails for environmental
+  reasons is one people learn to ignore. The Windows job builds every command
+  in addition to running the suite.
+
+- **A campaign's bucket count can go down.** Triage re-buckets from the
+  minimised reproducer, which is better evidence than the engine's in-loop
+  guess, so two provisional buckets legitimately merge into one. It is correct
+  and it looks alarming in a live counter; nothing yet explains it at the point
+  a user sees it happen.
+
 ### Added — M8 Extensions and hardening (2026-08-30)
 
 **The external plugin tier (ADR-0010, ADR-0025, ASR-0009)**
