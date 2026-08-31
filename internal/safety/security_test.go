@@ -170,7 +170,7 @@ func TestSecurityForkBomb(t *testing.T) {
 		t.Errorf("the bomb made %d processes against a limit of %d; "+
 			"something other than the limit stopped it", n, limit)
 	}
-	t.Logf("%s (isolation %s, cgroups %s)", got, sb.Level(), platform.CgroupMode())
+	t.Logf("%s (isolation %s, cgroups %s)", got, sb.Level(), platform.UsableCgroupMode())
 }
 
 func forksFrom(s string) int {
@@ -192,8 +192,12 @@ func forksFrom(s string) int {
 
 // TestSecurityMemoryExhaustion — "Memory exhaustion: contained by cgroup".
 func TestSecurityMemoryExhaustion(t *testing.T) {
-	if platform.CgroupMode() == platform.CgroupNone {
-		t.Skip("no cgroup hierarchy; memory cannot be capped")
+	if platform.UsableCgroupMode() == platform.CgroupNone {
+		// Usable, not mounted. A delegated hierarchy is present and unwritable
+		// on CI runners and inside containers, and the difference is the whole
+		// finding: asking the mounted question let this test run against a
+		// sandbox that had silently failed to apply the limit.
+		t.Skip("no usable cgroup hierarchy: memory cannot be capped, so containment cannot be verified here")
 	}
 	const limitBytes = 128 << 20
 
@@ -207,9 +211,9 @@ func TestSecurityMemoryExhaustion(t *testing.T) {
 	got := out(res)
 	if strings.Contains(got, "unbounded") {
 		t.Fatalf("the target allocated 2 GiB against a %d MiB limit: %s (isolation %s, cgroups %s)",
-			limitBytes>>20, got, sb.Level(), platform.CgroupMode())
+			limitBytes>>20, got, sb.Level(), platform.UsableCgroupMode())
 	}
-	t.Logf("%s exit=%d signal=%d (cgroups %s)", got, res.ExitCode, res.Signal, platform.CgroupMode())
+	t.Logf("%s exit=%d signal=%d (cgroups %s)", got, res.ExitCode, res.Signal, platform.UsableCgroupMode())
 }
 
 // TestSecurityPrivilegedSyscallIsDenied — the seccomp denylist, which is the

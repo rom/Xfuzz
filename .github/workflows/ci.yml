@@ -190,18 +190,32 @@ jobs:
         run: clang --version
       - name: run the escape attempts
         run: make test-security
-      - name: none of them may have skipped
+      - name: only the known skips, and no others
         run: |
-          # A skip is how this suite reports "the mechanism is not here", which
-          # is exactly the state a security job must not pass in. On a hosted
-          # Linux runner every mechanism is present, so a skip means something
-          # regressed in detection rather than in confinement — and it would
-          # otherwise look identical to a pass.
+          # A skip is how this suite reports "the mechanism is not here", and a
+          # security job must not go green on an unexplained one.
+          #
+          # This started as "no skips at all", on the assumption that a hosted
+          # Linux runner has every mechanism. That assumption was wrong, and
+          # finding out is why the job exists: these runners mount cgroup v2 and
+          # delegate it, so a process cannot create a group and memory limits
+          # cannot be enforced. The suite now detects that and skips the memory
+          # test honestly instead of testing a sandbox that silently applied
+          # nothing.
+          #
+          # So the rule is an allowlist rather than a count. Exactly the skips
+          # named here are tolerated; any other one fails, which is the property
+          # the original rule was reaching for.
           go test -tags security -run Security -v ./... 2>&1 | tee /tmp/sec.log
-          if grep -q -- '--- SKIP' /tmp/sec.log; then
-            echo "::error::a security test skipped on a runner that has the mechanism"
+          unexpected=$(grep -- '--- SKIP' /tmp/sec.log | grep -v 'TestSecurityMemoryExhaustion' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::a security test skipped for a reason this job does not know about"
+            echo "$unexpected"
             grep -A2 -- '--- SKIP' /tmp/sec.log
             exit 1
+          fi
+          if grep -q -- '--- SKIP: TestSecurityMemoryExhaustion' /tmp/sec.log; then
+            echo "::warning::memory limits are not enforceable on this runner (delegated cgroups); containment for them is unverified here"
           fi
           ran=$(grep -c -- '--- PASS' /tmp/sec.log)
           echo "$ran security tests passed"

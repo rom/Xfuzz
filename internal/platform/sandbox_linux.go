@@ -72,6 +72,42 @@ const (
 // target that forks immediately escapes the limit. Reporting which is in force
 // is what lets the safety layer declare an honest isolation level instead of
 // implying the stronger one.
+// UsableCgroupMode reports the hierarchy this process can actually create a
+// group in, which is not the same question as which one is mounted.
+//
+// CgroupMode stats the mount. That was the whole check, and it was wrong in the
+// way that matters: delegation is now the norm — systemd, containers and CI
+// runners all place a process in a sub-group and grant it write access there and
+// nowhere else — so the mount is present and `mkdir /sys/fs/cgroup/xfuzz` fails
+// with EACCES or EROFS. The sandbox then reported cgroups available, requested a
+// memory limit, had the creation fail, swallowed it, and ran the target
+// unconfined. Measured on a GitHub runner: a target allocated 2 GiB against a
+// 128 MiB cap while the level said "moderate" and the mode said "v2".
+//
+// So it is probed rather than inferred, for the same reason probeReadOnlyRoot
+// probes: the answer depends on how the host was set up, and the only reliable
+// way to know is to try it once. The cost is one mkdir and one rmdir at startup.
+//
+// This does not make delegated cgroups *work* — placing a group under our own
+// requires enabling controllers in the parent's subtree_control and obeying the
+// no-internal-process rule, which is its own piece of work. It makes the failure
+// honest, which is the part a sandbox cannot do without.
+func UsableCgroupMode() string {
+	mode := CgroupMode()
+	if mode == CgroupNone {
+		return CgroupNone
+	}
+	probe := fmt.Sprintf("xfuzz-probe-%d", os.Getpid())
+	c, err := NewCgroup(probe, Limits{AddressSpaceBytes: 64 << 20})
+	if err != nil {
+		return CgroupNone
+	}
+	c.Close()
+	return mode
+}
+
+// CgroupMode reports which hierarchy is mounted. Prefer UsableCgroupMode, which
+// also answers whether this process may use it.
 func CgroupMode() string {
 	if _, err := os.Stat("/sys/fs/cgroup/cgroup.controllers"); err == nil {
 		return CgroupV2
@@ -640,7 +676,7 @@ func (c *Cgroup) Close() error {
 func DetectSandbox() SandboxCapabilities {
 	caps := SandboxCapabilities{
 		Rlimits: true,
-		Cgroups: CgroupMode(),
+		Cgroups: UsableCgroupMode(),
 		Seccomp: SeccompAvailable(),
 	}
 	if UserNamespacesAvailable() {
@@ -658,6 +694,13 @@ func DetectSandbox() SandboxCapabilities {
 	}
 	switch caps.Cgroups {
 	case CgroupNone:
+		if CgroupMode() != CgroupNone {
+			caps.Notes = append(caps.Notes,
+				"a cgroup hierarchy is mounted but this process cannot create a group in it; "+
+					"memory and process limits fall back to rlimits, which do not bound a target "+
+					"that forks")
+			break
+		}
 		caps.Notes = append(caps.Notes,
 			"no cgroup hierarchy is mounted; memory and process limits fall back to rlimits")
 	case CgroupV1:

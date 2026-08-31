@@ -158,6 +158,16 @@ looks for it.
   the only reason this was latent.
 - **`make ci` claimed to be "what CI runs on every push"** while running four
   of the ten jobs, and section 10 of TESTS.md listed seven of them.
+- **A requested memory limit could be silently dropped, and the sandbox would
+  still call itself confined.** `CgroupMode` answered "is a hierarchy mounted",
+  the sandbox took that as "may I use one", the group creation then failed, the
+  error was swallowed, and the target ran unlimited while `Level()` reported
+  moderate and the mode reported v2. Measured on a GitHub runner: a target
+  allocated 2 GiB against a 128 MiB cap. ADR-0022 is titled "honest isolation
+  levels", so this was the one class of bug that layer cannot have. The
+  capability is now *probed* — one mkdir, one rmdir, the same reasoning
+  `probeReadOnlyRoot` already used — and a hierarchy that cannot be used reports
+  as none, with a note saying why.
 - **`pkg/corpus` had never been committed, so the repository did not build.**
   `.gitignore` carried `corpus/` to keep campaign output out of the tree, and
   an unanchored gitignore pattern matches a directory of that name at any
@@ -250,6 +260,14 @@ these was measured rather than guessed.
   no version stamp on a signature to notice this (DESIGN § 4.5). The remedy
   exists and is not a migration: `xfuzz findings buckets NAME --strategy
   marker` recomputes the grouping on demand.
+
+- **Memory and process limits are not enforceable where cgroups are delegated**,
+  which includes CI runners and most containers. The hierarchy is mounted and
+  the process may not create a group in it. Xfuzz now detects this and reports
+  cgroups as unavailable, so the isolation level is honest and a campaign that
+  requires more refuses to start; what it does *not* yet do is place its group
+  under its own, which is what would make limits work there. Until it does,
+  rlimits are the fallback and they do not bound a target that forks.
 
 - **Nothing in this project built from a clean checkout until the release
   workflow did.** Every job in `ci.yml` runs on one, which is how the missing
