@@ -18,6 +18,37 @@ func TestDocumentationIsConsistent(t *testing.T) {
 	}
 }
 
+// TestDocumentationIsConsistentWithWindowsLineEndings runs the same checks
+// against the same documents, checked out the way git checks them out on
+// Windows.
+//
+// Every check here is a line-anchored regular expression, and $ in Go's
+// multi-line mode knows nothing about a carriage return, so a CRLF checkout
+// made every pattern that ends in $ match nothing: the lint reported that every
+// ADR was missing from the index that lists it, and every ASR row missing from
+// the matrix that has it. The invariants are about the text, not about how a
+// platform ends its lines, so the same tree must pass either way — and this
+// runs everywhere rather than only on Windows, because a check that only the
+// Windows job can fail is a check that fails after the change that broke it.
+func TestDocumentationIsConsistentWithWindowsLineEndings(t *testing.T) {
+	root, err := FindRepoRoot(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	mustCopyTree(t, root+"/docs", dir+"/docs")
+	mustWrite(t, dir+"/go.mod", "module example.test\n")
+	crlfTree(t, dir)
+
+	ps, err := Check(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		t.Errorf("%s", p)
+	}
+}
+
 // TestDetectsDrift proves the checks can fail. Traceability drift is silent by
 // nature, so a lint that cannot demonstrate a failure is not evidence of
 // anything.

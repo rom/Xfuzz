@@ -2,6 +2,7 @@ package platform
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -41,11 +42,36 @@ func SeatbeltProfile(writable []string, allowNetwork bool) string {
 	b.WriteString("(version 1)\n")
 	b.WriteString("(allow default)\n")
 	b.WriteString("(deny file-write*)\n")
+	seen := make(map[string]bool, len(writable)*2)
+	allow := func(p string) {
+		// Absolute or not at all. sandbox-exec rejects a relative subpath, and
+		// it rejects the whole profile with it — which leaves the target
+		// unrunnable rather than unconfined, so a path that cannot be made
+		// absolute is dropped instead.
+		if p == "" || !filepath.IsAbs(p) || seen[p] {
+			return
+		}
+		seen[p] = true
+		b.WriteString("(allow file-write* (subpath " + seatbeltString(p) + "))\n")
+	}
 	for _, p := range writable {
 		if p == "" {
 			continue
 		}
-		b.WriteString("(allow file-write* (subpath " + seatbeltString(p) + "))\n")
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+		allow(p)
+		// And the path with its symbolic links resolved, because the kernel
+		// matches a subpath rule against the real path and macOS hands out
+		// working directories that are not one. A temporary directory is
+		// /var/folders/..., /var is a link to /private/var, and a profile that
+		// allowed only what the caller was told the directory was called would
+		// deny every write to the directory it meant to allow — with an error
+		// from the target about its own files rather than about a sandbox.
+		if real, err := filepath.EvalSymlinks(p); err == nil {
+			allow(real)
+		}
 	}
 	// Every target needs these three, and a profile that denied them would be
 	// denying the C library rather than the target.

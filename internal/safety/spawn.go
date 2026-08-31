@@ -213,9 +213,13 @@ func (s *Spawner) command(spec executor.ProcSpec, forks bool) (*exec.Cmd, error)
 	// The helper chdirs for us when it is in use, so the command's own Dir is
 	// left alone: setting both would mean the target's working directory
 	// depended on which of the two happened to be relative.
+	//
+	// Only the helper, though. A platform wrapper — sandbox-exec on macOS —
+	// applies a policy and execs, and changes no directory, so blanking Dir
+	// there would silently start the target somewhere else than on Linux.
 	helperPath, helperArgv := sb.wrap(path, argv, dir)
 	cmdDir := dir
-	if helperPath != path {
+	if sb.helper != "" && helperPath == sb.helper {
 		cmdDir = ""
 	}
 

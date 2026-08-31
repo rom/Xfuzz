@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -258,6 +259,16 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 	// start — with an error about the profile rather than about the sandbox.
 	_ = os.Chmod(dataDir, 0o755)
 
+	// A browser writes temporary files as well as profile files, and under
+	// confinement the system temporary directory is not writable either. Giving
+	// it one inside the profile puts both under the same allowed path.
+	tmpDir := filepath.Join(dataDir, "tmp")
+	if err := os.Mkdir(tmpDir, 0o777); err != nil {
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("driver: creating the browser's temporary directory: %w", err)
+	}
+	_ = os.Chmod(tmpDir, 0o777)
+
 	// A pipe rather than a file: the endpoint is announced on standard error
 	// and the announcement is what says the browser is ready. Polling an HTTP
 	// endpoint instead would mean an outbound request before the scope guard
@@ -274,7 +285,20 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 		// A headless browser needs less of the session than a desktop
 		// application does, and it still needs a home directory to put its
 		// profile beside and a display when the campaign asked to watch it.
-		Env:        WithSessionEnv(d.opts.Env),
+		// TMPDIR is set to a directory inside the profile so that everything
+		// the browser writes is under one path — see withBrowserTemp.
+		Env: withBrowserTemp(WithSessionEnv(d.opts.Env), tmpDir),
+		// The profile directory, and not because the browser cares where it
+		// starts: the working directory is what a sandbox keeps writable.
+		//
+		// Confinement denies writes outside the working directory and whatever
+		// the campaign added — the Linux helper by remounting the root
+		// read-only, macOS by a Seatbelt profile — and a browser whose profile
+		// it cannot write does not start. Measured on macOS, where it fails as
+		// `Failed to get the path for 1001`, which names the user data
+		// directory and nothing about a sandbox. So the one directory the
+		// browser must write is the one directory confinement already allows.
+		Dir:        dataDir,
 		StderrFile: pw,
 	}
 	startCtx, cancelStart := context.WithTimeout(ctx, d.opts.StartTimeout)
@@ -392,6 +416,22 @@ func (t *tail) String() string {
 		return strings.TrimSpace(string(t.buf))
 	}
 	return strings.TrimSpace(string(t.buf[t.pos:]) + string(t.buf[:t.pos]))
+}
+
+// withBrowserTemp points the browser's temporary directory inside its profile.
+//
+// The campaign wins where it named TMPDIR, on the same rule WithSessionEnv
+// follows: an operator who set it meant that directory. Otherwise the browser
+// gets one under the profile, which is where confinement already permits it to
+// write — a browser that cannot write a temporary file fails in ways that read
+// as the page being broken rather than as the sandbox being tight.
+func withBrowserTemp(env []string, tmp string) []string {
+	for _, e := range env {
+		if k, _, ok := strings.Cut(e, "="); ok && k == "TMPDIR" {
+			return env
+		}
+	}
+	return append(env, "TMPDIR="+tmp)
 }
 
 // browserArgs assembles the command line.

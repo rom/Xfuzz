@@ -61,3 +61,23 @@ func replaceInFile(t *testing.T, path, old, new string) {
 	}
 	mustWrite(t, path, strings.Replace(s, old, new, 1))
 }
+
+// crlfTree rewrites every markdown file under dir with CRLF line endings, which
+// is what a git checkout on Windows produces.
+func crlfTree(t *testing.T, dir string) {
+	t.Helper()
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		body := strings.ReplaceAll(string(b), "\r\n", "\n")
+		return os.WriteFile(path, []byte(strings.ReplaceAll(body, "\n", "\r\n")), 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

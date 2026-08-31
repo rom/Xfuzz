@@ -21,7 +21,7 @@ import (
 
 // TraceSupported reports whether this host can trace a target by breakpoint.
 //
-// Two things can stop it. Yama's ptrace scope, when set above one, restricts
+// Three things can stop it. Yama's ptrace scope, when set above one, restricts
 // tracing to processes with an explicit permission grant even for a parent —
 // value 2 needs CAP_SYS_PTRACE and value 3 disables ptrace outright. A container
 // can also drop CAP_SYS_PTRACE from its bounding set, and then the attach fails
@@ -30,6 +30,12 @@ import (
 // Probing rather than trying and reporting: a campaign that discovers this after
 // starting has already told the operator it was fuzzing.
 func TraceSupported() bool {
+	if !traceArchSupported {
+		// The third thing, and the one that is not about permission: this
+		// architecture has no breakpoint implementation, and could not use one
+		// if it had, because the blocks come from an x86-64 decoder.
+		return false
+	}
 	b, err := os.ReadFile("/proc/sys/kernel/yama/ptrace_scope")
 	if err != nil {
 		// No Yama at all, which is the common case outside Ubuntu and its
@@ -152,14 +158,14 @@ func TraceRun(pid int, opt TraceOptions) (TraceOutcome, error) {
 			if _, err := syscall.PtracePeekText(pid, addr, orig[:]); err != nil {
 				continue
 			}
-			if orig[0] == 0xCC {
+			if orig[0] == traceTrap {
 				// Already a trap in the original program — a debugger check or a
 				// deliberate abort. Leaving it alone keeps the program's own
 				// behaviour; claiming it as a breakpoint would report a hit that
 				// this backend did not cause and would restore the wrong byte.
 				continue
 			}
-			if _, err := syscall.PtracePokeText(pid, addr, []byte{0xCC}); err != nil {
+			if _, err := syscall.PtracePokeText(pid, addr, []byte{traceTrap}); err != nil {
 				continue
 			}
 			planted[addr] = orig[0]
@@ -248,7 +254,7 @@ func hit(pid int, base uint64, planted map[uintptr]byte, out *TraceOutcome) bool
 	if err := syscall.PtraceGetRegs(pid, &regs); err != nil {
 		return false
 	}
-	addr := uintptr(regs.Rip - 1)
+	addr := trapAddr(&regs)
 	orig, ok := planted[addr]
 	if !ok {
 		return false
@@ -257,7 +263,7 @@ func hit(pid int, base uint64, planted map[uintptr]byte, out *TraceOutcome) bool
 		return false
 	}
 	delete(planted, addr)
-	regs.Rip--
+	rewindToTrap(&regs)
 	if err := syscall.PtraceSetRegs(pid, &regs); err != nil {
 		return false
 	}

@@ -29,6 +29,11 @@ func FuzzRead(f *testing.F) {
 	f.Add([]byte(""))
 	f.Add([]byte("POST /a HTTP/1.1\r\nContent-Length: 99999999\r\n\r\nx"))
 	f.Add([]byte("POST /a HTTP/1.1\r\nContent-Length: -1\r\n\r\nx"))
+	// A pcap that parses and holds frames but no HTTP. Found by this fuzzer:
+	// the reader answered with both a capture and an error, so a caller that
+	// looked at the value before the error got a capture with no exchanges —
+	// a campaign with nothing to send rather than one that refused to start.
+	f.Add(pcapWithNoHTTP())
 
 	f.Fuzz(func(t *testing.T, src []byte) {
 		c, err := Read("fuzz", src)
@@ -94,4 +99,27 @@ func elideSession(b []byte) string {
 		return string(b)
 	}
 	return string(b[:200]) + "..."
+}
+
+// pcapWithNoHTTP builds the smallest classic pcap that reaches the reader's
+// "no readable HTTP" path: a valid header, and one frame that is not even IP.
+func pcapWithNoHTTP() []byte {
+	var b []byte
+	le := func(v uint32) { b = append(b, byte(v), byte(v>>8), byte(v>>16), byte(v>>24)) }
+
+	le(0xa1b2c3d4) // magic, little-endian
+	b = append(b, 2, 0, 4, 0)
+	le(0) // this zone
+	le(0) // significant figures
+	le(0xffff)
+	le(1) // link type: Ethernet
+
+	frame := make([]byte, 14+4)
+	frame[12], frame[13] = 0x08, 0x06 // EtherType ARP, so not a TCP segment
+
+	le(0) // seconds
+	le(0) // microseconds
+	le(uint32(len(frame)))
+	le(uint32(len(frame)))
+	return append(b, frame...)
 }

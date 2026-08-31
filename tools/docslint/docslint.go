@@ -9,6 +9,7 @@
 package docslint
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -171,7 +172,7 @@ func checkTraceability(dir string) ([]Problem, error) {
 	}
 
 	// The ADR index's Serves column must match the record headers.
-	adrIndex, err := os.ReadFile(filepath.Join(adrDir, "README.md"))
+	adrIndex, err := readDoc(filepath.Join(adrDir, "README.md"))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +194,7 @@ func checkTraceability(dir string) ([]Problem, error) {
 	}
 
 	// The ASR index must list every ASR.
-	asrIndex, err := os.ReadFile(filepath.Join(asrDir, "README.md"))
+	asrIndex, err := readDoc(filepath.Join(asrDir, "README.md"))
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +209,7 @@ func checkTraceability(dir string) ([]Problem, error) {
 	}
 
 	// The ARCHITECTURE.md matrix must match the ASR records.
-	arch, err := os.ReadFile(filepath.Join(dir, "docs", "ARCHITECTURE.md"))
+	arch, err := readDoc(filepath.Join(dir, "docs", "ARCHITECTURE.md"))
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +247,7 @@ func readRecords(dir, prefix string, extract func(string) []string,
 		if e.IsDir() || !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".md") {
 			continue
 		}
-		body, err := os.ReadFile(filepath.Join(dir, name))
+		body, err := readDoc(filepath.Join(dir, name))
 		if err != nil {
 			return nil, err
 		}
@@ -258,6 +259,28 @@ func readRecords(dir, prefix string, extract func(string) []string,
 		return nil, fmt.Errorf("no %s records found in %s", prefix, dir)
 	}
 	return out, nil
+}
+
+// readDoc reads a documentation file with its line endings normalised.
+//
+// Every check here is a line-anchored regular expression, and Go's ^ and $ in
+// multi-line mode anchor around \n and know nothing about \r. A checkout with
+// CRLF endings — which is what git gives on Windows by default — therefore
+// leaves a \r at the end of every line, so a pattern ending in $ matches
+// nothing and every ADR is reported as missing from an index that lists it.
+// The invariants are about the text, not about how a platform ends its lines.
+func readDoc(path string) ([]byte, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return normaliseEndings(b), nil
+}
+
+// normaliseEndings turns CRLF and a lone CR into LF.
+func normaliseEndings(b []byte) []byte {
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
 }
 
 func walkMarkdown(dir string, fn func(rel string, body []byte) error) error {
@@ -275,7 +298,7 @@ func walkMarkdown(dir string, fn func(rel string, body []byte) error) error {
 		if !strings.HasSuffix(path, ".md") {
 			return nil
 		}
-		body, err := os.ReadFile(path)
+		body, err := readDoc(path)
 		if err != nil {
 			return err
 		}

@@ -168,15 +168,31 @@ func TestSandboxWrapPassesLimitsToTheHelper(t *testing.T) {
 	}
 }
 
-func TestSandboxWrapIsATransparentPassThroughWithNoHelper(t *testing.T) {
+func TestSandboxWrapWithNoHelperEitherPassesThroughOrConfines(t *testing.T) {
 	// Silently dropping the limits would be worse than not having them: the
-	// campaign would still report itself as limited.
+	// campaign would still report itself as limited. So with no helper there
+	// are exactly two honest outcomes, and which one a host gives is the
+	// platform's answer rather than this package's: either the command is
+	// handed back untouched, or the platform confines by wrapping — macOS does,
+	// through Seatbelt — and the wrapper still runs the same command. What must
+	// never happen either way is the strong level, which is the helper's.
 	sb := &Sandbox{HelperPath: filepath.Join(t.TempDir(), "absent")}
 	sb.Probe()
 	path, argv := sb.wrap("/bin/true", []string{"/bin/true"}, "/tmp")
-	if path != "/bin/true" || len(argv) != 1 {
+
+	if _, _, confines := platform.Confine(platform.ConfineRequest{
+		Path: "/bin/true", Argv: []string{"/bin/true"},
+	}); confines {
+		if path == "/bin/true" {
+			t.Fatalf("the platform confines by wrapping but wrap ran the target directly: %v", argv)
+		}
+		if len(argv) < 2 || argv[len(argv)-1] != "/bin/true" {
+			t.Fatalf("the confinement wrapper does not end in the target command: %q %v", path, argv)
+		}
+	} else if path != "/bin/true" || len(argv) != 1 {
 		t.Fatalf("wrap = %q, %v", path, argv)
 	}
+
 	if sb.Level() >= LevelStrong {
 		t.Fatal("a sandbox that cannot install limits reported the strong level")
 	}

@@ -1,6 +1,8 @@
 package platform
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -80,6 +82,58 @@ func TestSeatbeltProfileSkipsEmptyPaths(t *testing.T) {
 	}
 	if strings.Count(p, "(subpath") != 1 {
 		t.Fatalf("want one subpath rule:\n%s", p)
+	}
+}
+
+func TestSeatbeltProfileAllowsThePathTheKernelWillSee(t *testing.T) {
+	// The kernel matches a subpath rule against the real path, and macOS hands
+	// out working directories that are not one: a temporary directory is under
+	// /var/folders, and /var is a symbolic link to /private/var. A profile that
+	// named only what the caller was given would deny every write to the
+	// directory it meant to allow.
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.Mkdir(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("this host cannot make a symbolic link: %v", err)
+	}
+
+	p := SeatbeltProfile([]string{link}, false)
+	for _, want := range []string{link, real} {
+		if !strings.Contains(p, `(subpath "`+want+`")`) {
+			t.Errorf("%s is not writable under the profile:\n%s", want, p)
+		}
+	}
+
+	// And a path that is already real is named once, not twice: a rule repeated
+	// is a profile that is harder to read for no additional permission.
+	q := SeatbeltProfile([]string{real}, false)
+	if n := strings.Count(q, "(subpath"); n != 1 {
+		t.Errorf("a real path produced %d subpath rules:\n%s", n, q)
+	}
+}
+
+func TestSeatbeltProfileRefusesARelativePath(t *testing.T) {
+	// sandbox-exec rejects a relative subpath and rejects the whole profile
+	// with it, so a relative writable entry would leave the target unrunnable.
+	// It becomes absolute, against the directory the child would have inherited.
+	p := SeatbeltProfile([]string{"scratch"}, false)
+	for _, line := range strings.Split(p, "\n") {
+		if !strings.HasPrefix(line, "(allow file-write* (subpath") {
+			continue
+		}
+		if strings.Contains(line, `"scratch"`) {
+			t.Fatalf("a relative path reached the profile:\n%s", p)
+		}
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Skip("no working directory")
+	}
+	if !strings.Contains(p, filepath.Join(cwd, "scratch")) {
+		t.Errorf("the relative path was dropped rather than resolved:\n%s", p)
 	}
 }
 

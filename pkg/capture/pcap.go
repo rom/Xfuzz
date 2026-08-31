@@ -147,7 +147,14 @@ func ReadPcap(r io.Reader) (*Capture, error) {
 				"before it is encrypted, or record it with the proxy instead", encrypted))
 	}
 	if len(c.Exchanges) == 0 {
-		return c, fmt.Errorf("capture: %d frames held no readable HTTP; %s",
+		// Nothing, and not "nothing plus the capture that holds nothing": a
+		// failed read returns no capture, which is what every other reader here
+		// does and what every caller is written against. Returning both put a
+		// capture with no exchanges in the hands of anyone who checked the
+		// value before the error, and that is a campaign with no requests to
+		// send rather than a campaign that refused to start. The diagnosis is
+		// not lost — the notes are what the message is built from.
+		return nil, fmt.Errorf("capture: %d frames held no readable HTTP; %s",
 			frames, strings.Join(c.Notes, "; "))
 	}
 	c.Sort()
