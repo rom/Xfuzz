@@ -4,6 +4,28 @@
 - **Date:** 2026-08-31
 - **Serves:** ASR-0001, ASR-0010, ASR-0013
 
+> **Amendment.** The web backend is verified on Linux and is *not* verified on
+> macOS, and this is what was measured rather than what was assumed.
+>
+> Under the Seatbelt profile [ADR-0033](ADR-0033-platform-isolation-and-terminal-parity.md)
+> applies, a browser dies before it has read its command line: it works out
+> where its default profile lives from the operating system rather than from
+> `HOME`, creates a directory under the real user's home, and is denied — which
+> it reports as `Failed to get the path for 1001`, naming a user data directory
+> and saying nothing about a sandbox. Giving it a writable working directory
+> does not help, and neither does giving it a fresh `HOME`; both were tried.
+> Started with no confinement at all it does start, and then announces no
+> debugging endpoint within the start timeout, having spent that time waking a
+> software updater.
+>
+> So there are two problems and only the first is Xfuzz's. The tests state the
+> position rather than assuming it: `internal/testenv.Browser` now probes the
+> browser it found with a plain command line — not through this driver, so a
+> regression here still fails rather than skips — and a host whose browser will
+> not announce an endpoint is skipped with what the browser said. A campaign on
+> such a host fails with the same message, plus the isolation it was started
+> under, which is the one thing the browser cannot know to mention.
+
 ## Context
 
 [ADR-0013](ADR-0013-gui-tui-driver-adapters.md) put user interfaces behind the

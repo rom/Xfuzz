@@ -11,11 +11,17 @@
 package testenv
 
 import (
+	"bufio"
+	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // ReachableDir returns a temporary directory a confined target can enter.
@@ -227,6 +233,28 @@ func BuildStrippedTarget(t testing.TB, name string) string {
 // the suite.
 func Browser(t testing.TB) string {
 	t.Helper()
+	path := findBrowser(t)
+
+	// And it has to be a browser that will actually be driven. Installed is not
+	// the same as drivable: measured on a macOS runner, the browser starts,
+	// spends its time waking an updater, and never announces a debugging
+	// endpoint — so every web test failed after its own start timeout, eleven
+	// of them, for a reason that was about the machine rather than the code.
+	//
+	// The probe is deliberately not this driver: it is a plain command line
+	// with the two switches the protocol needs. A regression in internal/driver
+	// therefore still fails these tests rather than skipping them, and only a
+	// host that cannot run a debuggable browser at all steps aside — saying so,
+	// with what the browser said.
+	browserProbeOnce.Do(func() { browserProbeErr = probeBrowser(path) })
+	if browserProbeErr != nil {
+		t.Skipf("%s is installed but cannot be driven here: %v", path, browserProbeErr)
+	}
+	return path
+}
+
+func findBrowser(t testing.TB) string {
+	t.Helper()
 	if p := os.Getenv("XFUZZ_BROWSER"); p != "" {
 		if _, err := exec.LookPath(p); err == nil {
 			return p
@@ -251,6 +279,69 @@ func Browser(t testing.TB) string {
 	}
 	t.Skip("no browser found: the web driver needs one, and this host has none")
 	return ""
+}
+
+var (
+	browserProbeOnce sync.Once
+	browserProbeErr  error
+)
+
+// browserProbeTimeout is how long a browser has to announce its endpoint.
+//
+// Generous, because a cold browser on a shared runner takes seconds to start
+// and this decides whether a whole suite runs. It is spent once per test
+// binary, and only where a browser was found.
+const browserProbeTimeout = 45 * time.Second
+
+// probeBrowser starts a browser and waits for it to announce a debugging
+// endpoint, then kills it.
+func probeBrowser(path string) error {
+	dir, err := os.MkdirTemp("", "xfuzz-browser-probe-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), browserProbeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, path,
+		"--headless=new", "--disable-gpu", "--no-sandbox",
+		"--remote-debugging-port=0",
+		"--user-data-dir="+dir,
+		"--no-first-run", "--no-default-browser-check",
+		"--disable-background-networking", "--disable-component-update",
+		"about:blank")
+	cmd.Env = append(os.Environ(), "TMPDIR="+dir)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+
+	// A bounded tail, so a browser that talks for the whole timeout without
+	// announcing anything still produces a message somebody can act on.
+	var said strings.Builder
+	sc := bufio.NewScanner(stderr)
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.Contains(line, "DevTools listening on") {
+			return nil
+		}
+		if said.Len() < 4<<10 {
+			said.WriteString(line)
+			said.WriteByte('\n')
+		}
+	}
+	return fmt.Errorf("it announced no debugging endpoint in %s; what it said instead:\n%s",
+		browserProbeTimeout, said.String())
 }
 
 // Desktop returns a Python interpreter with GTK bindings, or skips the test.
