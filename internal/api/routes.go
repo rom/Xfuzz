@@ -975,7 +975,7 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 			Detail: confinementDetail(caps.Confined)},
 		{Name: "rlimits", Available: caps.Rlimits,
 			Detail: "memory, process and file-size ceilings"},
-		{Name: "cgroups", Available: caps.Cgroups != platform.CgroupNone,
+		{Name: cgroupCapability(caps.Cgroups), Available: caps.Cgroups != platform.CgroupNone,
 			Detail: cgroupDetail(caps.Cgroups)},
 		{Name: "process-groups", Available: platform.ProcessGroupsSupported(),
 			Detail: "killing a target's whole tree rather than leaking its children"},
@@ -1096,6 +1096,21 @@ func confinementDetail(have bool) string {
 			"helper, reported above, rather than with a policy applied by wrapping"
 	}
 	return "this platform has no confinement policy Xfuzz knows how to apply"
+}
+
+// cgroupCapability names the mechanism rather than the capability.
+//
+// Every other row in this list is a mechanism — a namespace, seccomp, rlimits —
+// and a reader scanning the names is entitled to read them as facts about their
+// machine. A Windows job object does what a cgroup does and is not one, so
+// reporting `cgroups: true` on Windows would be a claim about that machine that
+// is not true, which is the failure this whole report exists to avoid. The
+// capability is the same; its name is the mechanism that provides it.
+func cgroupCapability(mode string) string {
+	if mode == platform.CgroupJob {
+		return "job-object"
+	}
+	return "cgroups"
 }
 
 func cgroupDetail(mode string) string {

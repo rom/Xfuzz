@@ -240,6 +240,12 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
+- **`xfuzz doctor` reported `cgroups` on Windows**, where there are none. Every
+  other row in that report is a mechanism, and a reader scanning the names is
+  entitled to read them as facts about their machine; a job object does a
+  cgroup's work and is not one, so it is named `job-object`. The report now has
+  to name what a host *has* as well as decline what it has not: the portability
+  test asserts both.
 - **`make cross` never built linux/arm64.** The breakpoint tracer named an
   x86-64 register unconditionally. The trap encoding and the instruction pointer
   are now the only architecture-specific part, and other architectures report

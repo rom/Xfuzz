@@ -107,11 +107,18 @@ func TestSeatbeltProfileAllowsThePathTheKernelWillSee(t *testing.T) {
 		}
 	}
 
-	// And a path that is already real is named once, not twice: a rule repeated
-	// is a profile that is harder to read for no additional permission.
-	q := SeatbeltProfile([]string{real}, false)
+	// And a path that is *already* the resolved one is named once, not twice: a
+	// rule repeated is a profile that is harder to read for no additional
+	// permission. Resolved rather than merely real, because on the platform
+	// this is for there is hardly any such thing — a macOS temporary directory
+	// nobody linked is still under /var, which is itself a link to /private/var.
+	resolved, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Skipf("this host cannot resolve %s: %v", real, err)
+	}
+	q := SeatbeltProfile([]string{resolved}, false)
 	if n := strings.Count(q, "(subpath"); n != 1 {
-		t.Errorf("a real path produced %d subpath rules:\n%s", n, q)
+		t.Errorf("an already-resolved path produced %d subpath rules:\n%s", n, q)
 	}
 }
 

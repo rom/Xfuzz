@@ -240,8 +240,10 @@ func TestDoctorTellsTheTruthAboutThisPlatform(t *testing.T) {
 	}
 
 	have := map[string]bool{}
+	named := map[string]bool{}
 	for _, c := range report.Capabilities {
 		have[c.Name] = c.Available
+		named[c.Name] = true
 		t.Logf("%-20s %-5t %s", c.Name, c.Available, c.Detail)
 		if c.Detail == "" {
 			t.Errorf("capability %q says nothing about what it is for", c.Name)
@@ -263,6 +265,15 @@ func TestDoctorTellsTheTruthAboutThisPlatform(t *testing.T) {
 		if report.Isolation == "strong" {
 			t.Errorf("doctor reports strong isolation on %s", runtime.GOOS)
 		}
+	}
+	// And the other half of the same duty: the report must name what the host
+	// *has*, not only decline to claim what it has not. Windows confines with a
+	// job object, which does a cgroup's work and is not one, so it appears under
+	// its own name (ADR-0033) — and an operator who finds neither name there has
+	// been told nothing about whether a target's children are contained.
+	if runtime.GOOS == "windows" && !named["job-object"] {
+		t.Error("doctor names no job object on Windows, so it says nothing about " +
+			"the mechanism that actually contains a target there")
 	}
 	if runtime.GOOS == "windows" && have["shared-memory"] {
 		t.Error("doctor claims shared memory on Windows, where the campaign " +
