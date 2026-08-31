@@ -241,6 +241,17 @@ type ProcSpec struct {
 	// server's control and status pipes are handed over.
 	ExtraFiles []*os.File
 
+	// Protocol asks for the control and status streams that Handle.Control and
+	// Handle.Status expose. Without it a started process gets neither, and both
+	// return nil.
+	//
+	// Requested rather than always provided, because where the streams live is
+	// not the same everywhere and on one platform they cost the child its
+	// standard input and output. A fork server and a daemon's worker speak a
+	// protocol and ask for it; a browser, a terminal program or a daemon being
+	// started for the user does not, and must keep its own streams.
+	Protocol bool
+
 	// CaptureOutput collects stdout and stderr. Off by default: a target that
 	// writes on every execution makes capture the dominant cost.
 	CaptureOutput bool

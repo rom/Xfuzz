@@ -217,6 +217,43 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
 
 ### Fixed
 
+- **The macOS Seatbelt profile denied the fuzzer its own coverage map.** The
+  shared maps live under the temporary directory on a system with no `/dev/shm`,
+  the profile allowed only the working directory, and so every coverage test on
+  macOS failed with "the target is not instrumented" — a correct sandbox
+  producing the wrong diagnosis of a correct target. The writable set now
+  includes the shared-memory directory, which is what a read-only root on Linux
+  already gave without anyone deciding it. In the same profile: a `subpath` rule
+  is matched against the real path, so a temporary directory under `/var` — a
+  link to `/private/var` — was allowed under a name the kernel never sees; and a
+  relative `subpath` makes `sandbox-exec` reject the whole profile, leaving the
+  target unrunnable rather than unconfined.
+- **A browser could not start under confinement**, because its profile directory
+  was a temporary directory and neither the working directory nor a writable
+  one. Chromium reported `Failed to get the path for 1001`, which names the user
+  data directory and says nothing about a sandbox. Its scratch directory is now
+  its working directory, and its `TMPDIR` is inside that.
+- **Nothing could be spawned on Windows that needed a control protocol** — the
+  daemon, its workers, a fork server — because a child there inherits no
+  descriptors beyond the standard three, and naming a fourth makes the process
+  start fail with "not supported by windows". `xfuzz doctor` could not start a
+  daemon at all. The control and status streams are now requested rather than
+  always created, placed on standard input and output where descriptors cannot
+  be inherited, and the child is told the numbers rather than assuming them.
+- **`make cross` never built linux/arm64.** The breakpoint tracer named an
+  x86-64 register unconditionally. The trap encoding and the instruction pointer
+  are now the only architecture-specific part, and other architectures report
+  the backend unavailable rather than approximating it — which is honest, since
+  the blocks it plants come from an x86-64 decoder.
+- **`docslint` reported every ADR as missing from the index that lists it, on
+  Windows.** Every check is a line-anchored regular expression, and `$` in Go's
+  multi-line mode knows nothing about a carriage return, so a CRLF checkout
+  defeated all of them at once. Documents are read with their endings
+  normalised, and the same tree is now checked both ways on every platform.
+- **The pcap reader returned a capture *and* an error** when a file held frames
+  but no HTTP, so a caller that looked at the value before the error got a
+  campaign with nothing to send rather than one that refused to start. Found by
+  the self-fuzzing job; the input it found is now a seed.
 - `TestTiersAreOrderedAsADR0009Claims` asserted a 1.2x margin for T3 over T4 and
   failed CI twice. The pool's advantage needs a spare core to overlap on, and
   core count is not the same as a core being free. ADR-0009 claims an ordering,

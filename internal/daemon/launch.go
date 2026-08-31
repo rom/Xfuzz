@@ -37,7 +37,11 @@ const (
 	EnvControlFD = "XFUZZ_CTL_FD"
 	EnvStatusFD  = "XFUZZ_ST_FD"
 
-	// WorkerControlFD and WorkerStatusFD are where the spawner places them.
+	// WorkerControlFD and WorkerStatusFD are where the spawner places them on a
+	// platform that lets a child inherit descriptors. Where one does not, the
+	// spawner uses standard input and output instead and says so through
+	// safety.ControlDescriptors, which is why the worker is told the numbers
+	// rather than these being the answer.
 	WorkerControlFD = 3
 	WorkerStatusFD  = 4
 )
@@ -96,11 +100,12 @@ func (c *Campaign) workerArgs(id int) []string {
 
 // workerEnv returns the worker's environment.
 func (c *Campaign) workerEnv(id int) []string {
+	ctl, st := safety.ControlDescriptors()
 	env := []string{
 		EnvWorkerID + "=" + strconv.Itoa(id),
 		EnvCampaignSeed + "=" + strconv.FormatUint(c.Seed, 10),
-		EnvControlFD + "=" + strconv.Itoa(WorkerControlFD),
-		EnvStatusFD + "=" + strconv.Itoa(WorkerStatusFD),
+		EnvControlFD + "=" + strconv.Itoa(ctl),
+		EnvStatusFD + "=" + strconv.Itoa(st),
 	}
 	if s := c.strategyFor(id); s != "" {
 		env = append(env, EnvStrategy+"="+s)

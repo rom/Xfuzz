@@ -265,6 +265,9 @@ func (s *Supervisor) runOnce(ctx context.Context, w *worker) error {
 		Args: append([]string{w.spec.Binary}, w.spec.Args...),
 		Env:  w.spec.Env,
 		Dir:  w.spec.Dir,
+		// The daemon speaks to its workers over the control and status streams,
+		// which is what asks for them: commands out, messages back.
+		Protocol: true,
 		// A worker's own output goes to the daemon's, which matters for the one
 		// case the protocol cannot cover: a worker that dies before it can send
 		// a message. Discarding it means "worker 0 exited with status 1" is the

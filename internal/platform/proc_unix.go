@@ -39,3 +39,11 @@ func SignalOf(st *os.ProcessState) int {
 
 // ProcessGroupsSupported reports whether killing a process tree is possible.
 func ProcessGroupsSupported() bool { return true }
+
+// ExtraFilesSupported reports whether a child can inherit descriptors beyond
+// the three standard ones.
+//
+// It can here, and that is what every protocol in this codebase that talks to a
+// child process is built on: the fork server's control and status words, and
+// the daemon's protocol with its workers, both arrive on descriptor 3 and 4.
+func ExtraFilesSupported() bool { return true }

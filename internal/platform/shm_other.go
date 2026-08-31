@@ -4,6 +4,7 @@ package platform
 
 import (
 	"errors"
+	"os"
 
 	"github.com/rom/Xfuzz/pkg/executor"
 )
@@ -37,3 +38,8 @@ func (unsupportedShmProvider) Create(int) (executor.SharedMemory, error) {
 
 // CleanupStaleShm is a no-op where shared memory is unsupported.
 func CleanupStaleShm(int64) (int, error) { return 0, nil }
+
+// shmDir names where shared memory would live. There is none here, but the
+// confinement policy is assembled on every platform so that it can be read and
+// tested on every platform, and it asks.
+func shmDir() string { return os.TempDir() }

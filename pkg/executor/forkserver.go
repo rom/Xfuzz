@@ -152,6 +152,9 @@ func (e *ForkServer) Start(ctx context.Context) error {
 	}
 
 	spec := e.spec
+	// The control and status streams are the fork server: the whole tier is a
+	// word written to one and a word read from the other.
+	spec.Protocol = true
 	spec.StdinFile = e.inputFile
 	if e.Output != nil {
 		if err := e.ensureStderrFile(); err != nil {

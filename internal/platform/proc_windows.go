@@ -91,3 +91,20 @@ func SignalOf(st *os.ProcessState) int {
 // leaks a target's children, and the doctor should say so rather than implying
 // a containment that is not there.
 func ProcessGroupsSupported() bool { return JobObjectsAvailable() }
+
+// ExtraFilesSupported reports whether a child can inherit descriptors beyond
+// the three standard ones.
+//
+// It cannot on Windows. There are no descriptor numbers to inherit — a child
+// receives handles, and only the three standard ones are placed for it — so
+// Go's process start refuses outright with "not supported by windows" as soon
+// as a fourth file is named. Which is not a small gap: it is why `xfuzz doctor`
+// could not start a daemon here at all, since starting one goes through the
+// same spawn that a fork server does.
+//
+// The answer is not to pass handles some other way. It is that a channel to a
+// child is a pipe, and Windows has three of them already: internal/safety puts
+// the control stream on standard input and the status stream on standard
+// output where this returns false, and the child is told which descriptors to
+// use rather than assuming.
+func ExtraFilesSupported() bool { return false }

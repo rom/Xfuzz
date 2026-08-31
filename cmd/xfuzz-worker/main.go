@@ -66,8 +66,8 @@ func main() {
 	// The daemon passes the protocol on descriptors it opened before exec.
 	// Absent, the worker runs standalone.
 	if ctl := os.Getenv(daemon.EnvControlFD); ctl != "" {
-		control := os.NewFile(uintptr(envInt(daemon.EnvControlFD, daemon.WorkerControlFD)), "control")
-		status := os.NewFile(uintptr(envInt(daemon.EnvStatusFD, daemon.WorkerStatusFD)), "status")
+		control := namedFile(envInt(daemon.EnvControlFD, daemon.WorkerControlFD), "control")
+		status := namedFile(envInt(daemon.EnvStatusFD, daemon.WorkerStatusFD), "status")
 		if control == nil || status == nil {
 			fail("the daemon named descriptors %s and %s but they are not open",
 				os.Getenv(daemon.EnvControlFD), os.Getenv(daemon.EnvStatusFD))
@@ -102,6 +102,26 @@ flags:
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, name+": "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// namedFile opens the descriptor the daemon named.
+//
+// The three standard ones are returned as the files the runtime already holds
+// rather than built from their numbers, because a descriptor number is not what
+// every platform opens a file from — on Windows a file is made from a handle,
+// and os.NewFile(1) there is not standard output but nothing at all. The daemon
+// puts the protocol on standard input and output precisely where descriptors
+// cannot be inherited, so this is the case that matters rather than a nicety.
+func namedFile(fd int, name string) *os.File {
+	switch fd {
+	case 0:
+		return os.Stdin
+	case 1:
+		return os.Stdout
+	case 2:
+		return os.Stderr
+	}
+	return os.NewFile(uintptr(fd), name)
 }
 
 func envInt(key string, def int) int {

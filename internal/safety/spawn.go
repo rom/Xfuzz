@@ -374,27 +374,66 @@ func (h *handle) Kill() error {
 // write end of the status pipe as descriptor 4, after any ExtraFiles the caller
 // supplied. This is how a fork server is driven: the fuzzer writes a command,
 // the server forks a child, and writes back its result.
-func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.Handle, error) {
-	ctlRead, ctlWrite, err := os.Pipe()
-	if err != nil {
-		return nil, fmt.Errorf("safety: creating the control pipe: %w", err)
+// ControlDescriptors returns the descriptor numbers a process started by Start
+// will find its control and status streams on.
+//
+// Two numbers rather than a constant because they are not the same everywhere:
+// where a child can inherit descriptors the streams are the first two after the
+// standard three, and where it cannot they are standard input and standard
+// output. Callers pass these to the child rather than hard-coding either pair —
+// the daemon does it through XFUZZ_CTL_FD and XFUZZ_ST_FD — so that the protocol
+// is one protocol with a platform's descriptor numbers, rather than two.
+func ControlDescriptors() (control, status int) {
+	if platform.ExtraFilesSupported() {
+		return 3, 4
 	}
-	stRead, stWrite, perr := os.Pipe()
-	if perr != nil {
-		ctlRead.Close()
-		ctlWrite.Close()
-		return nil, fmt.Errorf("safety: creating the status pipe: %w", perr)
+	return 0, 1
+}
+
+func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.Handle, error) {
+	inherits := platform.ExtraFilesSupported()
+	if !inherits && len(spec.ExtraFiles) > 0 {
+		// Dropping them would be worse than refusing: the child would start,
+		// find nothing on the descriptors it was told to read, and hang.
+		return nil, fmt.Errorf("safety: starting %s: it asked for %d inherited "+
+			"descriptors and this platform passes none beyond the standard three",
+			spec.Path, len(spec.ExtraFiles))
+	}
+
+	if !inherits && spec.Protocol && spec.StdinFile != nil {
+		// Both want standard input here, and the protocol would win silently:
+		// the process would start and read the fuzzer's commands where it
+		// expected its input.
+		return nil, fmt.Errorf("safety: starting %s: it asked for the control "+
+			"protocol and for its input on standard input, and this platform "+
+			"has only the one descriptor to give", spec.Path)
+	}
+
+	var ctlRead, ctlWrite, stRead, stWrite *os.File
+	closePipes := func() {
+		for _, f := range []*os.File{ctlRead, ctlWrite, stRead, stWrite} {
+			if f != nil {
+				f.Close()
+			}
+		}
+	}
+	if spec.Protocol {
+		var err error
+		if ctlRead, ctlWrite, err = os.Pipe(); err != nil {
+			return nil, fmt.Errorf("safety: creating the control pipe: %w", err)
+		}
+		if stRead, stWrite, err = os.Pipe(); err != nil {
+			closePipes()
+			return nil, fmt.Errorf("safety: creating the status pipe: %w", err)
+		}
 	}
 
 	cmd, err := s.command(spec, true)
 	if err != nil {
-		ctlRead.Close()
-		ctlWrite.Close()
-		stRead.Close()
-		stWrite.Close()
+		closePipes()
 		return nil, err
 	}
-	cmd.ExtraFiles = append(append([]*os.File(nil), spec.ExtraFiles...), ctlRead, stWrite)
+
 	if spec.StdinFile != nil {
 		cmd.Stdin = spec.StdinFile
 	} else {
@@ -408,13 +447,26 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 	default:
 		cmd.Stdout, cmd.Stderr = devNull(), devNull()
 	}
+	cmd.ExtraFiles = append([]*os.File(nil), spec.ExtraFiles...)
+
+	switch {
+	case !spec.Protocol:
+	case inherits:
+		cmd.ExtraFiles = append(cmd.ExtraFiles, ctlRead, stWrite)
+	default:
+		// The same two pipes, on the two descriptors this platform does place.
+		// The protocol is unchanged; only its descriptor numbers are, and the
+		// child is told them rather than assuming — see ControlDescriptors.
+		//
+		// A child on this path gives up its standard input and output to the
+		// protocol, and says what it has to say on standard error, which is
+		// where a worker says it anyway.
+		cmd.Stdin, cmd.Stdout = ctlRead, stWrite
+	}
 
 	h := &handle{cmd: cmd, control: ctlWrite, status: stRead, exited: make(chan struct{}), start: time.Now()}
 	if err := cmd.Start(); err != nil {
-		ctlRead.Close()
-		ctlWrite.Close()
-		stRead.Close()
-		stWrite.Close()
+		closePipes()
 		return nil, fmt.Errorf("safety: starting %s: %w", spec.Path, err)
 	}
 	s.placeInCgroup(cmd)
@@ -422,8 +474,10 @@ func (s *Spawner) Start(ctx context.Context, spec executor.ProcSpec) (executor.H
 	// The child owns its ends now; holding them open in the parent would stop
 	// the pipes ever reporting end-of-file when the child dies, and the fuzzer
 	// would block forever on a dead fork server.
-	ctlRead.Close()
-	stWrite.Close()
+	if spec.Protocol {
+		ctlRead.Close()
+		stWrite.Close()
+	}
 
 	go h.reap()
 

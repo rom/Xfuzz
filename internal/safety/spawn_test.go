@@ -2,7 +2,11 @@ package safety
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -190,5 +194,115 @@ func TestOneSpawnerServesConcurrentSpawns(t *testing.T) {
 
 	for err := range errs {
 		t.Errorf("concurrent spawn: %v", err)
+	}
+}
+
+// The child half of TestTheProtocolArrivesOnTheDescriptorsPromised.
+//
+// It runs as a subprocess of the test binary rather than as a program compiled
+// for the purpose, so the test needs no toolchain and no fixture: what is under
+// test is which descriptors a started process finds its streams on, and this
+// binary is as good a process as any to ask.
+const protocolChildEnv = "XFUZZ_TEST_PROTOCOL_CHILD"
+
+func TestProtocolChild(t *testing.T) {
+	if os.Getenv(protocolChildEnv) == "" {
+		t.Skip("not the child half")
+	}
+	ctl, st := ControlDescriptors()
+	in, out := descriptor(ctl), descriptor(st)
+
+	var word [4]byte
+	if _, err := io.ReadFull(in, word[:]); err != nil {
+		fmt.Fprintf(os.Stderr, "child: reading the control stream: %v\n", err)
+		os.Exit(3)
+	}
+	if _, err := out.Write([]byte("saw:" + string(word[:]))); err != nil {
+		fmt.Fprintf(os.Stderr, "child: writing the status stream: %v\n", err)
+		os.Exit(4)
+	}
+	out.Close()
+	os.Exit(0)
+}
+
+// descriptor is the worker's namedFile, which cmd/xfuzz-worker documents: the
+// three standard streams are the files the runtime holds rather than numbers,
+// because a descriptor number is not what every platform opens a file from.
+func descriptor(fd int) *os.File {
+	switch fd {
+	case 0:
+		return os.Stdin
+	case 1:
+		return os.Stdout
+	case 2:
+		return os.Stderr
+	}
+	return os.NewFile(uintptr(fd), "protocol")
+}
+
+// TestTheProtocolArrivesOnTheDescriptorsPromised checks the one thing that
+// makes the protocol portable: that ControlDescriptors describes what Start
+// actually does.
+//
+// The two disagreeing is not a visible failure. A child that reads the wrong
+// descriptor does not crash — it blocks, holding a campaign open until
+// something times out — and the platform where they disagree is not the one the
+// change is made on. So the child is asked where it found them, on every
+// platform, rather than the numbers being asserted from this side.
+func TestTheProtocolArrivesOnTheDescriptorsPromised(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Skipf("this host does not name the running binary: %v", err)
+	}
+
+	h, err := NewTrustedSpawner().Start(context.Background(), executor.ProcSpec{
+		Path:     self,
+		Args:     []string{self, "-test.run=TestProtocolChild", "-test.v=false"},
+		Env:      append(os.Environ(), protocolChildEnv+"=1"),
+		Protocol: true,
+	})
+	if err != nil {
+		t.Fatalf("starting the child: %v", err)
+	}
+	defer h.Kill()
+
+	if h.Control() == nil || h.Status() == nil {
+		t.Fatal("a spawn that asked for the protocol got no streams")
+	}
+	if _, err := h.Control().Write([]byte("ping")); err != nil {
+		t.Fatalf("writing the control stream: %v", err)
+	}
+
+	done := make(chan struct{})
+	var got []byte
+	var readErr error
+	go func() {
+		defer close(done)
+		got, readErr = io.ReadAll(h.Status())
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the child never answered on the status stream, which is what a " +
+			"descriptor mismatch looks like: nothing happens")
+	}
+	if readErr != nil {
+		t.Fatalf("reading the status stream: %v", readErr)
+	}
+	if !strings.Contains(string(got), "saw:ping") {
+		t.Fatalf("the child answered %q, so it did not read what was written to "+
+			"the control stream", got)
+	}
+}
+
+// TestASpawnThatDidNotAskForTheProtocolGetsNoStreams keeps the child's own
+// streams its own: on a platform with no descriptors to inherit the protocol
+// costs the child its standard input and output, so a browser or a daemon that
+// never speaks one must not be given it.
+func TestASpawnThatDidNotAskForTheProtocolGetsNoStreams(t *testing.T) {
+	h := sleeper(t, context.Background())
+	defer h.Kill()
+	if h.Control() != nil || h.Status() != nil {
+		t.Fatal("a spawn that asked for no protocol was given one anyway")
 	}
 }

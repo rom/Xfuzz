@@ -65,12 +65,19 @@ jobs:
           cache: true
       - name: build
         run: go build ./...
+      # An explicit timeout rather than the ten-minute default: internal/engine
+      # holds measurement tests that run campaigns of tens of thousands of
+      # executions, because "the comparison stage makes the difference" is not a
+      # claim a handful of executions can support. On a two-core hosted runner
+      # that package sits close to the default and has gone over it, and a
+      # package killed at the limit reports a goroutine dump rather than a
+      # result — which reads as a hang in the fuzzer rather than a slow machine.
       - name: test (race)
         if: runner.os != 'Windows'
-        run: go test -race ./...
+        run: go test -race -timeout 30m ./...
       - name: test
         if: runner.os == 'Windows'
-        run: go test ./...
+        run: go test -timeout 30m ./...
       - name: build commands
         run: |
           go build -o /dev/null ./cmd/xfuzz
@@ -251,7 +258,7 @@ jobs:
       - name: build
         run: go build ./...
       - name: test
-        run: go test ./...
+        run: go test -timeout 30m ./...
 
   # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
   # slower or less featureful, never broken.
@@ -269,7 +276,7 @@ jobs:
       - name: build
         run: go build ./...
       - name: test
-        run: go test ./...
+        run: go test -timeout 30m ./...
       - name: version reports nocgo
         run: go run ./cmd/xfuzz --version | grep -q nocgo
 

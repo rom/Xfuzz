@@ -4,6 +4,42 @@
 - **Date:** 2026-08-31
 - **Serves:** ASR-0006, ASR-0010, ASR-0011
 
+> **Amendment.** Two things this record decided in the abstract were wrong in
+> the specific, and CI found both on the platforms nobody develops on.
+>
+> **The profile must keep the fuzzer's own mechanisms writable, not only the
+> target's working directory.** The coverage map, the comparison map and the
+> block map are files under the shared-memory directory that the *target* maps
+> for writing, and macOS has no `/dev/shm` — they live under the temporary
+> directory, which the profile denied. The macOS job then reported every
+> coverage test failing with "the target is not instrumented", which is the
+> wrong diagnosis of a correct sandbox. This is not a relaxation of the Linux
+> policy but parity with it: there a read-only root is a bind remount of `/`,
+> and `/dev/shm` is a separate mount the remount does not reach, so the maps
+> stay writable without anyone having decided they should. The writable set is
+> now assembled by `platform.ConfineWritable`, which is untagged and tested on
+> every platform, because a denied write does not stop a campaign — it makes it
+> find nothing.
+>
+> Two smaller corrections, both about a rule the kernel reads differently from
+> the person writing it: a `subpath` rule is matched against the *real* path, so
+> a temporary directory under `/var` — a link to `/private/var` — was allowed
+> under a name the kernel never sees; and a relative `subpath` makes
+> `sandbox-exec` reject the entire profile, which leaves the target unrunnable
+> rather than unconfined.
+>
+> **A control protocol is not a descriptor number.** The daemon speaks to its
+> workers, and a fork server to its target, on the two descriptors after the
+> standard three. Windows has none: a child receives handles, only the three
+> standard ones are placed for it, and naming a fourth file makes the process
+> start fail outright — which is why `xfuzz doctor` could not start a daemon
+> there at all. So the streams are requested rather than always created
+> (`ProcSpec.Protocol`), they are placed where the platform has room — standard
+> input and output where descriptors cannot be inherited — and the child is
+> *told* the numbers rather than assuming them. A child on that path gives up
+> its own standard input and output, which is why asking is part of it: a
+> browser and a terminal program must keep theirs.
+
 ## Context
 
 [ADR-0012](ADR-0012-sandbox-by-default-and-scope-guard.md) makes confinement

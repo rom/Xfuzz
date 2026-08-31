@@ -31,3 +31,7 @@ func SignalOf(*os.ProcessState) int { return 0 }
 
 // ProcessGroupsSupported reports whether killing a process tree is possible.
 func ProcessGroupsSupported() bool { return false }
+
+// ExtraFilesSupported reports whether a child can inherit descriptors beyond
+// the three standard ones.
+func ExtraFilesSupported() bool { return true }

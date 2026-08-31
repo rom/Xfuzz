@@ -29,3 +29,19 @@ type ConfineRequest struct {
 	// a network client or server.
 	AllowNetwork bool
 }
+
+// ConfineWritable returns the directories a confined target must be able to
+// write: what the caller asked for, and the fuzzer's own shared memory.
+//
+// The shared memory is not the target's convenience, it is the mechanism: the
+// coverage map, the comparison map and the block map are files there that the
+// target maps for writing, and a target that cannot write them reports no
+// coverage at all — which reads as an uninstrumented target rather than as a
+// tight sandbox, and sends whoever meets it looking at their compiler.
+//
+// Untagged, and assembled here rather than inside the one platform that
+// currently wraps, because this is the half of a confinement policy that fails
+// silently. A denied write does not stop a campaign; it makes it find nothing.
+func ConfineWritable(r ConfineRequest) []string {
+	return append([]string{shmDir()}, r.Writable...)
+}
