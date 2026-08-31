@@ -53,4 +53,4 @@ signal should reduce effectiveness, never break the run.
 
 ## Satisfied by
 
-ADR-0002, ADR-0007, ADR-0009, ADR-0026
+ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027

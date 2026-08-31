@@ -688,8 +688,8 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
 
 | Version | Theme | Contents |
 | --- | --- | --- |
-| **v0.2** | Binary-only targets | T5 emulated executor; `frida`, `qemu`, `ptrace-bb` backends; stripped-binary workflow |
-| **v0.3** | Directed + hybrid | Distance feedback and CFG analysis; `CmpLogStage`; value profile; concolic boundary |
+| **v0.2** | Binary-only targets | T5 emulated executor; `frida`, `qemu`, `ptrace-bb` backends; stripped-binary workflow — **done**, see § 7 |
+| **v0.3** | Directed + hybrid | Distance feedback and CFG analysis; `CmpLogStage`; value profile; concolic boundary — **done**, see § 7 |
 | **v0.4** | APIs | Traffic capture (HAR, pcap, recording proxy); data-dependency inference; authorization oracles (ADR-0014) |
 | **v0.5** | TUI and GUI | T7 driver executor; PTY + terminal emulator; UI-state feedback; accessibility drivers (ADR-0013) |
 | **v0.6** | Grammar ecosystem | protobuf, ASN.1, ABNF, Kaitai, JSON Schema, OpenAPI importers |
@@ -844,3 +844,47 @@ that "it passes here" was never evidence for "CI is green", and this row should
 have been checked against the runs rather than inferred. The remedy is
 mechanical and now exists: a release cannot publish without a clean build of
 the tagged commit on a machine that starts from `git clone`.
+
+## 7. v0.2 and v0.3
+
+Both shipped after v0.1, in the order § 5 sequenced them. What each contains,
+what was measured for it, and what it does not cover.
+
+### 7.1 v0.2 — binary-only targets
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| Block recovery from a stripped executable | `pkg/binary` | Decoder agrees with `objdump` over 984,000 instructions; every block in the program's own functions survives `strip`, asserted against the unstripped analysis of the same binary |
+| T5 executor over a `Tracer` interface | `pkg/executor/emulated.go` | Fold is order-aware and refuses to invent edges; portable tests with a fake backend |
+| `ptrace-bb` | `internal/tracer/ptrace.go` | End to end: deeper inputs cover more, the same input covers the same, a crash is a crash, a hang is a hang, a cancelled context stops it |
+| `qemu`, `frida` | `internal/tracer/` | Format readers tested against all three of QEMU's log shapes and both DRcov module-table versions; both backends exercised end to end against stub tools that emit the real formats |
+| Config, probing, `doctor` | `pkg/campaign`, `internal/api` | Validation refuses a binary-only backend under a tier that cannot carry it; `doctor` names what is missing per backend |
+| A finding with no instrumentation | `test/e2e/binary_only_test.go` | 239 executions, 23 coverage entries, 9 corpus entries, one finding, four seconds — against a stripped, uninstrumented target |
+
+**Not covered.** `qemu` and `frida` have not been run against the real tools:
+neither was installed on the machine where they were written. Their format
+readers, command construction, spawn path, rebasing, folding and failure
+reporting are all tested; the tools' own semantics are not. `ptrace-bb` is
+Linux-only and `qemu` needs `qemu-user`; on macOS and Windows the binary-only
+path is still `blackbox` (ADR-0026). `intelpt` and `agent` remain unimplemented.
+
+### 7.2 v0.3 — directed and hybrid
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| Comparison operands in the runtime | `runtime/csrc/xfuzz-rt.c` | ABI asserted by building a real instrumented target and requiring the constants its source compares against to come back out |
+| `CmpLogStage` | `internal/engine/cmplog.go` | Three gates of 32, 64 and 16 bits: bug found with the stage, nothing without, same seed and budget |
+| Value profile | `pkg/feedback/cmplog.go` | An input matching a gate exactly produces new signal where one that does not, does not |
+| Engine stages | `internal/engine/stage.go` | One execute-and-judge path shared by every stage |
+| Distance map and CFG analysis | `pkg/binary/distance.go` | Distance grows with call depth; a function with no route has none; a target address from another build is refused |
+| `DistanceFeedback` and the schedule | `pkg/feedback/directed.go`, `pkg/corpus/schedule.go` | Directed reached 7.00 blocks against undirected's 8.50, both instrumented and scored identically |
+| Concolic boundary | `internal/engine/concolic.go` | A one-second solver costs 1ms over 5000 executions; a failing one leaves the campaign complete; a prolific one cannot wedge it; closing the engine stops it |
+
+**Not covered.** No symbolic backend ships, which is ADR-0007's deferral
+honoured rather than an omission. Directed fuzzing needs block addresses, so it
+works with `sancov` and the three binary-only backends and not with `blackbox`.
+Comparison substitution needs an instrumented build; the memory-comparison hooks
+fire only when the target also carries a sanitizer. A campaign with a solver is
+not reproducible, and one enabling comparison logging pays for it on every
+comparison the target performs, measured as within the noise of a fork-dominated
+benchmark and not measured on a comparison-dominated one.

@@ -223,6 +223,142 @@ one spawn per execution on the same target: 1,420 against 559 executions a
 second. `executor: subprocess` is still there and still always works, which is
 what to reach for if a target dislikes being started before it is needed.
 
+### Coverage without rebuilding it
+
+Black box is not the only option. Xfuzz can watch the program run and work out
+which basic blocks it entered, which gives a coverage-guided campaign against a
+stripped binary with no source, no symbols and nothing linked in:
+
+```yaml
+target:
+  path: ./vendor-binary
+feedback:
+  coverage: ptrace-bb      # or qemu, or frida
+  objectives: [crash, hang, oom, sanitizer]
+```
+
+Nothing else changes. `executor` can stay `auto` — a backend that works by
+watching the process selects the tier that watches it — and the corpus, the
+mutators and the findings behave as they do anywhere else.
+
+| Backend | How | Signal | Needs |
+| --- | --- | --- | --- |
+| `ptrace-bb` | A trap instruction at each block, removed after its first hit | Blocks | Linux, and a kernel that permits ptrace |
+| `qemu` | User-mode emulation, reading the emulator's own execution log | Edges | `qemu-user` installed |
+| `frida` | Dynamic instrumentation through a Stalker agent | Blocks | the `frida` tool installed |
+
+`xfuzz doctor` has a row for each, and says what is missing rather than that a
+backend is unavailable — the useful half of the answer is the package name.
+
+**What it costs.** One to two orders of magnitude of throughput, which is why
+nothing selects these automatically. Measured on a stripped planted-bug target
+over the same forty-five-second window, once watching the process and once
+seeing only its output:
+
+```
+ptrace-bb   7811 execs, 14 corpus entries, 29 coverage entries, 2 findings
+blackbox    9127 execs,  5 corpus entries,                      1 finding
+```
+
+Roughly the same number of executions on this target, nearly three times the
+corpus, twice the findings.
+
+**What it cannot see.** Xfuzz finds the blocks by analysing the binary, and that
+analysis is partial in the ways static analysis always is: an indirect branch —
+a jump table, a virtual call, a function pointer — leads somewhere it cannot
+compute. The campaign's first status line says how many blocks were recovered,
+what fraction of the executable bytes they account for, and how many indirect
+branches defeated the analysis. A target that is mostly indirect branches will
+report coverage with holes in it, and those numbers are how you find that out on
+the first day rather than the fifth.
+
+`qemu` is the exception: the emulator sees every block it runs, including the
+ones the analysis missed, and sees them in order — so it is the one backend here
+that produces edge coverage. It is also the slowest and needs `qemu-user`
+installed.
+
+## Aiming a campaign at one place
+
+Sometimes the question is not "are there bugs" but "can this line be reached" —
+a patch to review, a function a report names, an address from a stack trace.
+Coverage-guided fuzzing answers the first question and is indifferent to the
+second: it spends its budget proportionally across everything it can reach.
+
+A `directed` block changes that:
+
+```yaml
+feedback:
+  coverage: sancov
+  directed:
+    targets:
+      - parse_header          # a function
+      - decode.c:412          # a line from a patch
+      - "0x4015a0"            # an address from a crash report
+    min_reachable: 0.05       # refuse to start if too little of the program can get there
+```
+
+Xfuzz measures, for every basic block, how many blocks away it is from the
+nearest target, and then keeps inputs that came *closer* than anything before
+them — even when they covered nothing new — and spends more of the schedule on
+them.
+
+The first status line reports what it is working with:
+
+```
+directed at 3 location(s); 412 of 1804 blocks reach one (23%), furthest 19
+```
+
+That fraction is the number to read. Direction measured over a small part of the
+program is not direction: every input scores the same, and the campaign looks
+exactly like one that has not made progress yet. `min_reachable` refuses to
+start below a threshold you set, which is better than finding out after a week.
+
+Direction works with `sancov` and with all three binary-only backends, so it
+composes with the previous section: aiming a campaign at a patch in a binary
+nobody can rebuild is the case both features exist for.
+
+## Getting past a magic number
+
+A four-byte magic number is one chance in four billion per attempt. A checksum is
+worse. Mutation does not solve either, because there is nothing to climb: every
+wrong value is equally wrong and coverage stays flat until the exact value
+appears.
+
+If the target was built with `xfuzz-cc`, Xfuzz can read the comparisons the
+program actually performed and write what it wanted into the input:
+
+```yaml
+feedback:
+  coverage: sancov
+  cmplog: true
+  value_profile: true     # also keep inputs that got *closer* to passing
+```
+
+`cmplog` finds the value your input supplied inside your input and substitutes
+the value the program expected — one edit instead of four billion guesses. It
+tries several encodings, because a program that compares an integer did not
+necessarily read it from the input as one: little- and big-endian, decimal, hex,
+and the neighbouring values for comparisons that are not equalities.
+
+`value_profile` is the other half. It treats a comparison that nearly passed as
+new coverage, so a campaign can climb a comparison it cannot jump — which is
+what gets past a checksum, where no single byte is ever individually right. It
+admits a great many inputs, so turn it on when `cmplog` alone is not enough
+rather than by default.
+
+Measured on a target with three gates — 32, 64 and 16 bits wide — from the same
+seed and the same twenty-thousand-execution budget:
+
+```
+with cmplog     14 coverage entries, 5 corpus entries, bug found
+without          6 coverage entries, 2 corpus entries, nothing
+```
+
+Both need an instrumented build; validation refuses the combination rather than
+letting a campaign spend the executions and admit nothing. If you want to measure
+the instrumentation's own cost on your target, `XFUZZ_NO_CMPLOG=1 xfuzz-cc ...`
+builds it without.
+
 ## Fuzzing a network protocol
 
 A campaign becomes stateful when it has a `session` block. Xfuzz then sends a

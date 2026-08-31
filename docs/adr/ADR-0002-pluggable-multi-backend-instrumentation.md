@@ -78,6 +78,18 @@ response-novelty and timing feedback plus randomised scheduling.
   ([ADR-0026](ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md)): Go's
   coverage format has no public reader, and the v0.1 set is `sancov`,
   `forkserver`, and `blackbox`.
+- The three binary-only backends — `ptrace-bb`, `qemu`, `frida` — landed in v0.2.
+  What they return, and why all three return the same thing, is
+  [ADR-0027](ADR-0027-block-traces-are-the-binary-only-currency.md): a block
+  trace in link-time addresses, folded into a coverage map by one shared piece of
+  code. `ptrace-bb` and `frida` resolve blocks rather than edges, and say so, so
+  a campaign cannot require a precision they do not have.
+- `sancov` grew a second and third region in v0.3: comparison operands
+  ([ADR-0028](ADR-0028-comparison-logging-in-the-runtime.md)) and, for a directed
+  campaign, executed block addresses
+  ([ADR-0029](ADR-0029-directed-fuzzing-over-block-distance.md)). Both are
+  separately optional and inert unless attached.
+- `intelpt` and `agent` remain unimplemented.
 
 ## Alternatives considered
 

@@ -62,4 +62,4 @@ validation code unfuzzable.
 
 ## Satisfied by
 
-ADR-0005, ADR-0007, ADR-0010, ADR-0021
+ADR-0005, ADR-0007, ADR-0010, ADR-0021, ADR-0028

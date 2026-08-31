@@ -47,6 +47,9 @@ extended Nygard template.
 | [ADR-0024](ADR-0024-http-json-api-instead-of-grpc.md) | HTTP/JSON API instead of gRPC for v1 | Accepted | ASR-0005, ASR-0012, ASR-0015 |
 | [ADR-0025](ADR-0025-length-prefixed-json-over-stdio-for-plugins.md) | Length-prefixed JSON over stdio for the plugin protocol | Accepted | ASR-0006, ASR-0008, ASR-0009 |
 | [ADR-0026](ADR-0026-gocov-deferred-blackbox-is-the-off-linux-path.md) | `gocov` deferred; `blackbox` is the off-Linux path for v0.1 | Accepted | ASR-0003, ASR-0006 |
+| [ADR-0027](ADR-0027-block-traces-are-the-binary-only-currency.md) | Block traces are the currency of the binary-only tier | Accepted | ASR-0003, ASR-0006, ASR-0007 |
+| [ADR-0028](ADR-0028-comparison-logging-in-the-runtime.md) | Comparison operands travel in their own region, written by the runtime | Accepted | ASR-0004, ASR-0007, ASR-0014 |
+| [ADR-0029](ADR-0029-directed-fuzzing-over-block-distance.md) | Direction is block distance, measured over a recovered graph | Accepted | ASR-0004, ASR-0008, ASR-0012 |
 
 Three ADRs serve no single ASR: **ADR-0018** and **ADR-0019** are project
 constraints (licensing, identity) rather than responses to a requirement, and

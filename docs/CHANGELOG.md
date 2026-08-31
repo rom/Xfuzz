@@ -9,6 +9,123 @@ Until v1.0, minor versions may contain breaking changes to the campaign file
 format, the plugin protocol, and the on-disk store schema. Each such change is
 listed here with its migration path.
 
+## [Unreleased]
+
+### Added — v0.2, binary-only targets (ADR-0002, ADR-0009, ADR-0027)
+
+The tier for a program nobody can rebuild: no source, no symbols, nothing linked
+in. Xfuzz watches it run and works out which basic blocks it entered.
+
+- **`pkg/binary`** reads an ELF, PE or Mach-O executable and recovers its basic
+  blocks. An x86-64 length decoder — not a disassembler; it answers how long an
+  instruction is and whether it changes control flow, and refuses every other
+  question — checked against `objdump` over 984,000 instructions from a Go
+  binary, a C toolchain and bash, with no disagreements. Blocks are found by
+  recursive descent rather than a linear sweep, which decodes jump tables and
+  string literals as though they were code and cannot tell that it did.
+- Descent from the ELF entry point alone finds one block and six per cent of the
+  text on a stripped binary: `_start` does not call `main`, it loads its address
+  into a register, and it reaches libc through a stub that ends in an indirect
+  jump. The unwind tables name every function's start and survive stripping; an
+  address-taken function is named by the `lea` that loads it. Together they
+  recover every block in the program's own functions after `strip`, which is what
+  the test asserts — against the unstripped analysis of the same binary rather
+  than against a chosen number.
+- **`executor.Emulated`**, tier T5, over a `Tracer` interface. Every backend
+  returns a block trace in link-time addresses with an explicit flag for whether
+  the order is meaningful, and one shared fold turns that into a coverage map
+  (ADR-0027). An unordered trace degrades to block coverage rather than
+  manufacturing edges that never happened.
+- **`ptrace-bb`**: a trap instruction at each block start, removed after its
+  first hit so an execution costs one stop per *new* block however long the
+  program runs. No external dependency. Linux only.
+- **`qemu`**: user-mode emulation, reading the stock emulator's own `-d exec`
+  log — no patched build required. The only binary-only backend that yields edge
+  coverage, because the log is a sequence. Recovers a position-independent
+  guest's load address by matching the low twelve bits of traced addresses
+  against the analysed blocks, and reports the executions where it could not.
+- **`frida`**: the `frida` tool and an embedded Stalker agent writing DRcov,
+  driven out of process so the pure-Go core stays pure (ADR-0017) and the
+  dependency stays optional (ADR-0018).
+- `feedback.coverage` takes `ptrace-bb`, `qemu` and `frida`; `target.executor`
+  takes `emulated`, and `auto` selects it. Validation refuses a binary-only
+  backend under any other tier, which would collect no coverage for any input and
+  look like a target with no branches. This tier does not fall back: what sits
+  below it collects nothing, and a campaign told it was fuzzing with coverage
+  while learning nothing is worse than one that refused to start.
+- `xfuzz doctor` reports each backend separately and names what is missing.
+- The campaign's first status line says how many blocks were recovered, what
+  fraction of the executable bytes they account for, and how many indirect
+  branches defeated the analysis.
+
+**Measured**, Linux amd64, through the shipped binaries, against `simple_parser`
+compiled without `xfuzz-cc` and stripped: 239 executions, 23 coverage entries, 9
+corpus entries, one finding, in four seconds. Against black box over the same
+45-second window: 7811 execs / 14 corpus / 2 findings, versus 9127 execs / 5
+corpus / 1 finding.
+
+### Added — v0.3, directed and hybrid fuzzing (ADR-0007, ADR-0028, ADR-0029)
+
+- **Engine stages.** Mutation was the whole loop; it is now one stage among
+  several, with one shared execute-and-judge path so a second copy of the
+  counters and the feedback commit cannot drift from the first.
+- **Comparison logging.** The runtime implements the integer, switch and memory
+  comparison callbacks and writes operands into a region of their own, separately
+  optional from the coverage map and inert unless attached. `CmpLogStage` finds
+  the value the input supplied inside the input and writes the value the program
+  wanted in its place — several encodings and several widths, because a program
+  that compares an integer did not necessarily read it from the input as one, and
+  because C promotes anything narrower than an `int` before comparing it.
+- **Value profiling** treats a comparison that nearly passed as new coverage,
+  measured in bits agreed rather than bytes, which is what carries a campaign
+  through a checksum where no byte is ever individually right.
+- **Directed fuzzing.** A distance map over the interprocedural control-flow
+  graph, targets named as a function, a `file.c:123` or an address, a
+  `DistanceFeedback` that keeps inputs which came closer, and a schedule that
+  spends more of the budget on them. Three refusals rather than three silent
+  degradations — a target address in no recovered block, targets nothing can
+  reach, and a configurable floor on how much of the program can see the target.
+  Works with `sancov` and with all three binary-only backends.
+- **The concolic boundary**: the `Solver` interface, an asynchronous stage that
+  never waits for it, and degradation rather than failure when a solver is slow,
+  broken or absent. No symbolic backend ships — ADR-0007 defers the choice, and a
+  placeholder would answer queries a campaign would believe.
+- New campaign fields: `feedback.cmplog`, `feedback.value_profile`, and a
+  `feedback.directed` block.
+
+**Measured.** Comparison substitution, on a target whose three gates are 32, 64
+and 16 bits wide, from the same seed and a 20,000-execution budget: with the
+stage, 14 coverage entries and the bug found; without, 6 entries and nothing.
+Direction, on a target whose bug is four calls down one branch of twelve, with
+both campaigns instrumented and scored identically so only the guidance differs:
+closest 7.00 blocks directed against 8.50 undirected. A one-second-per-query
+solver left 5000 executions taking 7ms against a 6ms baseline.
+
+### Changed
+
+- `xfuzz-cc` adds `trace-cmp` to the default instrumentation. Measured back to
+  back on the same machine, a fork-dominated benchmark ran at 3246 exec/s with it
+  and 3323 without — within the noise of that measurement. `XFUZZ_NO_CMPLOG=1`
+  removes it by name.
+- `binary.Block` records every call a block makes rather than the last one. As
+  one field it was overwritten by each call, and on an instrumented binary the
+  first is always the coverage callback — so almost every block recorded an edge
+  to a sanitizer helper and every real call edge was lost.
+- `xfuzzrt.Hello` said `XFZ1` while the runtime and the fork server had both
+  moved to `XFZ2`. Nothing used that copy, so nothing broke; the first caller to
+  reach for it would have rejected every working target.
+
+### Fixed
+
+- `TestTiersAreOrderedAsADR0009Claims` asserted a 1.2x margin for T3 over T4 and
+  failed CI twice. The pool's advantage needs a spare core to overlap on, and
+  core count is not the same as a core being free. ADR-0009 claims an ordering,
+  so the ordering is what is asserted; the size of the win is logged.
+- `TestSecurityWriteOutsideWorkdir` asserted containment that needs a separate
+  identity, guarded only on user namespaces being available. An unprivileged
+  fuzzer cannot give its target one, so the containment half now runs as root
+  only and the half that holds everywhere runs unconditionally (ADR-0022).
+
 ## [0.1.0] — 2026-08-31
 
 The first release. Eight milestones and a release audit; every clause of the

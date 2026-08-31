@@ -88,8 +88,16 @@ require a minimum tier.
 
 **Neutral**
 
-- v1 implements T0, T2, T3, T4, and T6 (ADR-0020); the rest are phased. The
-  interface is fixed in v1 so later tiers are additions, not retrofits.
+- v0.1 implemented T0, T2, T3, T4, and T6 (ADR-0020). T5 landed in v0.2, over
+  three backends that all return a block trace rather than a coverage map
+  ([ADR-0027](ADR-0027-block-traces-are-the-binary-only-currency.md)); the
+  interface needed no change to accommodate it, which is what the tier table was
+  fixed early for. T1 and T7 remain phased.
+- T3's advantage over T4 rests on an unstated precondition, stated here after it
+  failed twice in CI: the pool's whole trick is creating the next process while
+  the current one runs, and that overlap needs a spare core. Given one, the win
+  is large; on a saturated machine the two converge. The ordering in the table
+  holds regardless — T3 is never *slower* — and that is what is asserted.
 
 ## Alternatives considered
 

@@ -713,18 +713,18 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 | --- | --- |
 | ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014 |
 | ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
-| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026 |
-| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013 |
+| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027 |
+| ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
-| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026 |
-| ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021 |
-| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025 |
+| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026, ADR-0027 |
+| ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021, ADR-0027, ADR-0028 |
+| ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029 |
 | ASR-0009 Extensibility | ADR-0010, ADR-0025 |
 | ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022 |
 | ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021 |
-| ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024 |
+| ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024, ADR-0029 |
 | ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008 |
-| ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021 |
+| ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021, ADR-0028 |
 | ASR-0015 Operability and deployment | ADR-0003, ADR-0008, ADR-0011, ADR-0015, ADR-0016, ADR-0017, ADR-0023, ADR-0024 |
 
 Three ADRs appear in no row: **ADR-0018** (licensing) and **ADR-0019** (module

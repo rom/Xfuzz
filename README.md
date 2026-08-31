@@ -54,6 +54,15 @@ Xfuzz factors delivery and observation out, so one engine serves all of them.
 - **Composable guidance.** Coverage-guided, directed, feedback-driven, and hybrid
   are not modes to pick between; they compose. "Cover broadly, weight toward this
   patch, and treat any 500 as interesting" is one campaign.
+- **Binaries you cannot rebuild.** Coverage from a stripped executable with no
+  source and nothing linked in, by watching it run — breakpoints, user-mode
+  emulation, or dynamic instrumentation. It costs one to two orders of magnitude
+  of throughput and it is reported honestly: how much of the program the analysis
+  could see, and how much it could not.
+- **Past the magic number.** The target's own comparison operands are read back
+  and written into the input, so a four-byte constant is one edit rather than
+  four billion guesses — and a comparison that nearly passed counts as progress,
+  which is what gets a campaign through a checksum.
 - **Findings, not crash files.** Asynchronous triage: classify, bucket, minimise,
   verify reproducibility.
 - **Safe by default.** Targets are sandboxed and outbound traffic is

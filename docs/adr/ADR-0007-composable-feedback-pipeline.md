@@ -90,6 +90,23 @@ deliberately **deferred** to a later ADR.
 
 - Concolic backend selection (native tracer vs. external SMT solver integration).
 
+**Realised in v0.3**
+
+- `CmpLogStage` and value profiling, over comparison operands the runtime writes
+  into a region of their own
+  ([ADR-0028](ADR-0028-comparison-logging-in-the-runtime.md)). The engine gained
+  an ordered stage list to hold them: mutation was the whole loop until there was
+  something to run beside it.
+- `DistanceFeedback`, the offline distance artifact, and the distance-weighted
+  schedule ([ADR-0029](ADR-0029-directed-fuzzing-over-block-distance.md)),
+  including the staleness rule this record asked for.
+- The `ConcolicStage` boundary — the `Solver` interface, the asynchronous
+  machinery that keeps it off the loop, and the degradation rules. No symbolic
+  backend ships, which is this record's deferral honoured rather than worked
+  around: a placeholder behind that boundary would answer queries and a campaign
+  would believe it. A campaign with a solver is not reproducible, and that is
+  stated rather than hidden.
+
 ## Alternatives considered
 
 - **Mode-selected engines.** Simpler per-mode mental model. Rejected: it

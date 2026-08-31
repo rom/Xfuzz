@@ -102,6 +102,8 @@ documented bugs at graded difficulty:
 | --- | --- | --- | --- |
 | `simple_parser` | 3 | shallow | Basic mutation, crash detection |
 | `magic_parser` | 4 | magic values | CmpLog, dictionary, value profile |
+| `magic_cmp` | 1 | 32-, 64- and 16-bit gates | Comparison substitution alone: unreachable by mutation, so a finding proves the substitution worked |
+| `deep_target` | 1 | one branch of twelve | Directed fuzzing: a bug four calls down one branch, with siblings that produce coverage and lead nowhere |
 | `chunked_format` | 5 | checksum-gated | Structured IR, fixups |
 | `nested_grammar` | 4 | deep structure | Grammar generation, tree mutation |
 | `stateful_proto` | 4 | sequence-gated | Session tier, protocol state feedback, state-then-message scheduling |
@@ -119,6 +121,16 @@ Each bug has a documented expected time-to-discovery budget. The test asserts:
 
 A fuzzer that cannot find a planted bug is broken, regardless of what the unit
 tests say.
+
+Two of these targets are measured by *comparison* rather than by a budget, and
+that is deliberate. `magic_cmp` and `deep_target` are about guidance, and a
+single run says nothing about guidance: a bug a coverage-guided campaign can also
+reach proves nothing, and one it cannot proves only that this seed did not. So
+each is fuzzed twice from the same seed with the same budget, with the feature
+under test as the only difference, and the two runs are compared. For
+`deep_target` both campaigns are even instrumented identically and scored against
+the same distance map, so the comparison isolates the guidance rather than
+confounding it with the instrumentation's cost.
 
 **Over-fitting** is the known hazard: the fuzzer gets good at *these* bugs.
 Mitigated by graded difficulty, periodic target rotation, and cross-checking

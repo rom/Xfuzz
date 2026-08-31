@@ -60,4 +60,4 @@ requirement rather than an aspiration.
 
 ## Satisfied by
 
-ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021
+ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021, ADR-0027, ADR-0028
