@@ -238,7 +238,7 @@ func (s *Spawner) command(spec executor.ProcSpec, forks bool) (*exec.Cmd, error)
 // window is microseconds and the alternative is no limit at all, but it is a
 // real gap and it is why v1 does not count towards the strong level.
 func (s *Spawner) placeInCgroup(cmd *exec.Cmd) {
-	cg := s.sandbox().cgroup
+	cg := s.sandbox().currentCgroup()
 	if cg == nil || cg.Mode() != platform.CgroupV1 || cmd.Process == nil {
 		return
 	}

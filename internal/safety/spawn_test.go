@@ -144,3 +144,51 @@ func TestHandleDoesNotSignalAfterItHasBeenReaped(t *testing.T) {
 		t.Errorf("Kill after reaping returned %v; it should decline quietly", err)
 	}
 }
+
+func TestOneSpawnerServesConcurrentSpawns(t *testing.T) {
+	// A Spawner is shared by every worker in a campaign, so it has always been
+	// required to be safe under concurrent use. Nothing exercised that: until
+	// the T3 pool, spawns were serial per worker, and the unsynchronised read
+	// of the sandbox's cgroup sat latent behind a locked write.
+	//
+	// It surfaced on macOS under -race, in a contributor's first build, rather
+	// than in any of this project's own runs. Concurrency this test creates
+	// deliberately is worth more than concurrency a scheduler happens to
+	// produce.
+	sp := NewSpawner()
+	sb := &Sandbox{}
+	sp.Sandbox = sb
+	t.Cleanup(func() { sb.Close() })
+
+	// Looked up rather than hardcoded, for the reason the rest of this suite
+	// does it: /bin/true exists on Linux and not on macOS, where it is
+	// /usr/bin/true.
+	target, err := exec.LookPath("true")
+	if err != nil {
+		t.Skip("no true(1) on this host")
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	start := make(chan struct{})
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // release them together, so the spawns actually overlap
+			if _, err := sp.Run(context.Background(), executor.ProcSpec{
+				Path: target, Args: []string{target}, Timeout: 10 * time.Second,
+			}); err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("concurrent spawn: %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,22 @@ import (
 
 	"github.com/rom/Xfuzz/pkg/executor"
 )
+
+// trueBin is a harmless executable that really exists on this host.
+//
+// Not the literal "/bin/true". That is where Linux keeps it; macOS keeps it at
+// /usr/bin/true, so the hardcoded path made these tests fail there for a reason
+// with nothing to do with what they check — campaign validation stats
+// target.path, and a spawner has to be able to execute it. ASR-0006 makes the
+// three platforms equal, and a test suite that only runs on one of them is a
+// cross-platform claim nobody is checking. The product code already looks this
+// up (internal/safety.probeReadOnlyRoot); only the tests hardcoded it.
+var trueBin = func() string {
+	if p, err := exec.LookPath("true"); err == nil {
+		return p
+	}
+	return "/bin/true"
+}()
 
 // fakeHandle is a worker process that exists only as a pair of pipes, so
 // supervision can be tested without spawning anything.
@@ -126,7 +143,7 @@ func TestSupervisorPumpsMessages(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: "/bin/true"}); err != nil {
+	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: trueBin}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +173,7 @@ func TestSupervisorDeliversCommandsToTheWorker(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := sup.Start(ctx, WorkerSpec{ID: 3, Binary: "/bin/true"}); err != nil {
+	if err := sup.Start(ctx, WorkerSpec{ID: 3, Binary: trueBin}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return len(sup.Status()) == 1 && sup.Status()[0].State == WorkerRunning },
@@ -192,7 +209,7 @@ func TestSupervisorRestartsACasualty(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: "/bin/true"}); err != nil {
+	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: trueBin}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return sp.starts.Load() >= 1 }, "the worker never started")
@@ -247,7 +264,7 @@ func TestSupervisorBroadcastSkipsTheOriginator(t *testing.T) {
 	defer cancel()
 	for id := 0; id < 2; id++ {
 		if err := sup.Start(ctx, WorkerSpec{
-			ID: id, Binary: "/bin/true", Args: []string{"--worker", strconv.Itoa(id)},
+			ID: id, Binary: trueBin, Args: []string{"--worker", strconv.Itoa(id)},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -295,7 +312,7 @@ func TestSupervisorStopAsksBeforeKilling(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: "/bin/true"}); err != nil {
+	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: trueBin}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return sup.Healthy() == 1 }, "the worker never started")
@@ -444,7 +461,7 @@ func TestSendNeverBlocksOnAWorkerThatStoppedReading(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: "/bin/true"}); err != nil {
+	if err := sup.Start(ctx, WorkerSpec{ID: 0, Binary: trueBin}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return sup.Healthy() == 1 }, "the worker never started")
@@ -485,7 +502,7 @@ func TestStopWaitsForEveryWorkerNotJustTheFirst(t *testing.T) {
 	defer cancel()
 	for id := range handles {
 		if err := sup.Start(ctx, WorkerSpec{
-			ID: id, Binary: "/bin/true", Args: []string{"--worker", strconv.Itoa(id)},
+			ID: id, Binary: trueBin, Args: []string{"--worker", strconv.Itoa(id)},
 		}); err != nil {
 			t.Fatal(err)
 		}

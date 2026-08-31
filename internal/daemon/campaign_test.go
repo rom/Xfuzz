@@ -88,7 +88,7 @@ func newFixture(t *testing.T, yaml string, workers int) *fixture {
 
 	bus := NewBus(0)
 	c, err := NewCampaign(context.Background(), cfg, CampaignOptions{
-		Store: st, Bus: bus, Spawner: sp, WorkerBinary: "/bin/true", WorkDir: dir,
+		Store: st, Bus: bus, Spawner: sp, WorkerBinary: trueBin, WorkDir: dir,
 		Seed: 0x5EED,
 	})
 	if err != nil {

@@ -17,7 +17,7 @@ import (
 // path on the daemon's filesystem, and that refusal is part of what is under
 // test here.
 func FuzzParse(f *testing.F) {
-	f.Add([]byte("name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\n"))
+	f.Add([]byte("name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\n"))
 	f.Add([]byte("name: c\nprofiles:\n  quick:\n    stop:\n      after: 1m\n"))
 	f.Add([]byte("name: c\nextensions:\n  - name: p\n    command: ./p\n    feedbacks: [f]\n"))
 	f.Add([]byte("name: c\nscripts:\n  - name: s\n    path: s.star\n    objectives: [check]\n"))

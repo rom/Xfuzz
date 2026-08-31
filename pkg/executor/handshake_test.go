@@ -87,7 +87,7 @@ func startWithReply(t *testing.T, reply []byte) (*ForkServer, *scriptedHandle, e
 	t.Helper()
 	h := newScriptedHandle(t, reply)
 	fs := NewForkServer("fs", &scriptedSpawner{handle: h},
-		ProcSpec{Path: "/bin/true", Args: []string{"/bin/true"}})
+		ProcSpec{Path: trueBin, Args: []string{trueBin}})
 	// Short, because these tests are about what a bad handshake does rather
 	// than about how long a good one may take.
 	fs.HandshakeTimeout = 250 * time.Millisecond

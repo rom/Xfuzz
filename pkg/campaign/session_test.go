@@ -77,14 +77,14 @@ func TestParseTransition(t *testing.T) {
 // loadSession parses a session campaign and returns it resolved.
 func loadSession(t *testing.T, body string) (*Resolved, error) {
 	t.Helper()
-	doc := "name: s\ntarget:\n  path: /bin/true\n" + body
+	doc := "name: s\ntarget:\n  path: " + trueBin + "\n" + body
 	return Parse([]byte(doc), "t.yaml")
 }
 
 func TestSessionDefaultsApplyOnlyToSessionCampaigns(t *testing.T) {
 	// A file campaign gets no session block, so `explain` does not show it an
 	// address and a reset policy that mean nothing.
-	plain, err := Parse([]byte("name: s\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\n"), "t.yaml")
+	plain, err := Parse([]byte("name: s\ntarget:\n  path: "+trueBin+"\nseeds:\n  inline: [\"a\"]\n"), "t.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestSessionValidationCatchesTheWaysItGoesWrong(t *testing.T) {
 // A state block with no session configures machinery nothing will run, which is
 // worth saying rather than ignoring.
 func TestStateWithoutASessionIsRefused(t *testing.T) {
-	_, err := Parse([]byte("name: s\ntarget:\n  path: /bin/true\nstate:\n  fn: status\nseeds:\n  inline: [\"a\"]\n"), "t.yaml")
+	_, err := Parse([]byte("name: s\ntarget:\n  path: "+trueBin+"\nstate:\n  fn: status\nseeds:\n  inline: [\"a\"]\n"), "t.yaml")
 	if err == nil || !strings.Contains(err.Error(), "state") {
 		t.Fatalf("a state block with no session gave %v", err)
 	}

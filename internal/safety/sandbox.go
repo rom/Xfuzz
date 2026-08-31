@@ -536,7 +536,7 @@ func (s *Sandbox) TargetIdentity() (uid, gid int) {
 // namespace created alongside a user namespace inherits its mounts *locked* on
 // many configurations, and a locked mount cannot be remounted read-only. The
 // only reliable way to know is to try it once, which is what this does — with
-// /bin/true as the target, so the probe costs one process.
+// true(1) as the target, looked up on PATH, so the probe costs one process.
 //
 // Asking the helper for a read-only root that cannot be built would fail every
 // execution of the campaign. Not asking for one that could be built would give
@@ -698,6 +698,22 @@ func (s *Sandbox) ensureCgroup() *platform.Cgroup {
 	}
 	s.cgroup = cg
 	return cg
+}
+
+// currentCgroup returns the cgroup if one has been created, without creating
+// one.
+//
+// It exists because reading s.cgroup directly is a data race and was one:
+// ensureCgroup writes the field under the mutex, and a caller that reads it
+// bare is unsynchronised against that write however harmless the read looks.
+// Two spawns have to overlap for it to matter, which is why it stayed latent
+// until the T3 pool started refilling on a goroutine while the calling
+// execution spawned inline — a Spawner is shared by every worker in a
+// campaign, so it was always required to be safe here.
+func (s *Sandbox) currentCgroup() *platform.Cgroup {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cgroup
 }
 
 // Close releases the sandbox's resources.

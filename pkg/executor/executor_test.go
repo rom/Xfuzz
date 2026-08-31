@@ -3,12 +3,29 @@ package executor
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rom/Xfuzz/pkg/feedback"
 )
+
+// trueBin is a harmless executable that really exists on this host.
+//
+// Not the literal "/bin/true". That is where Linux keeps it; macOS keeps it at
+// /usr/bin/true, so the hardcoded path made these tests fail there for a reason
+// with nothing to do with what they check — campaign validation stats
+// target.path, and a spawner has to be able to execute it. ASR-0006 makes the
+// three platforms equal, and a test suite that only runs on one of them is a
+// cross-platform claim nobody is checking. The product code already looks this
+// up (internal/safety.probeReadOnlyRoot); only the tests hardcoded it.
+var trueBin = func() string {
+	if p, err := exec.LookPath("true"); err == nil {
+		return p
+	}
+	return "/bin/true"
+}()
 
 // Tests here cover the pure logic: capability reporting, input delivery,
 // in-process execution, and wait-status decoding. Anything that starts a real
@@ -268,7 +285,7 @@ func (f *fakeSpawner) StartPeer(context.Context, ProcSpec) (Peer, error) {
 
 func TestSubprocessDeliversByStdin(t *testing.T) {
 	sp := &fakeSpawner{}
-	e := NewSubprocess("sub", sp, ProcSpec{Path: "/bin/true", Args: []string{"/bin/true"}})
+	e := NewSubprocess("sub", sp, ProcSpec{Path: trueBin, Args: []string{trueBin}})
 	defer e.Close()
 
 	if _, err := e.Run(context.Background(), Input{Bytes: []byte("payload")}, nil); err != nil {
@@ -341,7 +358,7 @@ func TestSubprocessDeliversByArgument(t *testing.T) {
 
 func TestSubprocessPublishesTheSharedRegion(t *testing.T) {
 	sp := &fakeSpawner{}
-	e := NewSubprocess("sub", sp, ProcSpec{Path: "/bin/true"})
+	e := NewSubprocess("sub", sp, ProcSpec{Path: trueBin})
 	e.Shm = fakeShm{id: "/dev/shm/xfuzz-test"}
 	defer e.Close()
 
@@ -387,7 +404,7 @@ func TestSubprocessRecordsOutputAndTiming(t *testing.T) {
 	}}
 	out := feedback.NewOutputObserver("out")
 	timing := feedback.NewTimingObserver("time")
-	e := NewSubprocess("sub", sp, ProcSpec{Path: "/bin/true"})
+	e := NewSubprocess("sub", sp, ProcSpec{Path: trueBin})
 	e.Output = out
 	defer e.Close()
 

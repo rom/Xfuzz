@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +12,22 @@ import (
 	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/feedback"
 )
+
+// trueBin is a harmless executable that really exists on this host.
+//
+// Not the literal "/bin/true". That is where Linux keeps it; macOS keeps it at
+// /usr/bin/true, so the hardcoded path made these tests fail there for a reason
+// with nothing to do with what they check — campaign validation stats
+// target.path, and a spawner has to be able to execute it. ASR-0006 makes the
+// three platforms equal, and a test suite that only runs on one of them is a
+// cross-platform claim nobody is checking. The product code already looks this
+// up (internal/safety.probeReadOnlyRoot); only the tests hardcoded it.
+var trueBin = func() string {
+	if p, err := exec.LookPath("true"); err == nil {
+		return p
+	}
+	return "/bin/true"
+}()
 
 // These exercise the executor tiers against real processes. They live under
 // internal/ because pkg/ cannot import the safety layer, and the safety layer
@@ -163,11 +180,11 @@ func TestForkServerRejectsAnUninstrumentedTarget(t *testing.T) {
 	if !haveClang() {
 		t.Skip("clang is not installed")
 	}
-	// /bin/true is a real program with no Xfuzz runtime. The handshake must fail
+	// true(1) is a real program with no Xfuzz runtime. The handshake must fail
 	// with an error naming the cause, because the alternative is a campaign that
 	// runs for a week against a target it was never actually driving.
 	fs := executor.NewForkServer("fs", safety.NewSpawner(), executor.ProcSpec{
-		Path: "/bin/true", Args: []string{"/bin/true"},
+		Path: trueBin, Args: []string{trueBin},
 	})
 	defer fs.Close()
 

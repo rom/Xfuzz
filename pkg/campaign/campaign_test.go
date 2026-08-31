@@ -3,11 +3,28 @@ package campaign
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+// trueBin is a harmless executable that really exists on this host.
+//
+// Not the literal "/bin/true". That is where Linux keeps it; macOS keeps it at
+// /usr/bin/true, so the hardcoded path made these tests fail there for a reason
+// with nothing to do with what they check — campaign validation stats
+// target.path, and a spawner has to be able to execute it. ASR-0006 makes the
+// three platforms equal, and a test suite that only runs on one of them is a
+// cross-platform claim nobody is checking. The product code already looks this
+// up (internal/safety.probeReadOnlyRoot); only the tests hardcoded it.
+var trueBin = func() string {
+	if p, err := exec.LookPath("true"); err == nil {
+		return p
+	}
+	return "/bin/true"
+}()
 
 // target writes an executable stub, so validation has something real to stat.
 func target(t *testing.T, dir string) string {
@@ -708,29 +725,29 @@ func TestAScriptStateFunctionMustNameAScriptTheCampaignDeclares(t *testing.T) {
 	}{
 		{
 			name: "no script named",
-			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: nope:label\n",
+			body: "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: nope:label\n",
 			want: "no script named",
 		},
 		{
 			name: "no reference at all",
-			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n",
+			body: "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n",
 			want: "is required when state.fn is script",
 		},
 		{
 			name: "not a reference",
-			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: label\n" +
+			body: "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: label\n" +
 				"scripts:\n  - name: s\n    path: s.star\n    objectives: [check]\n",
 			want: "is not a script reference",
 		},
 		{
 			name: "set without the function",
-			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: status\n  script: s:label\n" +
+			body: "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: status\n  script: s:label\n" +
 				"scripts:\n  - name: s\n    path: s.star\n    objectives: [check]\n",
 			want: "is set but state.fn is",
 		},
 		{
 			name: "a script nothing uses",
-			body: "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\n" +
+			body: "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\n" +
 				"scripts:\n  - name: s\n    path: s.star\n",
 			want: "names no objectives or mutators",
 		},
@@ -748,7 +765,7 @@ func TestAScriptStateFunctionMustNameAScriptTheCampaignDeclares(t *testing.T) {
 }
 
 func TestAScriptStateFunctionIsAcceptedWhenItsScriptExists(t *testing.T) {
-	body := "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: s:label\n" +
+	body := "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\nsession:\n  address: tcp:127.0.0.1:9\nstate:\n  fn: script\n  script: s:label\n" +
 		"scripts:\n  - name: s\n    path: s.star\n"
 	if err := validateBody(t, body); err != nil {
 		t.Fatalf("a campaign whose state function comes from a declared script was refused: %v", err)
@@ -821,7 +838,7 @@ func TestASizeRoundTripsThroughTheFileInTheUnitItWasWritten(t *testing.T) {
 func TestAPlainByteCountStillWorks(t *testing.T) {
 	// Every campaign file written before sizes had units keeps working, which
 	// is the reason a bare number is still accepted.
-	body := "name: c\ntarget:\n  path: /bin/true\nseeds:\n  inline: [\"a\"]\n" +
+	body := "name: c\ntarget:\n  path: " + trueBin + "\nseeds:\n  inline: [\"a\"]\n" +
 		"safety:\n  memory_limit: 2147483648\nstorage:\n  max_corpus_bytes: 1GB\n"
 	path := filepath.Join(t.TempDir(), "c.yaml")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
