@@ -49,6 +49,11 @@ says why anything is missing. The two lines to look at before anything else:
 - **`shared-memory`** — without it there is no coverage map, so only black-box
   campaigns are possible. That is the normal state of affairs on Windows.
 
+If you mean to fuzz a terminal program, look at **`pseudo-terminal`** too. It is
+the one capability whose absence has no symptom: over pipes a curses program
+still starts and still draws something, and it is a different program from the
+one anybody runs.
+
 `isolation` says how much confinement this host can provide: `none`, `minimal`,
 `moderate` or `strong`. A campaign that asks for more than the host has refuses
 to start rather than running unconfined and saying nothing.

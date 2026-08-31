@@ -46,6 +46,19 @@ Xfuzz factors delivery and observation out, so one engine serves all of them.
   offsets, checksums — recomputed after every mutation, so inputs survive
   validation instead of dying in the first CRC check. Each fixup is suppressible,
   so the validation code is fuzzable too.
+- **A screen is a state.** A terminal program is driven on a real pseudo-terminal
+  with an emulator watching what it draws, and a novel screen — or a novel move
+  between two screens — is new coverage. It is the same state machine a protocol
+  campaign builds, with a state function that reads a screen.
+- **Captured traffic, not a specification.** An API campaign starts from a
+  recording: it carries the requests a client actually sends, the values that
+  chain between them, and the identity they were sent as. A specification has
+  none of those, which is why replaying one identity's session as another is a
+  class of finding only a capture makes reachable.
+- **Grammars you did not have to write.** ABNF from an RFC, a Kaitai definition
+  from a hex editor, a `.proto`, an OpenAPI document, a JSON Schema, an ASN.1
+  module — imported to a grammar, with a report of everything the import could
+  not translate.
 - **State as a signal.** For stateful targets, new protocol states and transitions
   are as interesting as new code edges — and the state model can be inferred from
   responses, so it works black-box. Protocol coverage is reported beside code

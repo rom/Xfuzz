@@ -991,6 +991,17 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 	// concludes that stripped binaries are not supported.
 	cs = append(cs, binaryOnlyCapabilities()...)
 
+	// The pseudo-terminal, which is what a T7 terminal campaign needs and the
+	// one capability whose absence has no symptom: over pipes a curses program
+	// starts, draws something, and is a different program from the one anybody
+	// runs (ADR-0030). Probed rather than assumed from the platform — a
+	// container without /dev/pts mounted has a kernel that supports them and a
+	// filesystem that will not hand one over.
+	cs = append(cs, Capability{
+		Name: "pseudo-terminal", Available: safety.PTYSupported(),
+		Detail: ptyDetail(),
+	})
+
 	// The three things a new install gets wrong that the mechanism checks
 	// above do not cover. Each is something someone hits on their first
 	// campaign and cannot diagnose from the failure it produces.
@@ -1009,6 +1020,20 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 		Capabilities: cs,
 		Notes:        caps.Notes,
 	})
+}
+
+// ptyDetail says what a missing pseudo-terminal costs and, where it can, why it
+// is missing.
+func ptyDetail() string {
+	if safety.PTYSupported() {
+		return "terminal programs can be driven with a real controlling terminal (tier T7)"
+	}
+	if runtime.GOOS == "windows" {
+		return "Windows has ConPTY and Xfuzz does not implement it yet; there is no " +
+			"terminal driver on this platform, and pipes are not a substitute"
+	}
+	return "no /dev/ptmx or no writable /dev/pts: a terminal campaign cannot run here, " +
+		"and over pipes isatty is false and the program under test behaves differently"
 }
 
 func cgroupDetail(mode string) string {
