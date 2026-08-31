@@ -44,10 +44,14 @@ type File struct {
 	// incomplete, and ADR-0016 exists to prevent exactly that. Pinning it makes
 	// a campaign a replayable experiment rather than one that happens once.
 	//
-	// A uint64 in YAML, where it is exact — the same value crosses the HTTP API
-	// as a string, because a JSON number is an IEEE double and a seed that
-	// loses its low bits produces a campaign that does not replay.
-	Seed uint64 `yaml:"seed,omitempty" json:"seed,omitempty,string" doc:"Root RNG seed. Absent draws one; pinning it makes the campaign reproducible."`
+	// A plain integer here, because YAML holds a 64-bit one exactly and the
+	// published JSON Schema says `"type": "integer"`. The IEEE-double problem
+	// is real but it belongs to JSON, and it is solved where JSON is actually
+	// spoken: `internal/api.Seed64` on the way in and `daemon.Status.Seed` on
+	// the way out. Encoding it as a string here as well would contradict the
+	// schema this project ships and reject a document that validates against
+	// it.
+	Seed uint64 `yaml:"seed,omitempty" json:"seed,omitempty" doc:"Root RNG seed. Absent draws one; pinning it makes the campaign reproducible."`
 
 	// Include lists other campaign files merged in before this one, so a house
 	// safety scope or a standard mutator set is reused rather than copied.
