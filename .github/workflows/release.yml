@@ -1,0 +1,195 @@
+# Xfuzz release — builds the shipped binaries and publishes them for a tag.
+#
+# Clause 10 of the v0.1 definition of done is that a new user can install one
+# binary and reach a first finding. That is a claim about a *download*, so the
+# release has to produce one for every platform ADR-0020 scopes: a user on
+# macOS or Windows who is told to build from source has not been given what
+# clause 10 promises.
+#
+# Everything is built with CGO_ENABLED=0. ADR-0017 makes the pure-Go build the
+# one that must always work, and a static binary is what makes "install one
+# binary" true rather than "install one binary and its libc".
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (must already exist)'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  # The gate. A tag is not a release until the suite that judges it has run
+  # against the exact commit being shipped — CI on the branch is not the same
+  # claim, since a tag can point anywhere.
+  verify:
+    name: verify the tagged commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: lint
+        run: make lint
+      - name: test
+        run: make test
+      - name: every platform compiles without cgo
+        run: make cross
+
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { goos: linux,   goarch: amd64 }
+          - { goos: linux,   goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # The version is `git describe --tags`, so the tag has to be here.
+          # A shallow clone without tags stamps every binary 0.0.0-dev.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          version=$(git describe --tags --always)
+          commit=$(git rev-parse --short HEAD)
+          date=$(git log -1 --format=%cI)
+          module=github.com/rom/Xfuzz
+          out="xfuzz-${version}-${GOOS}-${GOARCH}"
+          mkdir -p "dist/$out"
+
+          # xfuzz-sandbox is Linux-only: it is the confinement helper of
+          # ADR-0022, and there are no namespaces for it to enter elsewhere.
+          # Shipping a stub that cannot confine would be worse than shipping
+          # nothing, because `xfuzz doctor` would then find it and report a
+          # capability the platform does not have.
+          cmds="xfuzz xfuzzd xfuzz-worker xfuzz-cc"
+          if [ "$GOOS" = "linux" ]; then cmds="$cmds xfuzz-sandbox"; fi
+
+          for c in $cmds; do
+            ext=""; [ "$GOOS" = "windows" ] && ext=".exe"
+            go build -trimpath \
+              -ldflags "-s -w \
+                -X ${module}/internal/version.Version=${version} \
+                -X ${module}/internal/version.Commit=${commit} \
+                -X ${module}/internal/version.Date=${date}" \
+              -o "dist/$out/${c}${ext}" "./cmd/$c"
+          done
+
+          cp README.md LICENSE* docs/GUIDE.md docs/CHANGELOG.md "dist/$out/" 2>/dev/null || true
+
+          cd dist
+          if [ "$GOOS" = "windows" ]; then
+            zip -qr "${out}.zip" "$out"
+          else
+            tar -czf "${out}.tar.gz" "$out"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.goos }}-${{ matrix.goarch }}
+          # Listed rather than brace-expanded: upload-artifact globs do not
+          # expand braces, and `dist/*.{tar.gz,zip}` matches nothing at all.
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: notes from the changelog
+        run: |
+          set -euo pipefail
+          tag="${{ inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          # The version's summary: from its heading to the first subsection,
+          # which is the prose written for a reader rather than the itemised
+          # record beneath it.
+          #
+          # Deliberately not the whole section. On a first release the whole
+          # section is the whole file — every milestone lives under one version
+          # heading — and 1,400 lines of release notes is a page nobody scrolls.
+          # Written from the file rather than generated from the commit log,
+          # because the changelog is what somebody curated and generated notes
+          # would bury the entries that matter among the ones that do not.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]"    { inside = 1; next }
+            inside && /^(## \[|### )/ { exit }
+            inside                    { print }
+          ' docs/CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "::error::docs/CHANGELOG.md has no section for [$version]"
+            exit 1
+          fi
+          {
+            echo
+            echo "The full record for this version — everything added, fixed and"
+            echo "known to be wrong — is in [docs/CHANGELOG.md](https://github.com/${{ github.repository }}/blob/${tag}/docs/CHANGELOG.md)."
+            echo
+            echo "---"
+            echo
+            echo "Every archive holds \`xfuzz\`, \`xfuzzd\`, \`xfuzz-worker\` and \`xfuzz-cc\`;"
+            echo "Linux also holds \`xfuzz-sandbox\`, the confinement helper, which has"
+            echo "nothing to do on a platform without namespaces. Static, pure-Go builds"
+            echo "(\`CGO_ENABLED=0\`). SHA-256 checksums are in \`SHA256SUMS\`."
+            echo
+            echo "Start with [the guide](https://github.com/${{ github.repository }}/blob/${tag}/docs/GUIDE.md):"
+            echo "\`xfuzz init\`, \`xfuzz validate\`, \`xfuzz run\`."
+          } >> notes.md
+
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag || github.ref_name }}" \
+            --title "${{ inputs.tag || github.ref_name }}" \
+            --notes-file notes.md \
+            dist/*.tar.gz dist/*.zip dist/SHA256SUMS

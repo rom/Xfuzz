@@ -9,7 +9,28 @@ Until v1.0, minor versions may contain breaking changes to the campaign file
 format, the plugin protocol, and the on-disk store schema. Each such change is
 listed here with its migration path.
 
-## [Unreleased]
+## [0.1.0] — 2026-08-31
+
+The first release. Eight milestones and a release audit; every clause of the
+definition of done is recorded with what was run for it in `docs/MVP_PLAN.md`
+§ 6.1, and what those clauses do not cover in § 6.2.
+
+**What it does.** Point it at a program that reads input and it fuzzes it —
+file formats, CLI tools, and one network protocol, black-box or coverage-guided,
+on Linux, macOS and Windows. A campaign is a YAML file rather than a shell
+invocation, so what ran is a reviewable artefact; pin its `seed:` and it is a
+repeatable experiment. Findings are verified, minimised and bucketed rather
+than dumped as crash files, and a finding's store carries to another machine
+and still replays. Extend it with a plugin in any language or four lines of
+Starlark beside the campaign file.
+
+**What it does not.** Windows and macOS are black-box only; a pure-Go target
+behind a process boundary gets no coverage; the emulated, persistent and driver
+tiers are v0.2 and later. Eight known issues are listed in full in the
+changelog, each with its cost and, where one exists, its remedy — including one
+planted bug whose budget is an order of magnitude above the criterion that
+looks for it.
+
 
 ### Added — v0.1 release audit (2026-08-30)
 
@@ -1381,4 +1402,4 @@ Deliberately deferred, each requiring its own ADR before implementation:
 - Snapshot-based execution as an executor tier (rejected for v1 in ADR-0006).
 - Grammar inference from corpora.
 
-[Unreleased]: https://github.com/rom/Xfuzz/commits/main
+[0.1.0]: https://github.com/rom/Xfuzz/releases/tag/v0.1.0
