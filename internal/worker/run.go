@@ -16,6 +16,7 @@ import (
 	"github.com/rom/Xfuzz/internal/store"
 	"github.com/rom/Xfuzz/pkg/campaign"
 	"github.com/rom/Xfuzz/pkg/corpus"
+	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/state"
 )
 
@@ -82,6 +83,11 @@ type Worker struct {
 	stopMsg  string
 	incoming chan *daemon.Message
 
+	// saidSkipped keeps the undeliverable-event warning to one occurrence. It
+	// is a property of the corpus rather than of a moment, so repeating it
+	// every reporting interval would bury everything else the worker says.
+	saidSkipped bool
+
 	// started is set by Run before it builds anything, and running is closed
 	// when Run returns. Close consults both: Run releases what it built, so a
 	// Close overlapping it would be tearing down an executor mid-execution.
@@ -137,7 +143,27 @@ func (w *Worker) Run(ctx context.Context) error {
 	}()
 
 	seeds, err := w.loadCorpus(ctx)
-	if err != nil {
+	if err != nil && b.captureSeed == nil {
+		w.report("error", err.Error())
+		return err
+	}
+
+	// The capture is a seed like any other, added after the store's so that a
+	// campaign with both keeps what it already found. It is the redacted one:
+	// what goes into the corpus and the store carries placeholders, and the
+	// credentials go back in immediately before each request is written.
+	if b.captureSeed != nil {
+		tc := corpus.NewTestcase(nil, b.captureSeed)
+		tc.Prov.Origin = "capture"
+		n, cerr := loadSeeds(ctx, b.engine, []*corpus.Testcase{tc})
+		if cerr != nil {
+			w.report("error", cerr.Error())
+			return cerr
+		}
+		seeds += n
+		w.report("info", "capture: "+b.captureNote)
+	}
+	if seeds == 0 && err != nil {
 		w.report("error", err.Error())
 		return err
 	}
@@ -286,6 +312,7 @@ func (w *Worker) loop(ctx context.Context) error {
 		select {
 		case <-report.C:
 			w.sendMetrics(stats, time.Since(start))
+			w.reportSkippedEvents()
 		default:
 		}
 
@@ -298,6 +325,28 @@ func (w *Worker) loop(ctx context.Context) error {
 			return nil
 		}
 	}
+}
+
+// reportSkippedEvents says once when an interface campaign is spending its
+// budget on events the backend cannot deliver.
+//
+// Said rather than merely counted, because the number is the only way to see
+// it: every one of those events is a keystroke that never reached the program,
+// and a corpus that has drifted into mostly-unnameable keys runs at full speed
+// and explores nothing.
+func (w *Worker) reportSkippedEvents() {
+	d, ok := w.built.executor.(*executor.Driver)
+	if !ok || w.saidSkipped {
+		return
+	}
+	skipped, execs := d.Skipped(), d.Executions()
+	if execs < 100 || skipped < execs {
+		return
+	}
+	w.saidSkipped = true
+	w.report("warn", fmt.Sprintf("the backend could not deliver %d event(s) across %d "+
+		"sequences: the corpus has drifted towards events this driver has no way to "+
+		"send, and those keystrokes never reach the program", skipped, execs))
 }
 
 // budget is the worker's own bound.

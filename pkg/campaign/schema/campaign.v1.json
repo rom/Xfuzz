@@ -4,9 +4,150 @@
   "additionalProperties": false,
   "description": "A campaign file is the only interface for defining what a campaign does (ADR-0016). Every field is optional in the schema; what is actually required is reported by `xfuzz validate`, which can say things a schema cannot — that a target path is executable, that a scope is present when the campaign leaves the host, that a grammar exists.",
   "properties": {
+    "api": {
+      "additionalProperties": false,
+      "description": "API replay: where the service listens, which capture seeds it, and which oracles judge the responses.",
+      "properties": {
+        "address": {
+          "description": "Where the service listens: tcp:HOST:PORT. {worker} is replaced with the worker index.",
+          "type": "string"
+        },
+        "capture": {
+          "description": "A HAR, pcap, or raw session file to seed the campaign from.",
+          "type": "string"
+        },
+        "expect": {
+          "description": "What that identity should get: allowed, denied, or unknown.",
+          "type": "string"
+        },
+        "fix_length": {
+          "description": "Recompute Content-Length before each request. Defaults to true.",
+          "type": "boolean"
+        },
+        "identity": {
+          "description": "Whose credentials this campaign replays with.",
+          "type": "string"
+        },
+        "ignore_status": {
+          "description": "Statuses the status oracle ignores.",
+          "items": {
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "keep_alive": {
+          "description": "Send the whole session on one connection. Defaults to true.",
+          "type": "boolean"
+        },
+        "links": {
+          "description": "How values chain between requests: infer or none.",
+          "type": "string"
+        },
+        "oracles": {
+          "description": "Response oracles: status, schema, latency, authorization.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "per_request": {
+          "description": "Bound on one request and its response.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "secrets": {
+          "description": "File of placeholder=value pairs, substituted immediately before each request.",
+          "type": "string"
+        },
+        "server_name": {
+          "description": "Server name for the TLS handshake. Defaults to the address's host.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Bound on a whole session.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "tls": {
+          "description": "Wrap the connection in TLS.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "address"
+      ],
+      "type": "object"
+    },
     "description": {
       "description": "Free-text description.",
       "type": "string"
+    },
+    "driver": {
+      "additionalProperties": false,
+      "description": "A user interface driven by events: the terminal size, how long to let it redraw, and which oracles judge it.",
+      "properties": {
+        "cols": {
+          "description": "Terminal width in columns.",
+          "type": "integer"
+        },
+        "guide": {
+          "description": "Treat new screens and transitions as interesting. Defaults to true.",
+          "type": "boolean"
+        },
+        "kind": {
+          "description": "Driver backend: tui.",
+          "type": "string"
+        },
+        "max_events": {
+          "description": "Maximum events in one sequence.",
+          "type": "integer"
+        },
+        "max_output_bytes": {
+          "description": "Most a program may draw in one sequence before the driver stops reading.",
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "normalise": {
+          "description": "What a screen fingerprint removes: digits, spinner, runs, space.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "oracles": {
+          "description": "Interface oracles: diagnostic, unresponsive, trap.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reset": {
+          "description": "Between sequences: restart or none.",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Terminal height in rows.",
+          "type": "integer"
+        },
+        "settle": {
+          "description": "How long the interface must be quiet before its screen is read.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "start_timeout": {
+          "description": "Bound on the program's first screen.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Bound on one whole event sequence.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
     },
     "extensions": {
       "description": "Out-of-process plugins and the extension points each supplies.",

@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"net/url"
 	"sort"
@@ -237,4 +239,54 @@ func (r *Request) Query() []Header {
 func (e Exchange) String() string {
 	return fmt.Sprintf("%s %s -> %d (%d bytes)",
 		e.Request.Method, e.Request.URL, e.Response.Status, len(e.Response.Body))
+}
+
+// Read reads a capture in whichever format the bytes are in.
+//
+// Dispatched on content rather than on the file's name, because a capture is
+// usually saved by a tool that chose the extension: a browser writes .har, a
+// proxy writes .json, tcpdump writes .pcap and .pcapng, and a session somebody
+// saved by hand has no extension at all. Getting it wrong produces a parse error
+// about the wrong format, which is a worse message than any of the real ones.
+func Read(name string, src []byte) (*Capture, error) {
+	switch {
+	case isPcap(src):
+		return ReadPcap(bytes.NewReader(src))
+	case isJSON(src):
+		return ReadHAR(bytes.NewReader(src))
+	}
+	// Anything else is a raw HTTP session: what Capture.Session writes, and
+	// what a person produces by pasting requests into a file.
+	c, err := ReadSession(src)
+	if err != nil {
+		return nil, fmt.Errorf("capture: %s is not a HAR, a pcap, or a session of HTTP requests: %w", name, err)
+	}
+	return c, nil
+}
+
+// isPcap recognises the four byte orders of the classic format and the block
+// type that starts a pcapng file.
+func isPcap(src []byte) bool {
+	if len(src) < 4 {
+		return false
+	}
+	switch binary.BigEndian.Uint32(src[:4]) {
+	case 0xa1b2c3d4, 0xd4c3b2a1, 0xa1b23c4d, 0x4d3cb2a1, 0x0a0d0d0a:
+		return true
+	}
+	return false
+}
+
+// isJSON reports whether the first non-space byte opens an object or an array.
+func isJSON(src []byte) bool {
+	for _, c := range src {
+		switch c {
+		case ' ', '\t', '\r', '\n':
+			continue
+		case '{', '[':
+			return true
+		}
+		return false
+	}
+	return false
 }

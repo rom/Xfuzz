@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"strconv"
@@ -41,6 +42,7 @@ type Driver struct {
 	UI UISink
 
 	execs   uint64
+	skipped uint64
 	started bool
 }
 
@@ -51,6 +53,17 @@ type Driver struct {
 type UISink interface {
 	RecordUI(state []byte)
 }
+
+// ErrSkipEvent is what a backend returns for an event it cannot deliver.
+//
+// The distinction it draws is the one that decides whether a T7 campaign runs
+// at all. A backend that cannot reach the program is a harness failure and must
+// stop the campaign; an *event* it does not understand is a property of the
+// input, and a mutator produces those constantly — "key enter" becomes "key
+// eykm 226" after two operators, and every sequence in the corpus eventually
+// contains one. Reporting that as a harness failure ends the campaign on its
+// first interesting mutation.
+var ErrSkipEvent = errors.New("the backend cannot deliver this event")
 
 // Settler is a backend that knows when the interface has finished redrawing.
 //
@@ -203,6 +216,13 @@ func (e *Driver) Name() string { return e.name }
 // Executions returns how many sequences have run.
 func (e *Driver) Executions() uint64 { return e.execs }
 
+// Skipped returns how many events the backend could not deliver.
+//
+// Worth reporting rather than merely tolerating: a corpus whose sequences are
+// mostly unrecognised events is a campaign spending its budget on keystrokes
+// that never reach the program, and the number is the only way to see it.
+func (e *Driver) Skipped() uint64 { return e.skipped }
+
 // Start launches the target.
 func (e *Driver) Start(ctx context.Context) error {
 	if e.started {
@@ -291,6 +311,13 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 			break
 		}
 		if err := e.backend.Send(ctx, ev); err != nil {
+			if errors.Is(err, ErrSkipEvent) {
+				// Not the harness failing: the input asked for something this
+				// backend has no way to deliver, which after two mutations is
+				// most of what a corpus contains.
+				e.skipped++
+				continue
+			}
 			return feedback.ExitError, fmt.Errorf("executor %s: %v: %w", e.name, ev, err)
 		}
 		e.settle(ctx, ev)

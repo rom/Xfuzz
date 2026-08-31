@@ -299,9 +299,12 @@ func (d *TUI) Send(ctx context.Context, e executor.Event) error {
 		s.mu.Unlock()
 		b, err := EncodeKey(e.Text, app)
 		if err != nil {
-			// An unknown key is a bad seed, not a broken harness: report it so
-			// the campaign refuses the input rather than typing something else.
-			return fmt.Errorf("driver tui: %w", err)
+			// Skipped rather than reported. A hand-written seed with a typo in
+			// a key name loses one keystroke, which the tier counts; a mutated
+			// sequence contains an unnameable key almost always, and treating
+			// that as a harness failure ends the campaign on its first
+			// interesting mutation.
+			return fmt.Errorf("driver tui: %w: %v", executor.ErrSkipEvent, err)
 		}
 		return d.write(s, b)
 

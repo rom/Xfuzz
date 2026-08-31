@@ -106,6 +106,20 @@ type built struct {
 	directedNote    string
 	directionReport string
 
+	// captureSeed is the redacted session an api campaign replays, and
+	// captureNote says what was read out of the capture. Both go in the ready
+	// message: a campaign that inferred no dependencies from a recorded session
+	// is one whose requests will all address the identifier from the recording,
+	// and that is worth seeing in the first second.
+	captureSeed []byte
+	captureNote string
+
+	// timing measures how long an execution took, for the latency oracle. Only
+	// built when a campaign asked for that oracle: every observer in the list
+	// costs something on every execution, and a measurement nothing reads is
+	// the clearest kind of waste.
+	timing *feedback.TimingObserver
+
 	// analysisNote says what static recovery found on a binary-only campaign,
 	// so an operator can judge the coverage figures rather than trusting them.
 	// A target whose text is half unaccounted for, or which is full of indirect
@@ -151,7 +165,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		}
 	}()
 
-	if cfg.Session != nil {
+	if cfg.Session != nil || cfg.API != nil {
 		addr, aerr := sessionAddress(cfg, workerID)
 		if aerr != nil {
 			return nil, aerr
@@ -170,16 +184,30 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 	if err := b.buildFeedback(cfg); err != nil {
 		return nil, err
 	}
+	if apiTimingNeeded(cfg) {
+		b.timing = feedback.NewTimingObserver("timing")
+	}
 	// A session block is what makes a campaign stateful, so it is what chooses
 	// the tier. Everything after this point is the same for both kinds, which
 	// is the point of ASR-0002 treating statefulness as an axis rather than as
 	// a separate tool.
-	if cfg.Session != nil {
+	switch {
+	case cfg.Session != nil:
 		if err := b.buildSession(ctx, cfg); err != nil {
 			return nil, err
 		}
-	} else if err := b.buildExecutor(ctx, cfg); err != nil {
-		return nil, err
+	case cfg.API != nil:
+		if err := b.buildAPI(ctx, cfg); err != nil {
+			return nil, err
+		}
+	case cfg.Driver != nil:
+		if err := b.buildDriver(ctx, cfg); err != nil {
+			return nil, err
+		}
+	default:
+		if err := b.buildExecutor(ctx, cfg); err != nil {
+			return nil, err
+		}
 	}
 
 	cdc, err := codecFor(cfg)
@@ -201,7 +229,7 @@ func build(ctx context.Context, cfg *campaign.Resolved, workerID int, seed uint6
 		Executor:      b.executor,
 		Observers:     b.observers(),
 		Feedback:      b.feedbackStack(cfg),
-		Objective:     objectivesFor(cfg, b.output, b.extensions),
+		Objective:     b.objectives(cfg),
 		Corpus:        corpus.New(),
 		Schedule:      scheduleFor(cfg, strategy),
 		Mutators:      mutators,
@@ -485,6 +513,9 @@ const blockAnchorSymbol = "xfuzz_map"
 
 func (b *built) observers() []feedback.Observer {
 	obs := []feedback.Observer{b.output}
+	if b.timing != nil {
+		obs = append(obs, b.timing)
+	}
 	if b.coverage != nil {
 		obs = append([]feedback.Observer{b.coverage}, obs...)
 	}
@@ -803,11 +834,31 @@ func codecFor(cfg *campaign.Resolved) (codec.Codec, error) {
 
 	switch cfg.Format.Codec {
 	case "", "raw":
+		// An API campaign gets the HTTP codec unless it asked for something
+		// else. Without it a replayed session is one opaque blob: the tier has
+		// to split it into requests by reading the declared lengths out of the
+		// bytes, and a mutation that changed a body's size makes those lengths
+		// wrong — so the first request is cut short, the remainder does not
+		// parse as a second one, and the service waits for a body that is
+		// never coming. Measured, that is a thirty-second stall per execution.
+		if cfg.API != nil {
+			return codec.HTTP{}, nil
+		}
+		// A driver campaign gets the event codec for the same reason: the input
+		// is a sequence of events, and a mutator working on bytes reorders
+		// characters rather than events.
+		if cfg.Driver != nil {
+			return codec.Events{}, nil
+		}
 		return codec.Raw{}, nil
 	case "png":
 		return codec.PNG{}, nil
 	case "session":
 		return codec.Session{}, nil
+	case "http":
+		return codec.HTTP{}, nil
+	case "events":
+		return codec.Events{}, nil
 	default:
 		return nil, fmt.Errorf("worker: unknown codec %q", cfg.Format.Codec)
 	}
@@ -927,6 +978,22 @@ func suppressFor(cfg *campaign.Resolved) ir.Suppress {
 }
 
 // objectivesFor builds what counts as a finding.
+// objectives assembles everything that decides an execution is a finding.
+//
+// The ordinary set plus whichever domain oracles the campaign's tier brings.
+// They are additive rather than alternatives: a service that does crash is
+// still a finding, and an interface that dies is still a crash — the domain
+// oracles exist because in those two domains that almost never happens.
+func (b *built) objectives(cfg *campaign.Resolved) feedback.Objective {
+	objs := []feedback.Objective{objectivesFor(cfg, b.output, b.extensions)}
+	objs = append(objs, apiObjectives(cfg, b.output, b.timing)...)
+	objs = append(objs, driverObjectives(cfg, b.output, b.state)...)
+	if len(objs) == 1 {
+		return objs[0]
+	}
+	return feedback.NewAnyObjective("objectives", objs...)
+}
+
 func objectivesFor(cfg *campaign.Resolved, out *feedback.OutputObserver, ext *extension.Set) feedback.Objective {
 	var objs []feedback.Objective
 	for _, name := range cfg.Feedback.Objectives {
@@ -994,11 +1061,17 @@ func (b *built) describe() string {
 	if b.directedNote != "" {
 		desc = fmt.Sprintf("%s; %s", desc, b.directedNote)
 	}
+	if b.captureNote != "" {
+		desc = fmt.Sprintf("%s; %s", desc, b.captureNote)
+	}
 	return desc
 }
 
 // sessionAddress resolves the campaign's session address for one worker.
 func sessionAddress(cfg *campaign.Resolved, workerID int) (string, error) {
+	if cfg.Session == nil && cfg.API != nil {
+		return campaign.ResolveAddress(cfg.API.Address, workerID), nil
+	}
 	addr := campaign.ResolveAddress(cfg.Session.Address, workerID)
 	if _, _, err := campaign.SplitAddress(addr); err != nil {
 		return "", fmt.Errorf("worker: session address: %w", err)

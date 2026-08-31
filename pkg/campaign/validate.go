@@ -76,6 +76,8 @@ func (r *Resolved) Validate() error {
 	r.validateStop(add)
 	r.validateSeeds(add)
 	r.validateSession(add)
+	r.validateAPI(add)
+	r.validateDriver(add)
 	r.validateExtensions(add)
 	r.validateScripts(add)
 
@@ -91,6 +93,13 @@ type addFunc func(field, msg, hint string)
 func (r *Resolved) validateTarget(add addFunc) {
 	t := r.Target
 	if t.Path == "" {
+		if r.API != nil {
+			// An API campaign fuzzes a service that is already running: it
+			// sends requests to an address and never spawns anything, so
+			// demanding an executable would be demanding a file that does not
+			// exist for this kind of campaign.
+			return
+		}
 		add("target.path", "is required", "the campaign has nothing to run")
 		return
 	}
@@ -147,9 +156,10 @@ func (r *Resolved) validateTarget(add addFunc) {
 func (r *Resolved) validateFormat(add addFunc) {
 	f := r.Format
 	switch f.Codec {
-	case "raw", "png", "session":
+	case "raw", "png", "session", "http", "events":
 	default:
-		add("format.codec", fmt.Sprintf("%q is not a built-in codec", f.Codec), "one of raw, png")
+		add("format.codec", fmt.Sprintf("%q is not a built-in codec", f.Codec),
+			"one of raw, png, session, http, events")
 	}
 	if f.Grammar != "" {
 		if _, err := os.Stat(f.Grammar); err != nil {
@@ -443,8 +453,12 @@ func (r *Resolved) validateSeeds(add addFunc) {
 		}
 	}
 	if len(s.Dirs) == 0 && len(s.Inline) == 0 && s.Generate == 0 {
-		add("seeds", "no seeds are configured",
-			"set seeds.dirs, seeds.inline, or seeds.generate with a grammar")
+		// A capture is a seed: it is the recorded session the campaign replays,
+		// and an API campaign with one has exactly what it needs to start.
+		if r.API == nil || r.API.Capture == "" {
+			add("seeds", "no seeds are configured",
+				"set seeds.dirs, seeds.inline, or seeds.generate with a grammar")
+		}
 	}
 	if s.Generate > 0 && r.Format.Grammar == "" {
 		add("seeds.generate", "requires format.grammar",

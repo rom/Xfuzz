@@ -356,6 +356,105 @@ func defaults(f *File, set KeySet) {
 		}
 	}
 
+	// API and driver defaults, on the same principle as the session block's:
+	// filled in only for a campaign that asked for them, so a file-fuzzing
+	// campaign's `explain` output does not carry a terminal size and a set of
+	// response oracles that mean nothing to it.
+	if f.API != nil {
+		if f.API.Links == "" {
+			f.API.Links = APILinksInfer
+		}
+		if f.API.Expect == "" {
+			f.API.Expect = APIExpectUnknown
+		}
+		if f.API.PerRequest == 0 && unset("api.per_request") {
+			f.API.PerRequest = Duration(defaultAPIPerRequest)
+		}
+		if f.API.Timeout == 0 && unset("api.timeout") {
+			f.API.Timeout = Duration(defaultAPITimeout)
+		}
+		if f.API.KeepAlive == nil {
+			keep := true
+			f.API.KeepAlive = &keep
+		}
+		if f.API.FixLength == nil {
+			// On by default and effectively required: a mutation that changes a
+			// body's size leaves a declared length no server reads correctly.
+			fix := true
+			f.API.FixLength = &fix
+		}
+		if len(f.API.Oracles) == 0 && unset("api.oracles") {
+			// Status and schema, not latency: latency needs a norm, and a
+			// campaign whose first minute is its warm-up would report the
+			// warm-up. A campaign that wants it says so.
+			f.API.Oracles = []string{APIOracleStatus, APIOracleSchema}
+		}
+	}
+
+	if f.Driver != nil {
+		if f.Driver.Kind == "" {
+			f.Driver.Kind = DriverTUI
+		}
+		if f.Driver.Cols == 0 && unset("driver.cols") {
+			f.Driver.Cols = defaultDriverCols
+		}
+		if f.Driver.Rows == 0 && unset("driver.rows") {
+			f.Driver.Rows = defaultDriverRows
+		}
+		if f.Driver.Settle == 0 && unset("driver.settle") {
+			f.Driver.Settle = Duration(defaultDriverSettle)
+		}
+		if f.Driver.StartTimeout == 0 && unset("driver.start_timeout") {
+			f.Driver.StartTimeout = Duration(defaultDriverStartTimeout)
+		}
+		if f.Driver.Timeout == 0 && unset("driver.timeout") {
+			f.Driver.Timeout = Duration(defaultDriverTimeout)
+		}
+		if f.Driver.MaxEvents == 0 && unset("driver.max_events") {
+			f.Driver.MaxEvents = defaultDriverMaxEvents
+		}
+		if f.Driver.MaxOutputBytes == 0 && unset("driver.max_output_bytes") {
+			f.Driver.MaxOutputBytes = Size(defaultDriverMaxOutput)
+		}
+		if f.Driver.Reset == "" {
+			f.Driver.Reset = "restart"
+		}
+		if f.Driver.Guide == nil {
+			guide := true
+			f.Driver.Guide = &guide
+		}
+		if len(f.Driver.Normalise) == 0 && unset("driver.normalise") {
+			f.Driver.Normalise = []string{"digits", "spinner", "runs", "space"}
+		}
+		if len(f.Driver.Oracles) == 0 && unset("driver.oracles") {
+			// Not the trap oracle: it needs several sequences before it can say
+			// anything, and a campaign that wants it says so.
+			f.Driver.Oracles = []string{DriverOracleDiagnostic, DriverOracleUnresponsive}
+		}
+	}
+
+	// Triage on the slow tiers. A minimisation budget of four thousand
+	// executions is right for a parser at ten thousand a second and absurd for
+	// a service at ten or an interface at one: it would spend an hour shrinking
+	// one reproducer while the campaign found nothing else. The verification
+	// count comes down for the same reason, and it costs less than it looks —
+	// these tiers are non-deterministic enough that a finding which reproduces
+	// twice out of three is already the useful answer.
+	if f.API != nil || f.Driver != nil {
+		if f.Triage == nil {
+			f.Triage = &Triage{}
+		}
+		if f.Triage.MinimizeBudget == 0 && unset("triage.minimize_budget") {
+			f.Triage.MinimizeBudget = defaultSlowMinimizeBudget
+			if f.Driver != nil {
+				f.Triage.MinimizeBudget = defaultDriverMinimizeBudget
+			}
+		}
+		if f.Triage.Trials == 0 && unset("triage.trials") {
+			f.Triage.Trials = defaultSlowTrials
+		}
+	}
+
 	if f.Workers == nil {
 		f.Workers = &Workers{}
 	}
@@ -366,6 +465,16 @@ func defaults(f *File, set KeySet) {
 		// exactly one — defaulting to a core count and then refusing the file
 		// would be telling somebody off for a number they never wrote.
 		if f.Session != nil && !strings.Contains(f.Session.Address, WorkerPlaceholder) {
+			f.Workers.Count = 1
+		}
+		if f.API != nil && !strings.Contains(f.API.Address, WorkerPlaceholder) {
+			f.Workers.Count = 1
+		}
+		if f.Driver != nil {
+			// Every worker drives its own copy of the program, which is fine —
+			// but the tier runs at a rate where a second worker doubles a very
+			// small number and doubles the reset cost, so a campaign that wants
+			// more than one says so.
 			f.Workers.Count = 1
 		}
 	}

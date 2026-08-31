@@ -185,3 +185,84 @@ func rewriteLength(head []byte, n int) []byte {
 	}
 	return bytes.Join(lines, []byte("\n"))
 }
+
+// ReadSession reads a flat file of HTTP requests back into a capture.
+//
+// The inverse of Session, and the format a person produces by pasting requests
+// into a file. There are no responses in it, which is not a gap: the API tier
+// sends the requests and reads the responses live, and what a recording adds
+// over this is the responses that dependency inference needs. A session file is
+// the honest shape for "these are the requests, work the rest out".
+func ReadSession(src []byte) (*Capture, error) {
+	c := &Capture{}
+	for len(src) > 0 {
+		head, body, consumed, ok := splitRequest(src)
+		if !ok {
+			if len(c.Exchanges) == 0 {
+				return nil, fmt.Errorf("no complete request in %d bytes", len(src))
+			}
+			// A trailing fragment is what a truncated capture ends with, and
+			// the requests before it are still worth having.
+			c.Notes = append(c.Notes,
+				fmt.Sprintf("%d trailing bytes were not a complete request", len(src)))
+			break
+		}
+		req, err := parseRequestHead(head)
+		if err != nil {
+			return nil, err
+		}
+		req.Body = append([]byte(nil), body...)
+		c.Exchanges = append(c.Exchanges, Exchange{Request: *req})
+		src = src[consumed:]
+	}
+	if len(c.Exchanges) == 0 {
+		return nil, fmt.Errorf("no requests")
+	}
+	return c, nil
+}
+
+// parseRequestHead reads a request line and its headers.
+func parseRequestHead(head []byte) (*Request, error) {
+	lines := strings.Split(strings.ReplaceAll(string(head), "\r\n", "\n"), "\n")
+	if len(lines) == 0 || lines[0] == "" {
+		return nil, fmt.Errorf("empty request")
+	}
+	parts := strings.Fields(lines[0])
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("%q is not a request line", lines[0])
+	}
+	r := &Request{Method: parts[0]}
+	target := parts[1]
+
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		r.Headers = append(r.Headers, Header{
+			Name: strings.TrimSpace(name), Value: strings.TrimSpace(value),
+		})
+	}
+
+	// A URL, because everything downstream — the host, the path segments, the
+	// query parameters that dependency inference reads — is addressed through
+	// one. The scheme is a guess and it does not matter: nothing dials it, and
+	// the campaign's own address is where the request actually goes.
+	scheme := "http"
+	if strings.EqualFold(r.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	host := r.Get("Host")
+	if host == "" {
+		host = "localhost"
+	}
+	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
+		r.URL = target
+	} else {
+		r.URL = scheme + "://" + host + target
+	}
+	return r, nil
+}

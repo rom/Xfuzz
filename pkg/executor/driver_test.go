@@ -2,6 +2,7 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -418,5 +419,33 @@ func TestEventStringRoundTrips(t *testing.T) {
 		if back != e {
 			t.Errorf("%v printed as %q parsed back as %v", e, s, back)
 		}
+	}
+}
+
+// TestDriverSkipsAnEventTheBackendCannotDeliver is the distinction that decides
+// whether a T7 campaign runs past its first interesting mutation. "key enter"
+// becomes "key eykm 226" after two operators, and every sequence in a corpus
+// eventually contains one; reporting that as a harness failure ends the
+// campaign. A backend that cannot reach the program at all still must.
+func TestDriverSkipsAnEventTheBackendCannotDeliver(t *testing.T) {
+	be := &fakeUI{sendErr: fmt.Errorf("no such key: %w", executor.ErrSkipEvent)}
+	d := newTestDriver(t, be, executor.DriverOptions{})
+
+	ek, err := d.Run(t.Context(), executor.Input{Bytes: []byte("key a\nkey b\nkey c\n")}, nil)
+	if err != nil {
+		t.Fatalf("an undeliverable event ended the campaign: %v", err)
+	}
+	if ek != feedback.ExitOK {
+		t.Errorf("exit kind %v", ek)
+	}
+	if d.Skipped() != 3 {
+		t.Errorf("Skipped() = %d, want 3", d.Skipped())
+	}
+
+	// A backend that cannot reach the program is still a harness failure.
+	be2 := &fakeUI{sendErr: context.DeadlineExceeded}
+	d2 := newTestDriver(t, be2, executor.DriverOptions{})
+	if _, err := d2.Run(t.Context(), executor.Input{Bytes: []byte("key a\n")}, nil); err == nil {
+		t.Error("a broken backend was skipped rather than reported")
 	}
 }

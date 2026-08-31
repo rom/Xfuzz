@@ -68,6 +68,8 @@ type File struct {
 	Mutation *Mutation `yaml:"mutation,omitempty" json:"mutation,omitempty" doc:"Which operators run and how they are weighted."`
 	Feedback *Feedback `yaml:"feedback,omitempty" json:"feedback,omitempty" doc:"What counts as interesting."`
 	Session  *Session  `yaml:"session,omitempty" json:"session,omitempty" doc:"Protocol sessions: where the target listens, how replies are framed, and what resets between sessions."`
+	API      *API      `yaml:"api,omitempty" json:"api,omitempty" doc:"API replay: where the service listens, which capture seeds it, and which oracles judge the responses."`
+	Driver   *Driver   `yaml:"driver,omitempty" json:"driver,omitempty" doc:"A user interface driven by events: the terminal size, how long to let it redraw, and which oracles judge it."`
 	State    *State    `yaml:"state,omitempty" json:"state,omitempty" doc:"The protocol state machine, declared or inferred, and how it guides the campaign."`
 	Workers  *Workers  `yaml:"workers,omitempty" json:"workers,omitempty" doc:"How many workers and what strategies they run."`
 	Safety   *Safety   `yaml:"safety,omitempty" json:"safety,omitempty" doc:"Isolation, resource limits, network scope, authorization."`
@@ -296,6 +298,157 @@ type Session struct {
 	// duplicate and insert, so without a bound a campaign converges on sessions
 	// of ten thousand messages that take a second each and explore nothing.
 	MaxMessages int `yaml:"max_messages,omitempty" json:"max_messages,omitempty" doc:"Maximum messages in one session."`
+}
+
+// API turns a campaign into an API campaign (ADR-0014).
+//
+// Its presence selects the API tier, the same way a session block selects the
+// session tier and for the same reason: a mode switch would let a file ask for
+// API fuzzing and give no address, or give an address and fuzz files, and both
+// are configurations that look valid and cannot work.
+//
+// It is the session tier's shape with the two things a captured API session
+// needs and a raw protocol session does not — values carried from one response
+// into a later request, and responses that are judged rather than merely read.
+type API struct {
+	// Address is where the service listens: "tcp:127.0.0.1:8080".
+	//
+	// The address the requests are *sent* to, which is not necessarily the host
+	// they name: a capture taken against production replays against a local
+	// copy, and the Host header still says what it said.
+	Address string `yaml:"address" json:"address" doc:"Where the service listens: tcp:HOST:PORT. {worker} is replaced with the worker index."`
+
+	// TLS wraps the connection, and ServerName is what the handshake claims.
+	TLS        bool   `yaml:"tls,omitempty" json:"tls,omitempty" doc:"Wrap the connection in TLS."`
+	ServerName string `yaml:"server_name,omitempty" json:"server_name,omitempty" doc:"Server name for the TLS handshake. Defaults to the address's host."`
+
+	// Capture is a HAR, a pcap, or a raw session file to seed from.
+	//
+	// The primary source, per ADR-0014: a capture carries the requests a client
+	// actually sends, the values that chain between them, and the identity they
+	// were sent as — none of which a specification has. An imported OpenAPI
+	// grammar reaches endpoints a capture never exercised and is a poor
+	// substitute for one.
+	Capture string `yaml:"capture,omitempty" json:"capture,omitempty" doc:"A HAR, pcap, or raw session file to seed the campaign from."`
+
+	// Links says how a value the service produced is carried into later
+	// requests: infer, or none.
+	//
+	// Without it a replayed session asks for the identifier from the recording,
+	// gets a 404, and every request after the first addresses an object that
+	// does not exist — which is the failure inference exists to prevent.
+	Links string `yaml:"links,omitempty" json:"links,omitempty" doc:"How values chain between requests: infer or none."`
+
+	// Secrets is a file of placeholder-to-value pairs, written by `xfuzz
+	// capture`, substituted immediately before each request is sent.
+	//
+	// Separate from the capture so the capture can be committed: the redacted
+	// session holds placeholders and this holds the credentials, which is what
+	// keeps a token out of the corpus, the store and every mutation.
+	Secrets string `yaml:"secrets,omitempty" json:"secrets,omitempty" doc:"File of placeholder=value pairs, substituted immediately before each request."`
+
+	// Identity names whose credentials the session is being replayed with, and
+	// Expect says what should happen: allowed, denied, or unknown.
+	//
+	// The pair is what makes the authorization oracle possible, and ADR-0014
+	// names it as the class captured traffic makes reachable and a
+	// specification does not.
+	Identity string `yaml:"identity,omitempty" json:"identity,omitempty" doc:"Whose credentials this campaign replays with."`
+	Expect   string `yaml:"expect,omitempty" json:"expect,omitempty" doc:"What that identity should get: allowed, denied, or unknown."`
+
+	// PerRequest bounds one request and Timeout the whole session.
+	PerRequest Duration `yaml:"per_request,omitempty" json:"per_request,omitempty" doc:"Bound on one request and its response."`
+	Timeout    Duration `yaml:"timeout,omitempty" json:"timeout,omitempty" doc:"Bound on a whole session."`
+
+	// KeepAlive sends the whole session on one connection.
+	KeepAlive *bool `yaml:"keep_alive,omitempty" json:"keep_alive,omitempty" doc:"Send the whole session on one connection. Defaults to true."`
+
+	// FixLength recomputes Content-Length before each request is written.
+	//
+	// On by default and effectively required: a mutation that changes a body's
+	// size leaves a declared length that no server reads correctly, and a
+	// decimal length is not something the grammar layer can derive.
+	FixLength *bool `yaml:"fix_length,omitempty" json:"fix_length,omitempty" doc:"Recompute Content-Length before each request. Defaults to true."`
+
+	// Oracles are what judges a response: status, schema, latency,
+	// authorization.
+	//
+	// A service almost never crashes — it is behind a supervisor, its handler
+	// has a recover, and the process outlives anything one request can do to it
+	// — so crash detection alone finds nothing.
+	Oracles []string `yaml:"oracles,omitempty" json:"oracles,omitempty" doc:"Response oracles: status, schema, latency, authorization."`
+
+	// IgnoreStatus lists statuses the status oracle must not report. Some
+	// services answer 501 for an endpoint they have not implemented and 503
+	// while a dependency restarts, and a campaign that filed those would spend
+	// its triage budget on them.
+	IgnoreStatus []int `yaml:"ignore_status,omitempty" json:"ignore_status,omitempty" doc:"Statuses the status oracle ignores."`
+}
+
+// Driver turns a campaign into a user-interface campaign (ADR-0013).
+//
+// Its presence selects the T7 tier, on the same principle as the session and
+// API blocks. The input is a sequence of interaction events rather than data,
+// the interface is stateful so the same keystroke means different things at
+// different moments, and the whole thing runs five orders of magnitude slower
+// than a parser — which is why almost everything here is a bound.
+type Driver struct {
+	// Kind is the backend: tui.
+	//
+	// The desktop backends ADR-0013 names — accessibility trees on Linux, UI
+	// Automation on Windows, the accessibility API on macOS, a debugging
+	// protocol for the web — each need a platform, a session and a display, and
+	// none of them is implemented.
+	Kind string `yaml:"kind,omitempty" json:"kind,omitempty" doc:"Driver backend: tui."`
+
+	// Cols and Rows are the terminal size, which is an input: a program that
+	// draws correctly at eighty columns and misaligns at forty has a bug only
+	// one of them finds.
+	Cols int `yaml:"cols,omitempty" json:"cols,omitempty" doc:"Terminal width in columns."`
+	Rows int `yaml:"rows,omitempty" json:"rows,omitempty" doc:"Terminal height in rows."`
+
+	// Settle is how long the interface must be quiet before its screen counts
+	// as drawn. It is the tier's throughput and it cannot be avoided: an
+	// interface redraws asynchronously, so observing immediately after a
+	// keystroke reads the screen as it was.
+	Settle Duration `yaml:"settle,omitempty" json:"settle,omitempty" doc:"How long the interface must be quiet before its screen is read."`
+
+	// StartTimeout bounds the first screen and Timeout a whole sequence.
+	StartTimeout Duration `yaml:"start_timeout,omitempty" json:"start_timeout,omitempty" doc:"Bound on the program's first screen."`
+	Timeout      Duration `yaml:"timeout,omitempty" json:"timeout,omitempty" doc:"Bound on one whole event sequence."`
+
+	// MaxEvents bounds one sequence, since a mutator will grow it. At a tenth
+	// of a second per event an unbounded sequence is a campaign that runs one
+	// input for an hour.
+	MaxEvents int `yaml:"max_events,omitempty" json:"max_events,omitempty" doc:"Maximum events in one sequence."`
+
+	// MaxOutputBytes caps how much a runaway program may draw before the driver
+	// stops feeding the emulator. A redraw loop produces megabytes a second and
+	// every byte of it is parsed.
+	MaxOutputBytes Size `yaml:"max_output_bytes,omitempty" json:"max_output_bytes,omitempty" doc:"Most a program may draw in one sequence before the driver stops reading."`
+
+	// Reset is what happens between sequences: restart or none.
+	//
+	// Restarting is the only reset an interface has and it is the dominant cost
+	// of the tier. Without it every sequence starts wherever the last one left
+	// off and no finding reproduces.
+	Reset string `yaml:"reset,omitempty" json:"reset,omitempty" doc:"Between sequences: restart or none."`
+
+	// Guide treats a novel screen and a novel transition between screens as new
+	// coverage, which for a black-box interface is the only signal there is.
+	Guide *bool `yaml:"guide,omitempty" json:"guide,omitempty" doc:"Treat new screens and transitions as interesting. Defaults to true."`
+
+	// Normalise lists what a screen fingerprint removes before hashing:
+	// digits, spinner, runs, space.
+	//
+	// The tuning knob, and ADR-0013 says it has two bad failure modes. Too weak
+	// and a clock in the corner gives the program a new state every second; too
+	// aggressive and two dialogs become one state and the campaign is blind to
+	// the transition between them.
+	Normalise []string `yaml:"normalise,omitempty" json:"normalise,omitempty" doc:"What a screen fingerprint removes: digits, spinner, runs, space."`
+
+	// Oracles are what judges the interface: diagnostic, unresponsive, trap.
+	Oracles []string `yaml:"oracles,omitempty" json:"oracles,omitempty" doc:"Interface oracles: diagnostic, unresponsive, trap."`
 }
 
 // State configures the protocol state machine (ADR-0006).

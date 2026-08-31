@@ -51,6 +51,36 @@ const (
 	// on sessions of thousands of messages that each take a second.
 	defaultMaxMessages = 64
 
+	// API defaults. The per-request bound is the one that matters, and it is
+	// deliberately much shorter than a client library's: a campaign sends
+	// malformed requests constantly, and every one that leaves the service
+	// waiting for a body costs this whole bound — then costs it again for each
+	// verification and each minimisation step. Measured against a local service,
+	// five seconds here turned a finding into a ten-minute stall; one second
+	// turns the same campaign into two. A service that has not answered in a
+	// second, during a fuzzing run, has stopped answering, and the latency
+	// oracle is what reports a service that is merely slow.
+	defaultAPIPerRequest = time.Second
+	defaultAPITimeout    = 30 * time.Second
+
+	// Driver defaults. Settle is the tier's throughput: the driver waits for
+	// the interface to go quiet rather than for a fixed interval, and this is
+	// how long quiet has to last.
+	defaultDriverCols         = 80
+	defaultDriverRows         = 24
+	defaultDriverSettle       = 50 * time.Millisecond
+	defaultDriverStartTimeout = 5 * time.Second
+	defaultDriverTimeout      = 30 * time.Second
+	defaultDriverMaxEvents    = 256
+	defaultDriverMaxOutput    = 8 << 20
+
+	// Triage on the slow tiers. What makes these different is not taste: at a
+	// few executions a second, the default budget is an hour of shrinking one
+	// reproducer while the campaign finds nothing else.
+	defaultSlowMinimizeBudget   = 64
+	defaultDriverMinimizeBudget = 16
+	defaultSlowTrials           = 3
+
 	defaultExplore  = 0.7
 	defaultTailBias = 0.8
 )
