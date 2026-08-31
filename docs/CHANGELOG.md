@@ -249,6 +249,54 @@ planted bug whose budget is an order of magnitude above the criterion that
 looks for it.
 
 
+### Added — v0.7, platform parity (ADR-0032, ADR-0033)
+
+The three platforms stop being one platform and two footnotes.
+
+- **`gocov`**: coverage for a pure-Go target with no clang and no source change.
+  `xfuzz-cc --go` builds it with Go's own libFuzzer instrumentation, and the
+  runtime maps the pages holding the target's counter array `MAP_FIXED` onto the
+  fuzzer's shared region — so every increment lands in memory the fuzzer already
+  has open, and **an execution that crashes still reports its coverage**. That
+  is the reason for the design: ADR-0026 had sketched a fold at exit, and Go
+  leaves through `exit_group` without running one, as does any target that dies.
+  Measured on the same target and seeds over 20,000 executions: `gocov` kept 12
+  corpus entries, `blackbox` kept 2; a campaign whose every execution panics
+  still admitted 6.
+- `feedback.coverage: gocov`, or `auto` on a Go target. Granularity is blocks,
+  not edges — a counter has no ordering — and it is reported as such. The fork
+  server is refused with a reason: its constructor runs before Go registers the
+  array.
+- **macOS confinement**: a Seatbelt profile denying file writes outside the
+  target's working directory and denying the network, applied by wrapping the
+  command in `sandbox-exec`. macOS reaches the `moderate` isolation level, where
+  it has been stuck at `minimal` since the sandbox was written — not for want of
+  a mechanism but for want of anyone writing the profile.
+- **Windows job objects**: memory and process caps, and every target dies when
+  the fuzzer lets go, so an interrupted campaign no longer leaves a machine full
+  of orphans. Filesystem confinement needs a restricted token and is not done,
+  so Windows stays at `minimal` and the doctor says which half is present.
+- **Windows crashes are classified as crashes.** A target that dereferenced a
+  null pointer exited with `0xC0000005` and `SignalOf` returned 0, so every
+  Windows campaign reported that it found nothing — which is indistinguishable
+  from a target with no bugs. Exception codes now map to the signal the same
+  fault raises on Unix, so a finding is the same object on every platform.
+- **ConPTY**, so the T7 terminal driver runs on Windows. The pseudo-terminal is
+  now a `platform.TTY` both platforms implement; `internal/safety` no longer
+  knows which one it holds.
+- `xfuzz doctor` gains `platform-confinement` and `go-coverage`, and its
+  pseudo-terminal and cgroup lines say what the Windows and macOS equivalents
+  are.
+
+**Known limits.** The macOS and Windows mechanisms are unverified on their own
+operating systems: no such host is available to this project. Everything is
+cross-built, cross-vetted and unit-tested wherever the logic is pure — which is
+most of it, deliberately, since the profile builder and the exception mapping
+are where a mistake would be silent. `sancov` on Windows still has nowhere to
+write its map, because shared memory is a Unix mechanism here, so `gocov` closed
+the Go half of that gap and not the C half. A ConPTY resize sends no signal,
+because Windows has none.
+
 ### Added — v0.1 release audit (2026-08-30)
 
 **T3, the process pool (ADR-0009, ADR-0026, ASR-0006)**

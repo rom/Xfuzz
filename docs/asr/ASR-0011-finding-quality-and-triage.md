@@ -53,4 +53,4 @@ distinct bugs inside a bucket the operator has already dismissed.
 
 ## Satisfied by
 
-ADR-0008, ADR-0011, ADR-0021
+ADR-0008, ADR-0011, ADR-0021, ADR-0033

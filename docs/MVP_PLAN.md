@@ -693,8 +693,17 @@ Sequenced by dependency and by how much each de-risks the remaining vision:
 | **v0.4** | APIs | Traffic capture (HAR, pcap, recording proxy); data-dependency inference; authorization oracles (ADR-0014) — **done**, see § 7 |
 | **v0.5** | TUI and GUI | T7 driver executor; PTY + terminal emulator; UI-state feedback; accessibility drivers (ADR-0013) — **TUI done**, desktop drivers not, see § 7 |
 | **v0.6** | Grammar ecosystem | protobuf, ASN.1, ABNF, Kaitai, JSON Schema, OpenAPI importers — **done**, see § 7 |
-| **v0.7** | Platform parity | macOS and Windows fast paths and isolation above `minimal` |
+| **v0.7** | Platform parity | Go coverage without clang; macOS Seatbelt and Windows job objects; ConPTY; Windows crashes classified as crashes — **done**, see § 7 |
+| **v0.8** | The last domains | The web driver over the Chrome DevTools Protocol, and the desktop accessibility drivers ADR-0013 names (`gui-atspi`, `gui-win`, `gui-mac`) |
+| **v0.9** | Learning | Active automata learning, which ADR-0006 defers by name and says needs its own ADR; corpus distillation |
 | **v1.0** | Scale | Distributed fuzzing: coordinator, corpus sync protocol, fleet view (needs its own ADR) |
+
+v0.8 and v0.9 were unsequenced when this table was written: § 5 named v0.7 and
+then jumped to v1.0. They are filled in with the two things the record itself
+says are missing — the last unmet domain in
+[ASR-0001](asr/ASR-0001-multi-domain-target-coverage.md), and the one guidance
+strategy [ADR-0006](adr/ADR-0006-explicit-state-machine-with-state-feedback.md)
+defers by name — rather than with new ambitions.
 
 ## 6. Definition of done for v0.1
 
@@ -845,7 +854,7 @@ have been checked against the runs rather than inferred. The remedy is
 mechanical and now exists: a release cannot publish without a clean build of
 the tagged commit on a machine that starts from `git clone`.
 
-## 7. v0.2 to v0.6
+## 7. v0.2 to v0.7
 
 Shipped after v0.1, in the order § 5 sequenced them. What each contains, what
 was measured for it, and what it does not cover.
@@ -952,3 +961,33 @@ touching the encoder, the fixup pass and every mutator. Value constraints
 Kaitai expressions, ABNF prose-vals and JSON Schema's `not`/`if`/`then` have no
 construction and are reported. Each importer is a documented subset and will
 meet documents it does not cover; that is what the report is for.
+
+### 7.6 v0.7 — platform parity
+
+| Piece | Where | Evidence |
+| --- | --- | --- |
+| `gocov`: coverage for a Go target with no clang | `runtime/csrc/xfuzz-rt.c`, `pkg/feedback/counters.go` | Same target, same seeds, 20,000 executions: `gocov` kept 12 corpus entries, `blackbox` kept 2. A campaign whose every execution panics still admitted 6, which is the property the mapping exists for |
+| `xfuzz-cc --go` | `cmd/xfuzz-cc/gobuild.go` | Builds a real Go target with the libfuzzer tag, the instrumentation flag and the external link, and the resulting binary registers its counters |
+| macOS confinement | `internal/platform/seatbelt.go`, `confine_darwin.go` | Profile builder tested untagged: rule order (an allow before the blanket deny never applies), a path carrying a quote that would otherwise rewrite the policy, a trailing backslash, empty entries, the three standard devices |
+| Windows job objects | `internal/platform/sandbox_windows.go` | Cross-built and cross-vetted; the level policy and the capability line are tested from Linux with injected capabilities |
+| ConPTY | `internal/platform/pty_windows.go` | Cross-built and cross-vetted; the Unix terminal path was moved onto the same `platform.TTY` interface and its tests still pass |
+| Windows crashes read as crashes | `internal/platform/exception.go` | Untagged mapping with tests: the faults a target dies of, an exit code of 1 that must **not** become a finding, and an unlisted NTSTATUS code that must still be a crash |
+| Isolation levels off Linux | `internal/safety/sandbox.go` | A confined host reaches `moderate`; a host with only a job object stays `minimal` and the explanation says which half is missing |
+
+**Not covered.** The macOS and Windows mechanisms are **unverified on their own
+operating systems**: no macOS or Windows host is available to this project.
+Everything is cross-built, cross-vetted (`go vet` passes for all three) and
+unit-tested wherever the logic is pure — which is deliberately most of it, since
+the profile builder and the exception mapping are the two places a mistake would
+be silent. Applying a Seatbelt profile, creating a job object and starting a
+target on a pseudo-console are not exercised. This is the same treatment § 7.1
+gives `qemu` and `frida`, and for the same reason.
+
+Windows filesystem confinement is not implemented: that needs a restricted or
+low-integrity token, and Windows therefore stays at `minimal`. `sancov` on
+Windows still has nowhere to write its map, because shared memory in
+`internal/platform` is a Unix mechanism — so `gocov` closed the Go half of
+ADR-0026's platform gap and not the C half. A ConPTY resize sends no signal,
+because Windows has none to send, so a program that redraws only on `SIGWINCH`
+does not redraw there. `gocov` reports block granularity, not edges, and refuses
+the fork server.

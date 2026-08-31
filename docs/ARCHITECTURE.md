@@ -626,10 +626,18 @@ code only behind `//go:build cgo` with a fallback (ADR-0017).
 | Concern | Linux | macOS | Windows |
 | --- | --- | --- | --- |
 | Fast execution | fork server (T2) | fork server (T2) | process pool (T3) |
-| Shared memory | `memfd`/POSIX shm | POSIX shm | named file mapping |
-| Isolation | namespaces, seccomp, cgroups v2 → `strong` | sandbox profile, rlimits → `moderate` | Job Objects, restricted tokens → `moderate` |
-| Coverage | sancov, fork server, Frida, QEMU, Intel PT | sancov, fork server, Frida | sancov, Frida |
+| Shared memory | `memfd`/POSIX shm | POSIX shm | *not implemented* — the reason a C target there is black box |
+| Isolation | namespaces, seccomp, cgroups v2 → `strong` | Seatbelt profile, rlimits → `moderate` | job object → `minimal`; a restricted token would add filesystem confinement and is not implemented |
+| Crash classification | signals | signals | NTSTATUS exception codes translated to the equivalent signal (ADR-0033) |
+| Coverage | sancov, gocov, fork server, Frida, QEMU, Intel PT | sancov, gocov, fork server, Frida | gocov; blackbox for anything else |
+| Terminal driver | `/dev/ptmx` | `/dev/ptmx` | ConPTY, with no resize signal |
 | GUI driver | AT-SPI + X11/Wayland | Accessibility API | UI Automation |
+
+Read that table as of v0.7, with two qualifications it would otherwise imply
+away. Intel PT and the three GUI drivers are designed and unimplemented. The
+macOS and Windows rows are cross-built, cross-vetted and unit-tested where the
+logic is pure, and have not been run on their own operating systems — MVP_PLAN
+§ 7.6 says exactly which parts that leaves unverified.
 
 `xfuzz doctor` reports what is available on the running host and *why* anything
 is not, so degraded capability is visible rather than mysterious.
@@ -721,15 +729,15 @@ CI lints this matrix (see [TESTS.md](TESTS.md) § Documentation tests).
 | --- | --- |
 | ASR-0001 Multi-domain target coverage | ADR-0001, ADR-0004, ADR-0005, ADR-0009, ADR-0013, ADR-0014, ADR-0030, ADR-0031 |
 | ASR-0002 Stateless and stateful fuzzing | ADR-0004, ADR-0005, ADR-0006, ADR-0007, ADR-0013, ADR-0014 |
-| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027 |
+| ASR-0003 Black-, grey-, and white-box operation | ADR-0002, ADR-0007, ADR-0009, ADR-0026, ADR-0027, ADR-0032 |
 | ASR-0004 Pluggable guidance strategies | ADR-0006, ADR-0007, ADR-0010, ADR-0013, ADR-0028, ADR-0029, ADR-0030 |
 | ASR-0005 Dual interface — CLI and web console | ADR-0003, ADR-0011, ADR-0016, ADR-0024 |
-| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026, ADR-0027 |
+| ASR-0006 Cross-platform support | ADR-0002, ADR-0009, ADR-0012, ADR-0017, ADR-0022, ADR-0025, ADR-0026, ADR-0027, ADR-0032, ADR-0033 |
 | ASR-0007 Throughput and scalability | ADR-0001, ADR-0002, ADR-0009, ADR-0015, ADR-0017, ADR-0021, ADR-0027, ADR-0028 |
 | ASR-0008 Reproducibility and determinism | ADR-0008, ADR-0015, ADR-0016, ADR-0021, ADR-0025, ADR-0029, ADR-0030 |
 | ASR-0009 Extensibility | ADR-0010, ADR-0025, ADR-0031 |
-| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022 |
-| ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021 |
+| ASR-0010 Safety, isolation, and authorization | ADR-0003, ADR-0012, ADR-0014, ADR-0016, ADR-0022, ADR-0033 |
+| ASR-0011 Finding quality and triage | ADR-0008, ADR-0011, ADR-0021, ADR-0033 |
 | ASR-0012 Observability and resumability | ADR-0003, ADR-0008, ADR-0011, ADR-0024, ADR-0029 |
 | ASR-0013 Corpus and format interoperability | ADR-0001, ADR-0005, ADR-0008, ADR-0031 |
 | ASR-0014 Input validity and structure awareness | ADR-0005, ADR-0007, ADR-0010, ADR-0021, ADR-0028 |

@@ -72,6 +72,14 @@ looks, or disabled by configuration contributes a sentence to the isolation
 report, and that report is what a campaign refused for insufficient isolation is
 told.
 
+**Every mechanism named here is a Linux mechanism, and that is a statement about
+this record rather than about the other platforms.**
+[ADR-0033](ADR-0033-platform-isolation-and-terminal-parity.md) adds what macOS
+and Windows actually have — a Seatbelt profile and a job object — and adds one
+clause to the level policy for the first. Nothing in this record changes: the
+helper, the denylist, the cgroup rules and the honest-level principle are
+unaltered, and a host with none of them still reports what it has.
+
 ## Consequences
 
 **Positive**

@@ -47,7 +47,9 @@ says why anything is missing. The two lines to look at before anything else:
   no campaign will run, and the reason is here rather than fifteen minutes into
   one.
 - **`shared-memory`** — without it there is no coverage map, so only black-box
-  campaigns are possible. That is the normal state of affairs on Windows.
+  campaigns are possible. That is the normal state of affairs on Windows for a
+  C target; a Go target has its own route, and `go-coverage` is the line that
+  says so.
 
 If you mean to fuzz a terminal program, look at **`pseudo-terminal`** too. It is
 the one capability whose absence has no symptom: over pipes a curses program
@@ -218,8 +220,10 @@ feedback:
 ```
 
 Expect a smaller fraction of the input space explored and a slower rate — a
-process per execution rather than a fork server. It still finds bugs, and it is
-how macOS and Windows campaigns run.
+process per execution rather than a fork server. It still finds bugs, and on
+Windows it is how a C target runs: shared memory there is a Unix mechanism in
+this build, so an instrumented target has nowhere to write its map. A **Go**
+target is a different story on every platform — see below.
 
 With no coverage to collect, `executor: auto` picks the **pool**: processes are
 created before their input exists and handed it when it arrives, so the cost of
@@ -281,6 +285,49 @@ the first day rather than the fifth.
 ones the analysis missed, and sees them in order — so it is the one backend here
 that produces edge coverage. It is also the slowest and needs `qemu-user`
 installed.
+
+## Fuzzing a Go program
+
+A Go target needs no C compiler and no source change. Build it through the
+wrapper and point the campaign at it:
+
+```console
+$ xfuzz-cc --go -o ./target ./cmd/parse
+```
+
+```yaml
+target:
+  path: ./target
+  executor: subprocess
+feedback:
+  coverage: gocov
+  objectives: [crash, hang, oom]
+```
+
+`coverage:` has no auto mode — the default is `sancov`, which a Go target does
+not carry — so `gocov` has to be named. What happens underneath is that Go's own
+compiler instruments every package — the standard library included, so
+a program that spends its time in `encoding/json` is not invisible — and the
+Xfuzz runtime maps the counter array the target increments straight onto the
+region the fuzzer reads. Nothing is collected at the end of an execution, which
+is why **a run that crashes still reports its coverage**. On the same target and
+seeds over 20,000 executions, this kept 12 corpus entries where black box kept 2.
+
+Two things to know:
+
+- **The signal is blocks, not edges.** A counter says a basic block ran; it says
+  nothing about the order, so two inputs that took different routes through the
+  same blocks look identical. The campaign reports this granularity rather than
+  implying edges.
+- **No fork server.** The runtime's fork server is entered from a C constructor,
+  before the Go runtime has registered the counter array, so there would be
+  nothing to map at the moment of the fork. `target.executor: auto` therefore
+  resolves to `subprocess` here, and asking for `forkserver` explicitly is
+  refused with that reason rather than quietly downgraded.
+
+If the build fails for want of a C compiler, that is expected: the Xfuzz runtime
+is C and has to become an object file before Go's linker can be handed it. Any
+`cc` will do — it is not instrumenting anything.
 
 ## Aiming a campaign at one place
 
@@ -593,6 +640,19 @@ safety:
 
 The campaign refuses to start if the host cannot provide the level asked for.
 `xfuzz safety NAME` shows what is in force and why it is not higher.
+
+**What each platform can actually give you**
+([ADR-0033](adr/ADR-0033-platform-isolation-and-terminal-parity.md)):
+
+| Platform | Mechanism | Best level | What is missing |
+| --- | --- | --- | --- |
+| Linux | namespaces, a seccomp denylist, cgroups, the `xfuzz-sandbox` helper | `strong` | needs cgroup v2 and a read-only root for `strong`; `moderate` is common |
+| macOS | a Seatbelt profile denying writes outside the working directory and denying the network, plus rlimits | `moderate` | no separate identity unless Xfuzz runs as root |
+| Windows | a job object capping memory and process count, killing every target when the fuzzer lets go | `minimal` | no filesystem or network confinement: that needs a restricted token, which Xfuzz does not yet create |
+
+The macOS and Windows mechanisms are cross-built and unit-tested but have not
+been run on their own operating systems — see MVP_PLAN § 7.6. Treat the levels
+above as what the code intends to provide there.
 
 **A campaign that leaves the host needs authorization.** If your target reaches
 the network, the scope guard requires an allowlist and a statement of who

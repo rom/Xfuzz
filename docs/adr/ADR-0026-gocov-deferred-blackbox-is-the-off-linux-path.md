@@ -1,8 +1,18 @@
 # ADR-0026: `gocov` deferred; `blackbox` is the off-Linux path for v0.1
 
-- **Status:** Accepted
+- **Status:** Accepted, amended by [ADR-0032](ADR-0032-gocov-via-shared-inline-counters.md) in v0.7
 - **Date:** 2026-08-30
 - **Serves:** ASR-0003, ASR-0006
+
+> **Amendment (v0.7).** The deferral this record makes is lifted:
+> [ADR-0032](ADR-0032-gocov-via-shared-inline-counters.md) implements `gocov`
+> through the 8-bit counter interface this record's alternatives section
+> recommended. Everything else here stands — the covdata and
+> `internal/coverage` analyses, and the correction to MVP_PLAN § 1.1 — and the
+> one part that did not survive contact is called out where it appears: the
+> `atexit` fold the alternative proposed does not work, because Go leaves
+> through `exit_group` and runs no exit handler, and no target runs one when it
+> crashes. The counters are mapped into the fuzzer's region instead.
 
 ## Context
 
