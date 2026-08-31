@@ -62,6 +62,19 @@ type Snapshot struct {
 	// ASR-0007 caps it at 10%.
 	Overhead float64 `json:"overhead"`
 
+	// CmpExecs and CmpAdmitted are what comparison substitution cost and what it
+	// bought; SolverExecs and SolverAdmitted the same for the concolic stage.
+	//
+	// Reported separately from the totals because both stages are all-or-nothing
+	// in a way the rest of the loop is not: on a target with no constants to
+	// match, or with a solver that answers nothing useful, they spend executions
+	// and admit nothing. An operator deciding whether to keep paying for one
+	// needs the cost and the yield side by side, not folded into a rate.
+	CmpExecs       uint64 `json:"cmp_execs,omitempty"`
+	CmpAdmitted    uint64 `json:"cmp_admitted,omitempty"`
+	SolverExecs    uint64 `json:"solver_execs,omitempty"`
+	SolverAdmitted uint64 `json:"solver_admitted,omitempty"`
+
 	// PluginCalls and PluginSeconds are how often the campaign crossed the
 	// process boundary into an out-of-process extension and how long it waited
 	// there in total.
@@ -202,6 +215,14 @@ func (c *Collector) recompute() {
 		// what all of them paid, not what the busiest one did.
 		total.PluginCalls += s.PluginCalls
 		total.PluginSeconds += s.PluginSeconds
+
+		// Summed for the same reason: each worker runs its own stages, and what
+		// the campaign spent on substitution or on a solver is what all of them
+		// spent, not what the busiest one did.
+		total.CmpExecs += s.CmpExecs
+		total.CmpAdmitted += s.CmpAdmitted
+		total.SolverExecs += s.SolverExecs
+		total.SolverAdmitted += s.SolverAdmitted
 
 		if s.LastNewCoverage.After(total.LastNewCoverage) {
 			total.LastNewCoverage = s.LastNewCoverage

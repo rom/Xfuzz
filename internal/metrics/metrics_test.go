@@ -37,6 +37,42 @@ func TestCollectorSumsRatesAndTakesTheMaximumOfSharedFacts(t *testing.T) {
 	}
 }
 
+// TestCollectorSumsWhatEachWorkerSpentSeparately covers the counters whose
+// aggregation is the opposite of coverage's, and which are easy to get wrong for
+// exactly that reason.
+//
+// Coverage, corpus and findings are campaign-wide facts each worker observes
+// through a shared store, so the maximum is the answer. Work *done* is not
+// shared: each worker runs its own stages against its own target, so what the
+// campaign spent on comparison substitution or on a solver is what all of them
+// spent. Taking the maximum would under-report the cost of the one feature an
+// operator is most likely to be deciding whether to keep paying for.
+func TestCollectorSumsWhatEachWorkerSpentSeparately(t *testing.T) {
+	c := NewCollector(time.Hour)
+	c.Report(0, Snapshot{
+		Execs: 100, CmpExecs: 40, CmpAdmitted: 3, SolverExecs: 5, SolverAdmitted: 1,
+	})
+	c.Report(1, Snapshot{
+		Execs: 100, CmpExecs: 60, CmpAdmitted: 4, SolverExecs: 7, SolverAdmitted: 2,
+	})
+
+	s := c.Snapshot()
+	for _, tc := range []struct {
+		name string
+		got  uint64
+		want uint64
+	}{
+		{"cmp execs", s.CmpExecs, 100},
+		{"cmp admitted", s.CmpAdmitted, 7},
+		{"solver execs", s.SolverExecs, 12},
+		{"solver admitted", s.SolverAdmitted, 3},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %d, want the sum %d", tc.name, tc.got, tc.want)
+		}
+	}
+}
+
 func TestCollectorHandlesAWorkerRestart(t *testing.T) {
 	c := NewCollector(time.Hour)
 	c.Report(0, Snapshot{Execs: 1000})
