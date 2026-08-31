@@ -2,6 +2,7 @@ package campaign
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -41,20 +42,25 @@ var (
 
 // The driver backends. One, for now: ADR-0013's desktop backends each need a
 // platform, a session and a display, and none of them is implemented.
-const DriverTUI = "tui"
+const (
+	DriverTUI = "tui"
+	DriverWeb = "web"
+)
 
 // The interface oracles.
 const (
 	DriverOracleDiagnostic   = "diagnostic"
 	DriverOracleUnresponsive = "unresponsive"
 	DriverOracleTrap         = "trap"
+	DriverOracleException    = "exception"
 )
 
 // DriverKinds and DriverOracles list what the file may say.
 var (
-	DriverKinds   = []string{DriverTUI}
+	DriverKinds   = []string{DriverTUI, DriverWeb}
 	DriverOracles = []string{
 		DriverOracleDiagnostic, DriverOracleUnresponsive, DriverOracleTrap,
+		DriverOracleException,
 	}
 )
 
@@ -159,12 +165,17 @@ func (r *Resolved) validateDriver(add addFunc) {
 		add("driver.kind", fmt.Sprintf("%q is not a driver backend", d.Kind),
 			"one of "+listOf(DriverKinds))
 	}
-	if d.Cols < 8 || d.Cols > 1000 {
-		add("driver.cols", fmt.Sprintf("%d is outside 8..1000", d.Cols),
-			"a terminal narrower than eight columns is not one a program draws in")
-	}
-	if d.Rows < 4 || d.Rows > 1000 {
-		add("driver.rows", fmt.Sprintf("%d is outside 4..1000", d.Rows), "")
+	switch d.Kind {
+	case DriverWeb:
+		r.validateWebDriver(add)
+	default:
+		if d.Cols < 8 || d.Cols > 1000 {
+			add("driver.cols", fmt.Sprintf("%d is outside 8..1000", d.Cols),
+				"a terminal narrower than eight columns is not one a program draws in")
+		}
+		if d.Rows < 4 || d.Rows > 1000 {
+			add("driver.rows", fmt.Sprintf("%d is outside 4..1000", d.Rows), "")
+		}
 	}
 	if d.MaxEvents < 1 {
 		add("driver.max_events", "must be at least 1",
@@ -187,6 +198,16 @@ func (r *Resolved) validateDriver(add addFunc) {
 		if !oneOf(o, DriverOracles) {
 			add("driver.oracles", fmt.Sprintf("%q is not an oracle", o),
 				"one of "+listOf(DriverOracles))
+		}
+	}
+	if d.Kind != DriverWeb {
+		for _, o := range d.Oracles {
+			if o == DriverOracleException {
+				add("driver.oracles", "the exception oracle is a web oracle",
+					"it reports what the browser's protocol said, and only the web "+
+						"backend has one; a terminal program's diagnostics reach the "+
+						"screen, which is what the diagnostic oracle reads")
+			}
 		}
 	}
 	if d.Guide != nil && !*d.Guide && len(d.Oracles) == 0 {
@@ -214,4 +235,34 @@ func mustRead(add addFunc, field, path string) {
 // It matches pkg/state's registry, which is what actually reads these.
 var normaliserNames = map[string]bool{
 	"digits": true, "quoted": true, "space": true, "spinner": true, "runs": true,
+}
+
+// validateWebDriver checks the fields only a web campaign uses.
+func (r *Resolved) validateWebDriver(add addFunc) {
+	d := r.Driver
+	if d.URL == "" {
+		add("driver.url", "is required for a web campaign",
+			"the browser is the harness; what is under test is whatever answers "+
+				"this URL")
+	} else if u, err := url.Parse(d.URL); err != nil {
+		add("driver.url", fmt.Sprintf("%q is not a URL: %v", d.URL, err), "")
+	} else if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "file" {
+		add("driver.url", fmt.Sprintf("%q is not a scheme a browser can be pointed at", u.Scheme),
+			"http, https or file")
+	}
+	if d.Width < 100 || d.Width > 10000 {
+		add("driver.width", fmt.Sprintf("%d is outside 100..10000", d.Width),
+			"a viewport narrower than a hundred pixels is not one a page lays out in")
+	}
+	if d.Height < 100 || d.Height > 10000 {
+		add("driver.height", fmt.Sprintf("%d is outside 100..10000", d.Height), "")
+	}
+	if !r.Safety.Network {
+		// Not a warning: it does not work. A browser in a network namespace of
+		// its own has its own loopback, so the debugging endpoint it announces
+		// is unreachable and it could not load the page either.
+		add("driver.url", "a web campaign needs safety.network",
+			"the browser must reach the page and the fuzzer must reach the browser; "+
+				"set safety.network: true and constrain it with safety.scope")
+	}
 }

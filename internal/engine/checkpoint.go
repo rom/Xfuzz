@@ -196,12 +196,26 @@ func (e *Engine) traceCorpus(ctx context.Context) {
 		if e.cfg.State.HasTrace(tc.ID) {
 			continue
 		}
-		_, err := e.cfg.Executor.Run(ctx,
+		ek, err := e.cfg.Executor.Run(ctx,
 			executor.Input{Bytes: tc.Bytes, Node: tc.Input}, e.cfg.Observers)
 		if err != nil {
 			return
 		}
 		e.stats.Execs++
 		e.cfg.State.Record(tc.ID)
+
+		// An execution is an execution: if this entry is a finding, it is one
+		// now rather than whenever a mutation happens to rediscover it.
+		//
+		// This pass exists to give each entry a state trace, and it ran the
+		// entry without judging it — so a seed that already reproduced a bug was
+		// admitted to the corpus in silence. On a fast tier that costs a few
+		// thousand executions; on the driver tier, where an operator's seed is
+		// usually the reproducer they are trying to minimise, the campaign can
+		// run for its whole budget without ever saying what its first input
+		// already showed.
+		if found, f, oerr := e.cfg.Objective.IsFinding(e.cfg.Observers, ek); oerr == nil && found {
+			e.record(f, tc.Bytes)
+		}
 	}
 }

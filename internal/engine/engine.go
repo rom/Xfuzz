@@ -352,6 +352,21 @@ func (e *Engine) AddSeed(ctx context.Context, data []byte, origin string) error 
 	}
 	tc.Meta.ExecTime = time.Since(start)
 
+	// A seed is judged by the objectives like any other execution.
+	//
+	// It was not, and the gap was quiet in exactly the way that matters: an
+	// operator who hands the fuzzer a reproducer as a seed — which is the
+	// obvious thing to do with one — got a campaign that admitted it to the
+	// corpus and said nothing, until a mutation happened to rediscover the same
+	// bug. On a fast tier that is a few thousand executions and looks like
+	// nothing; on the driver tier, at ten executions a second and with a
+	// sequence alphabet, it can be never.
+	if found, f, oerr := e.cfg.Objective.IsFinding(e.cfg.Observers, ek); oerr != nil {
+		return fmt.Errorf("engine: judging a seed: %w", oerr)
+	} else if found {
+		e.record(f, encoded)
+	}
+
 	interesting, score, err := e.cfg.Feedback.IsInteresting(e.cfg.Observers, ek)
 	if err != nil {
 		return fmt.Errorf("engine: judging a seed: %w", err)

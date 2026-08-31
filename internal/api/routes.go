@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rom/Xfuzz/internal/daemon"
+	"github.com/rom/Xfuzz/internal/driver"
 	"github.com/rom/Xfuzz/internal/metrics"
 	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/safety"
@@ -1005,6 +1006,11 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 		Detail: ptyDetail(),
 	})
 
+	// The browser, which is what a web campaign drives (ADR-0034). Reported by
+	// name when one is found, because "a browser" is not enough to know whether
+	// the campaign will run the one that was meant.
+	cs = append(cs, browserCapability())
+
 	// The three things a new install gets wrong that the mechanism checks
 	// above do not cover. Each is something someone hits on their first
 	// campaign and cannot diagnose from the failure it produces.
@@ -1023,6 +1029,18 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 		Capabilities: cs,
 		Notes:        caps.Notes,
 	})
+}
+
+// browserCapability reports the browser a web campaign would drive.
+func browserCapability() Capability {
+	path, err := driver.FindBrowser("")
+	if err != nil {
+		return Capability{Name: "browser", Available: false,
+			Detail: "no browser found: a web campaign drives one over its debugging " +
+				"protocol, so install Chromium or Chrome, or set driver.browser"}
+	}
+	return Capability{Name: "browser", Available: true,
+		Detail: path + " — driven over the Chrome DevTools Protocol for a web campaign"}
 }
 
 // ptyDetail says what a missing pseudo-terminal costs and, where it can, why it

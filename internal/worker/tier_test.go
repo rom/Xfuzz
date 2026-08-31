@@ -187,3 +187,95 @@ func TestWorkerDrivesATerminalProgram(t *testing.T) {
 		t.Errorf("the findings are %v; none came from the interface", obs.kinds)
 	}
 }
+
+// TestWorkerDrivesAWebApplication is the v0.8 path end to end: a browser is the
+// harness, a page is the target, a sequence of keystrokes and clicks is the
+// input, and the finding is an exception nothing else would have noticed —
+// the process does not exit, no signal is raised, and the HTTP status is 200.
+//
+// The whole machine, deliberately. What ADR-0013 claims about the driver tier
+// is that a second interface domain costs one backend and nothing else: the
+// same corpus, the same mutation operators over an IR Repeat, the same state
+// model, the same triage. This test fails if any of that turned out to need a
+// special case.
+func TestWorkerDrivesAWebApplication(t *testing.T) {
+	browser := testenv.Browser(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, webBugPage)
+	}))
+	defer srv.Close()
+
+	host := strings.TrimPrefix(srv.URL, "http://")
+	body := "name: webtest\n" +
+		"target:\n  path: " + browser + "\n" +
+		"driver:\n" +
+		"  kind: web\n  url: " + srv.URL + "\n" +
+		"  settle: 40ms\n  max_events: 10\n  width: 400\n  height: 300\n" +
+		"  start_timeout: 15s\n" +
+		// The browser's own sandbox is off because the suite runs as root in a
+		// container, where Chromium refuses to start with it. A campaign on an
+		// ordinary machine leaves it on, which is the default.
+		"  browser_sandbox: false\n" +
+		"  oracles: [exception]\n" +
+		"seeds:\n  inline: [\"click 100,20\\ntext xyzz\\nkey y\\n\", \"click 50,70\\nkey tab\\n\"]\n" +
+		"feedback:\n  coverage: none\n  novelty: true\n" +
+		"safety:\n  network: true\n" +
+		"  scope:\n    allow: [\"" + host + "\"]\n" +
+		"  authorization:\n" +
+		"    operator: \"suite@example.test\"\n" +
+		"    reference: \"XFUZZ-TESTS\"\n" +
+		"    attestation: \"authorised to test the declared scope\"\n" +
+		"stop:\n  execs: 60\n"
+
+	cfgPath := writeFile(t, t.TempDir(), "c.yaml", body)
+	cfg, err := campaign.Load(cfgPath)
+	if err != nil {
+		t.Fatalf("loading the campaign: %v\n%s", err, body)
+	}
+
+	obs := runWorker(t, cfg, func(o *observer) bool { return o.findings > 0 },
+		"no finding from a page whose handler throws on one particular input",
+		240*time.Second)
+
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	t.Logf("ready: %s seeds: %d findings: %v execs: %d logs: %v",
+		obs.ready.Executor, obs.ready.Seeds, obs.kinds, obs.execs, obs.logs)
+	if !strings.Contains(obs.ready.Executor, "web") {
+		t.Errorf("the worker built the %q tier", obs.ready.Executor)
+	}
+	if obs.execs == 0 {
+		t.Error("the worker reported no executions")
+	}
+	if obs.kinds["ui-exception"] == 0 {
+		t.Errorf("the findings are %v; the exception oracle reported none, so the "+
+			"uncaught error never reached a finding", obs.kinds)
+	}
+}
+
+// webBugPage is a page that fails the way web applications fail: an exception
+// inside an event handler, reachable only by typing one particular string.
+const webBugPage = `<!doctype html>
+<html><head><title>xfuzz web target</title>
+<style>
+ body { margin: 0; font: 16px sans-serif; }
+ #q   { position: absolute; left: 0;    top: 0;    width: 200px; height: 40px; }
+ #go  { position: absolute; left: 0;    top: 50px; width: 100px; height: 40px; }
+ #box { position: absolute; left: 0;    top: 100px; }
+</style></head>
+<body>
+<input id="q" type="text">
+<button id="go">go</button>
+<div id="box" hidden><p>opened</p></div>
+<script>
+var q = document.getElementById('q');
+q.addEventListener('keyup', function () {
+  if (q.value === 'xyzzy') { null.explode(); }
+});
+document.getElementById('go').addEventListener('click', function () {
+  document.getElementById('box').hidden = false;
+});
+</script>
+</body></html>`

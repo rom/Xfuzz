@@ -403,25 +403,6 @@ func TestDecodeEventsFallsBackToBytes(t *testing.T) {
 	}
 }
 
-func TestEventStringRoundTrips(t *testing.T) {
-	// key, click, resize and wait are the forms a person edits; text is quoted
-	// on the way out, so it round-trips through the quoting rather than exactly.
-	for _, e := range []executor.Event{
-		{Kind: executor.EventKey, Text: "enter"},
-		{Kind: executor.EventClick, X: 10, Y: 4},
-	} {
-		s := e.String()
-		back, ok := executor.ParseEvent(strings.ReplaceAll(s, ",", " "))
-		if !ok {
-			t.Errorf("%q did not parse back", s)
-			continue
-		}
-		if back != e {
-			t.Errorf("%v printed as %q parsed back as %v", e, s, back)
-		}
-	}
-}
-
 // TestDriverSkipsAnEventTheBackendCannotDeliver is the distinction that decides
 // whether a T7 campaign runs past its first interesting mutation. "key enter"
 // becomes "key eykm 226" after two operators, and every sequence in a corpus
@@ -447,5 +428,94 @@ func TestDriverSkipsAnEventTheBackendCannotDeliver(t *testing.T) {
 	d2 := newTestDriver(t, be2, executor.DriverOptions{})
 	if _, err := d2.Run(t.Context(), executor.Input{Bytes: []byte("key a\n")}, nil); err == nil {
 		t.Error("a broken backend was skipped rather than reported")
+	}
+}
+
+func TestAnEventRoundTripsThroughItsOwnText(t *testing.T) {
+	// The property that was missing: String printed "click 100,20" and
+	// "resize 80x24" while ParseEvent wanted spaces, so an event copied from an
+	// error message into a seed file was dropped — and a dropped event looks
+	// exactly like a sequence that did nothing interesting.
+	for _, want := range []executor.Event{
+		{Kind: executor.EventKey, Text: "enter"},
+		{Kind: executor.EventKey, Text: "ctrl-c"},
+		{Kind: executor.EventText, Text: "hello world"},
+		{Kind: executor.EventClick, X: 100, Y: 20},
+		{Kind: executor.EventResize, X: 80, Y: 24},
+		{Kind: executor.EventWait, Delay: 250 * time.Millisecond},
+	} {
+		line := want.String()
+		got, ok := executor.ParseEvent(line)
+		if !ok {
+			t.Errorf("%q does not parse back", line)
+			continue
+		}
+		if got != want {
+			t.Errorf("%q parsed to %+v, want %+v", line, got, want)
+		}
+	}
+}
+
+func TestAPairIsReadTheWayAPersonWritesIt(t *testing.T) {
+	// A seed file is written by hand, and "click 100,20" is what a person types.
+	for _, line := range []string{"click 100 20", "click 100,20"} {
+		ev, ok := executor.ParseEvent(line)
+		if !ok || ev.X != 100 || ev.Y != 20 {
+			t.Errorf("executor.ParseEvent(%q) = %+v, %v", line, ev, ok)
+		}
+	}
+	for _, line := range []string{"resize 80 24", "resize 80x24"} {
+		ev, ok := executor.ParseEvent(line)
+		if !ok || ev.X != 80 || ev.Y != 24 {
+			t.Errorf("executor.ParseEvent(%q) = %+v, %v", line, ev, ok)
+		}
+	}
+	// Still refused where there is no pair at all, so a mutated line does not
+	// become a click at the origin.
+	for _, line := range []string{"click", "click 10", "click a,b", "resize x"} {
+		if ev, ok := executor.ParseEvent(line); ok {
+			t.Errorf("executor.ParseEvent(%q) = %+v, want a refusal", line, ev)
+		}
+	}
+}
+
+// TestDriverTreatsATimedOutEventAsATimeout is the difference between a campaign
+// that survives a slow sequence and one that dies on it. A mutator writes
+// "wait 2562047h"; the sequence's budget runs out mid-event; the backend
+// reports a cancelled context. That is the sequence running out of time, not
+// the harness breaking, and reporting the second ends the campaign.
+func TestDriverTreatsATimedOutEventAsATimeout(t *testing.T) {
+	be := &fakeUI{sendErr: context.DeadlineExceeded}
+	d := newTestDriver(t, be, executor.DriverOptions{Timeout: 20 * time.Millisecond})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the sequence's budget is already gone
+	ek, err := d.Run(ctx, executor.Input{Bytes: []byte("key a\nkey b\n")}, nil)
+	if err != nil {
+		t.Fatalf("a cancelled sequence was reported as a harness failure: %v", err)
+	}
+	if ek != feedback.ExitTimeout {
+		t.Errorf("exit kind %v, want ExitTimeout", ek)
+	}
+}
+
+func TestDriverClampsAWaitToSomethingSurvivable(t *testing.T) {
+	// The clamp is what keeps one absurd duration from spending a whole
+	// sequence's budget, after which every later event in it is cut off.
+	be := &fakeUI{}
+	d := newTestDriver(t, be, executor.DriverOptions{Timeout: 30 * time.Second})
+
+	start := time.Now()
+	seq := "wait 2562047h47m16s\nkey a\n"
+	if _, err := d.Run(t.Context(), executor.Input{Bytes: []byte(seq)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > executor.MaxEventWait+2*time.Second {
+		t.Fatalf("the sequence took %s; the wait was not clamped", elapsed)
+	}
+	// And the event after the wait still arrived, which is the point.
+	got := be.delivered()
+	if len(got) != 2 || got[1].Text != "a" {
+		t.Errorf("delivered %v; the event after the wait was lost", got)
 	}
 }

@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/rom/Xfuzz/internal/driver"
 	"github.com/rom/Xfuzz/internal/safety"
@@ -21,38 +22,16 @@ import (
 // is different is one backend and one state function.
 func (b *built) buildDriver(ctx context.Context, cfg *campaign.Resolved) error {
 	d := cfg.Driver
-	if d.Kind != campaign.DriverTUI {
-		return fmt.Errorf("worker: driver.kind %q is not implemented; only %q is",
-			d.Kind, campaign.DriverTUI)
+	backend, err := b.driverBackend(cfg)
+	if err != nil {
+		return err
 	}
-	if !safety.PTYSupported() {
-		return fmt.Errorf("worker: this host has no pseudo-terminal support, so a " +
-			"terminal program cannot be driven here — over pipes isatty is false, " +
-			"the size is unknown and there is no controlling terminal, which is a " +
-			"different program from the one the campaign meant to fuzz")
-	}
-
-	spawner := safety.NewSpawner()
-	spawner.Sandbox = b.sandbox
-
-	t := cfg.Target
-	backend := driver.NewTUI(spawner, driver.TUIOptions{
-		Path:           t.Path,
-		Args:           append([]string{t.Path}, t.Args...),
-		Env:            procSpecFor(cfg).Env,
-		Dir:            t.Dir,
-		Cols:           d.Cols,
-		Rows:           d.Rows,
-		Settle:         d.Settle.Std(),
-		StartTimeout:   d.StartTimeout.Std(),
-		MaxOutputBytes: int64(d.MaxOutputBytes),
-	})
 
 	reset := executor.ResetRestart
 	if d.Reset == "none" {
 		reset = executor.ResetNone
 	}
-	e := executor.NewDriver("tui", backend, executor.DriverOptions{
+	e := executor.NewDriver(d.Kind, backend, executor.DriverOptions{
 		Timeout:   d.Timeout.Std(),
 		Settle:    d.Settle.Std(),
 		MaxEvents: d.MaxEvents,
@@ -87,9 +66,110 @@ func (b *built) buildDriver(ctx context.Context, cfg *campaign.Resolved) error {
 		return err
 	}
 	b.executor = e
-	b.tier = "tui"
-	b.closers = append(b.closers, closer{"terminal driver", e.Close})
+	b.tier = d.Kind
+	b.closers = append(b.closers, closer{d.Kind + " driver", e.Close})
 	return nil
+}
+
+// driverBackend builds the one backend the campaign asked for.
+//
+// The dispatch is here and nowhere else: everything after it — the corpus, the
+// mutation operators, the state model, the oracles — is written against
+// executor.DriverBackend and never learns which one it got. That is the claim
+// ADR-0013 makes about the tier, and a second switch anywhere below would be
+// the first sign it had stopped being true.
+func (b *built) driverBackend(cfg *campaign.Resolved) (executor.DriverBackend, error) {
+	d := cfg.Driver
+	spawner := safety.NewSpawner()
+	spawner.Sandbox = b.sandbox
+
+	switch d.Kind {
+	case campaign.DriverTUI:
+		if !safety.PTYSupported() {
+			return nil, fmt.Errorf("worker: this host has no pseudo-terminal support, so a " +
+				"terminal program cannot be driven here — over pipes isatty is false, " +
+				"the size is unknown and there is no controlling terminal, which is a " +
+				"different program from the one the campaign meant to fuzz")
+		}
+		t := cfg.Target
+		return driver.NewTUI(spawner, driver.TUIOptions{
+			Path:           t.Path,
+			Args:           append([]string{t.Path}, t.Args...),
+			Env:            procSpecFor(cfg).Env,
+			Dir:            t.Dir,
+			Cols:           d.Cols,
+			Rows:           d.Rows,
+			Settle:         d.Settle.Std(),
+			StartTimeout:   d.StartTimeout.Std(),
+			MaxOutputBytes: int64(d.MaxOutputBytes),
+		}), nil
+
+	case campaign.DriverWeb:
+		// A browser cannot start under an address-space limit, and the limit is
+		// not the right instrument for one anyway.
+		//
+		// A modern JavaScript engine *reserves* address space by the terabyte —
+		// the pointer-compression cage alone is gigabytes per isolate — and
+		// touches almost none of it. RLIMIT_AS counts the reservation, so a
+		// campaign's ordinary 2 GiB cap does not constrain the browser's memory
+		// use, it stops the browser from launching: measured here, Chromium
+		// under `ulimit -v 2097152` never reaches the point of announcing its
+		// debugging endpoint, and the only symptom upstream was a protocol
+		// command that never answered.
+		//
+		// So the browser's spawner gets a sandbox with that one limit dropped.
+		// Everything else the campaign asked for stays: the namespaces, the
+		// filter, the process cap, the working directory, and the cgroup — and
+		// the cgroup is the mechanism that actually bounds a browser's memory,
+		// because it counts pages in use rather than address space reserved.
+		browserSandbox := b.sandbox.Clone()
+		browserSandbox.Limits.AddressSpaceBytes = 0
+		if browserSandbox.Limits.Processes > 0 &&
+			browserSandbox.Limits.Processes < driver.MinBrowserProcesses {
+			// The same argument for the same reason: a campaign's process cap
+			// is sized for a parser, and a browser under it starts, announces
+			// its endpoint and then cannot fork a renderer. Raised to a floor
+			// rather than removed, so a runaway browser is still bounded.
+			browserSandbox.Limits.Processes = driver.MinBrowserProcesses
+		}
+		browserSandbox.Name = b.sandbox.Name + "-browser"
+		spawner = safety.NewSpawner()
+		spawner.Sandbox = browserSandbox
+		b.closers = append(b.closers, closer{"browser sandbox", browserSandbox.Close})
+
+		browser := d.Browser
+		if browser == "" {
+			// target.path names the browser when it is somewhere no probe would
+			// look. It is not the target: for a web campaign the target is
+			// whatever answers driver.url.
+			browser = cfg.Target.Path
+		}
+		sandboxBrowser := d.BrowserSandbox == nil || *d.BrowserSandbox
+		w := driver.NewWeb(spawner, driver.WebOptions{
+			URL:            d.URL,
+			Browser:        browser,
+			Args:           d.BrowserArgs,
+			Env:            procSpecFor(cfg).Env,
+			Width:          d.Width,
+			Height:         d.Height,
+			StartTimeout:   d.StartTimeout.Std(),
+			Settle:         d.Settle.Std(),
+			Headed:         d.Headed,
+			BrowserSandbox: sandboxBrowser,
+			// The browser's debugging port, which is the control channel to a
+			// harness this fuzzer started rather than traffic the campaign
+			// aimed anywhere. It is dialled through the safety layer and
+			// audited, and it is loopback or it is refused (ADR-0034).
+			Dial: b.scope.DialControl,
+		})
+		if !w.Supported() {
+			_, err := driver.FindBrowser(browser)
+			return nil, fmt.Errorf("worker: %w", err)
+		}
+		return w, nil
+	}
+	return nil, fmt.Errorf("worker: driver.kind %q is not implemented; one of %s",
+		d.Kind, strings.Join(campaign.DriverKinds, ", "))
 }
 
 // driverObjectives builds the interface oracles a campaign asked for.
@@ -113,6 +193,8 @@ func driverObjectives(cfg *campaign.Resolved, out *feedback.OutputObserver,
 				continue
 			}
 			objs = append(objs, feedback.NewUIUnresponsiveObjective("ui-unresponsive", g.Observer))
+		case campaign.DriverOracleException:
+			objs = append(objs, feedback.NewUIExceptionObjective("ui-exception", out))
 		case campaign.DriverOracleTrap:
 			if g == nil || g.Observer == nil {
 				continue

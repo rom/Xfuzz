@@ -3,6 +3,7 @@ package safety
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"strings"
 	"sync"
@@ -236,5 +237,56 @@ func TestLastAddr(t *testing.T) {
 		if got := lastAddr(p); got.String() != want {
 			t.Errorf("lastAddr(%s) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+func TestDialControlRefusesAnythingButLoopback(t *testing.T) {
+	// The exception is narrow on purpose: it exists so a fuzzer can talk to a
+	// browser it just launched, and a harness this fuzzer started is always on
+	// loopback. Anything else reaching through it would be an unaudited hole
+	// straight past the allowlist.
+	s, err := NewScopeFrom(ScopeSpec{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, addr := range []string{"93.184.216.34:80", "10.0.0.5:9222", "[2001:db8::1]:9222"} {
+		if _, err := s.DialControl(context.Background(), "tcp", addr); err == nil {
+			t.Errorf("DialControl(%s) connected", addr)
+		} else if !errors.Is(err, ErrOutOfScope) {
+			t.Errorf("DialControl(%s) failed for the wrong reason: %v", addr, err)
+		}
+	}
+	// A name rather than an address is refused too: resolution is where a
+	// loopback check can be made to lie.
+	if _, err := s.DialControl(context.Background(), "tcp", "localhost:9222"); err == nil {
+		t.Error("DialControl accepted a hostname")
+	}
+}
+
+func TestDialControlReachesALoopbackHarness(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err == nil {
+			c.Close()
+		}
+	}()
+	s, err := NewScopeFrom(ScopeSpec{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := s.DialControl(context.Background(), "tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("a loopback control channel was refused: %v", err)
+	}
+	c.Close()
+	// Recorded, because a connection the fuzzer makes is one the operator is
+	// entitled to see even when no rule had to permit it.
+	if allowed, _ := s.Stats(); allowed == 0 {
+		t.Error("the control connection was not counted")
 	}
 }

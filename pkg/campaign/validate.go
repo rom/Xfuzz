@@ -100,6 +100,13 @@ func (r *Resolved) validateTarget(add addFunc) {
 			// exist for this kind of campaign.
 			return
 		}
+		if r.Driver != nil && r.Driver.Kind == DriverWeb {
+			// A web campaign spawns a browser, and the browser is the harness
+			// rather than the target: what is under test is whatever answers
+			// driver.url. target.path names the browser only when it is
+			// somewhere no probe would look.
+			return
+		}
 		add("target.path", "is required", "the campaign has nothing to run")
 		return
 	}

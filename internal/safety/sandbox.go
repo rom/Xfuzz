@@ -166,6 +166,37 @@ type Sandbox struct {
 	cgroup *platform.Cgroup
 }
 
+// Clone returns a sandbox with the same configuration and none of the state.
+//
+// Configuration only: the probe result, the mutex and the campaign's cgroup
+// stay behind, so the copy detects for itself and owns its own group. That is
+// what makes it safe to hand one subsystem a slightly different sandbox from
+// the rest of the campaign — which the web driver needs, because the address
+// space limit a target should have is not one a browser can start under.
+//
+// Written field by field rather than by copying the struct, because the struct
+// contains a sync.Once and a mutex and copying those is the bug this exists to
+// avoid. A field added above and not added here is a setting the copy silently
+// loses, which is why the two lists are adjacent.
+func (s *Sandbox) Clone() *Sandbox {
+	return &Sandbox{
+		Require:      s.Require,
+		Workdir:      s.Workdir,
+		Creates:      append([]string(nil), s.Creates...),
+		Target:       s.Target,
+		Network:      s.Network,
+		HostPIDs:     s.HostPIDs,
+		Writable:     append([]string(nil), s.Writable...),
+		WritableRoot: s.WritableRoot,
+		NoSeccomp:    s.NoSeccomp,
+		Unconfined:   s.Unconfined,
+		Limits:       s.Limits,
+		HelperPath:   s.HelperPath,
+		Auditor:      s.Auditor,
+		Name:         s.Name,
+	}
+}
+
 // Probe determines what this host can do and what level that adds up to.
 //
 // It is separate from applying the sandbox so that a campaign can be refused
@@ -517,6 +548,26 @@ func FindTool(name string) (string, error) {
 		return p, nil
 	}
 	return "", fmt.Errorf("safety: %s was not found beside the running binary or on PATH", name)
+}
+
+// FindProgram locates a third-party program on PATH.
+//
+// Separate from FindTool, and the difference is which directory is trusted.
+// FindTool prefers the copy beside the running binary because that is Xfuzz's
+// own tarball layout; a browser, an emulator or an instrumentation tool is not
+// Xfuzz's and has no business being resolved from a directory just because
+// something dropped a file there. PATH only, so what runs is what the operator
+// installed.
+//
+// Here rather than in the caller for the reason FindTool is here: looking a
+// program up is part of deciding what to execute, and that decision belongs to
+// the spawn boundary (ARCHITECTURE section 2).
+func FindProgram(name string) (string, error) {
+	p, err := exec.LookPath(name)
+	if err != nil {
+		return "", fmt.Errorf("safety: %s was not found on PATH: %w", name, err)
+	}
+	return p, nil
 }
 
 // exeSuffix is what this platform puts on the end of an executable.

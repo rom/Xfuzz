@@ -282,6 +282,48 @@ func (s *Scope) Dial(ctx context.Context, network, address string) (net.Conn, er
 	return d.DialContext(ctx, network, address)
 }
 
+// DialControl connects to the control channel of a harness this fuzzer started.
+//
+// It does not consult the allowlist, and that is a deliberate exception with a
+// narrow shape: the destination must be loopback, and what is on the other end
+// is a process this fuzzer spawned itself — a browser's debugging port, which
+// is the same kind of thing as a fork server's pipes. Requiring an operator to
+// list 127.0.0.1 in a campaign's scope to let Xfuzz talk to a browser it just
+// launched would teach them to allow loopback wholesale, which is a far larger
+// hole than this.
+//
+// It is still audited, under the ordinary allow action, because a connection
+// the fuzzer makes is a connection the operator is entitled to see.
+//
+// What this does NOT do is constrain the harness. A browser runs in the host's
+// network namespace — it has to, or it could reach neither the page nor
+// anything else — so the scope guard cannot see or stop where *it* connects.
+// That limit is real and is stated in ADR-0034 rather than implied by the
+// presence of a guard.
+func (s *Scope) DialControl(ctx context.Context, network, address string) (net.Conn, error) {
+	host, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("safety: %q is not a host:port: %w", address, err)
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return nil, fmt.Errorf("safety: a control channel must be an address, not a "+
+			"name: %q", host)
+	}
+	if !ip.Unmap().IsLoopback() {
+		return nil, fmt.Errorf("%w: %s is not loopback, and a control channel to a "+
+			"harness this fuzzer started always is", ErrOutOfScope, address)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return nil, fmt.Errorf("safety: %q has no valid port: %w", address, err)
+	}
+	s.record(ctx, true, netip.AddrPortFrom(ip.Unmap(), uint16(port)), "harness control channel")
+
+	var d net.Dialer
+	return d.DialContext(ctx, network, address)
+}
+
 // Stats returns how many connections were allowed and refused.
 func (s *Scope) Stats() (allowed, denied uint64) {
 	s.mu.Lock()

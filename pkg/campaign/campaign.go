@@ -393,19 +393,47 @@ type API struct {
 // different moments, and the whole thing runs five orders of magnitude slower
 // than a parser — which is why almost everything here is a bound.
 type Driver struct {
-	// Kind is the backend: tui.
+	// Kind is the backend: tui or web.
 	//
-	// The desktop backends ADR-0013 names — accessibility trees on Linux, UI
-	// Automation on Windows, the accessibility API on macOS, a debugging
-	// protocol for the web — each need a platform, a session and a display, and
-	// none of them is implemented.
-	Kind string `yaml:"kind,omitempty" json:"kind,omitempty" doc:"Driver backend: tui."`
+	// The desktop backends ADR-0013 also names — accessibility trees on Linux,
+	// UI Automation on Windows, the accessibility API on macOS — each need a
+	// platform, a session and a display, and none of them is implemented.
+	Kind string `yaml:"kind,omitempty" json:"kind,omitempty" doc:"Driver backend: tui or web."`
+
+	// URL is the page a web campaign drives.
+	//
+	// The target of a web campaign is on the other side of it: the browser is
+	// the harness, so target.path names the browser only when it is not on
+	// PATH, and what is under test is whatever answers here.
+	URL string `yaml:"url,omitempty" json:"url,omitempty" doc:"The page a web campaign drives."`
+
+	// Browser is the executable to drive. Empty means probe for one.
+	Browser string `yaml:"browser,omitempty" json:"browser,omitempty" doc:"Browser executable for a web campaign; empty probes for one."`
+
+	// BrowserArgs are extra flags appended to the browser's command line.
+	BrowserArgs []string `yaml:"browser_args,omitempty" json:"browser_args,omitempty" doc:"Extra browser flags."`
+
+	// BrowserSandbox keeps the browser's own sandbox, which is a different
+	// layer from the one Xfuzz puts around the browser: it is what stands
+	// between a hostile page and the machine. On by default, and worth leaving
+	// on — a browser that refuses to start without it says so in its own words.
+	BrowserSandbox *bool `yaml:"browser_sandbox,omitempty" json:"browser_sandbox,omitempty" doc:"Keep the browser's own sandbox. Defaults to true."`
+
+	// Headed runs the browser with a window, for watching a campaign.
+	Headed bool `yaml:"headed,omitempty" json:"headed,omitempty" doc:"Run the browser with a visible window."`
 
 	// Cols and Rows are the terminal size, which is an input: a program that
 	// draws correctly at eighty columns and misaligns at forty has a bug only
-	// one of them finds.
+	// one of them finds. A web campaign sizes its viewport with width and
+	// height instead, since a browser measures in pixels.
 	Cols int `yaml:"cols,omitempty" json:"cols,omitempty" doc:"Terminal width in columns."`
 	Rows int `yaml:"rows,omitempty" json:"rows,omitempty" doc:"Terminal height in rows."`
+
+	// Width and Height are a web campaign's viewport in pixels, and are an
+	// input for the same reason: a page that lays out correctly at 1280 and
+	// misplaces a button at 400 has a bug only one of them finds.
+	Width  int `yaml:"width,omitempty" json:"width,omitempty" doc:"Viewport width in pixels, for a web campaign."`
+	Height int `yaml:"height,omitempty" json:"height,omitempty" doc:"Viewport height in pixels, for a web campaign."`
 
 	// Settle is how long the interface must be quiet before its screen counts
 	// as drawn. It is the tier's throughput and it cannot be avoided: an
@@ -447,8 +475,9 @@ type Driver struct {
 	// the transition between them.
 	Normalise []string `yaml:"normalise,omitempty" json:"normalise,omitempty" doc:"What a screen fingerprint removes: digits, spinner, runs, space."`
 
-	// Oracles are what judges the interface: diagnostic, unresponsive, trap.
-	Oracles []string `yaml:"oracles,omitempty" json:"oracles,omitempty" doc:"Interface oracles: diagnostic, unresponsive, trap."`
+	// Oracles are what judges the interface: diagnostic, unresponsive, trap,
+	// exception.
+	Oracles []string `yaml:"oracles,omitempty" json:"oracles,omitempty" doc:"Interface oracles: diagnostic, unresponsive, trap, exception."`
 }
 
 // State configures the protocol state machine (ADR-0006).

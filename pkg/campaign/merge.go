@@ -66,8 +66,13 @@ const (
 	// Driver defaults. Settle is the tier's throughput: the driver waits for
 	// the interface to go quiet rather than for a fixed interval, and this is
 	// how long quiet has to last.
-	defaultDriverCols         = 80
-	defaultDriverRows         = 24
+	defaultDriverCols = 80
+	defaultDriverRows = 24
+
+	// A web campaign's viewport. Wide enough that a desktop layout is the one
+	// under test rather than a mobile fallback, which is a different program.
+	defaultDriverWidth        = 1280
+	defaultDriverHeight       = 800
 	defaultDriverSettle       = 50 * time.Millisecond
 	defaultDriverStartTimeout = 5 * time.Second
 	defaultDriverTimeout      = 30 * time.Second

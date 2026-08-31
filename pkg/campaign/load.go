@@ -401,6 +401,20 @@ func defaults(f *File, set KeySet) {
 		if f.Driver.Rows == 0 && unset("driver.rows") {
 			f.Driver.Rows = defaultDriverRows
 		}
+		if f.Driver.Width == 0 && unset("driver.width") {
+			f.Driver.Width = defaultDriverWidth
+		}
+		if f.Driver.Height == 0 && unset("driver.height") {
+			f.Driver.Height = defaultDriverHeight
+		}
+		if f.Driver.BrowserSandbox == nil {
+			// On by default. It is the layer between a hostile page and the
+			// machine, and it is not the layer Xfuzz puts around the browser —
+			// turning it off is a decision an operator should have to write
+			// down.
+			on := true
+			f.Driver.BrowserSandbox = &on
+		}
 		if f.Driver.Settle == 0 && unset("driver.settle") {
 			f.Driver.Settle = Duration(defaultDriverSettle)
 		}

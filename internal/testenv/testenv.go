@@ -217,3 +217,38 @@ func BuildStrippedTarget(t testing.TB, name string) string {
 	}
 	return out
 }
+
+// Browser returns a browser to drive, or skips the test.
+//
+// The probe is wider than the product's, on purpose. internal/driver looks on
+// PATH and at XFUZZ_BROWSER, because that is where an operator's browser is;
+// a CI image often unpacks one somewhere else entirely, and a test that skipped
+// there would leave the web driver unexercised on the only machine that runs
+// the suite.
+func Browser(t testing.TB) string {
+	t.Helper()
+	if p := os.Getenv("XFUZZ_BROWSER"); p != "" {
+		if _, err := exec.LookPath(p); err == nil {
+			return p
+		}
+		t.Skipf("XFUZZ_BROWSER is set to %s, which is not executable", p)
+	}
+	for _, c := range []string{
+		"chromium", "chromium-browser", "google-chrome", "google-chrome-stable", "chrome",
+	} {
+		if p, err := exec.LookPath(c); err == nil {
+			return p
+		}
+	}
+	for _, p := range []string{
+		"/opt/pw-browsers/chromium",
+		"/usr/lib/chromium/chromium",
+		"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+	} {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	t.Skip("no browser found: the web driver needs one, and this host has none")
+	return ""
+}

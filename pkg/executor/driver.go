@@ -149,18 +149,29 @@ type Event struct {
 	Delay time.Duration
 }
 
+// String renders an event in the form ParseEvent reads.
+//
+// The same form in both directions, which it was not: this printed "click
+// 100,20" and "resize 80x24" while the parser wanted spaces, so an event copied
+// out of an error message into a seed file was silently dropped — and a dropped
+// event looks exactly like a sequence that did nothing interesting. The
+// round-trip is asserted in the tests now.
 func (e Event) String() string {
 	switch e.Kind {
 	case EventKey:
 		return "key " + e.Text
 	case EventText:
-		return "text " + strconv.Quote(e.Text)
+		// Unquoted, because this is the form ParseEvent reads and the form a
+		// seed file is written in. Quoting made the output nicer in an error
+		// message and made it unparseable, which is the wrong trade for a line
+		// somebody may paste back into a corpus.
+		return "text " + e.Text
 	case EventClick:
-		return fmt.Sprintf("click %d,%d", e.X, e.Y)
+		return fmt.Sprintf("click %d %d", e.X, e.Y)
 	case EventWait:
 		return "wait " + e.Delay.String()
 	case EventResize:
-		return fmt.Sprintf("resize %dx%d", e.X, e.Y)
+		return fmt.Sprintf("resize %d %d", e.X, e.Y)
 	}
 	return "event"
 }
@@ -318,6 +329,15 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 				e.skipped++
 				continue
 			}
+			if ctx.Err() != nil {
+				// The sequence ran out of time in the middle of an event, so
+				// the backend was interrupted rather than broken. Reporting a
+				// harness failure here ends the campaign the first time a
+				// mutated sequence is slower than its budget — which is a
+				// sequence, not a bug in the tier.
+				ek = feedback.ExitTimeout
+				break
+			}
 			return feedback.ExitError, fmt.Errorf("executor %s: %v: %w", e.name, ev, err)
 		}
 		e.settle(ctx, ev)
@@ -353,23 +373,36 @@ func (e *Driver) Run(ctx context.Context, in Input, obs []feedback.Observer) (fe
 	return ek, nil
 }
 
+// MaxEventWait bounds one wait event.
+//
+// A mutator writes durations, and "wait 2562047h" is a legal one: it parses,
+// it is delivered, and it spends the sequence's entire budget on a single
+// event — after which every later command in that sequence is cut off by the
+// deadline. Clamping keeps a wait a wait; a seed that genuinely needs longer
+// can say so twice.
+const MaxEventWait = 5 * time.Second
+
 // settle waits for the interface to redraw.
 func (e *Driver) settle(ctx context.Context, ev Event) {
+	delay := ev.Delay
+	if delay > MaxEventWait {
+		delay = MaxEventWait
+	}
 	if s, ok := e.backend.(Settler); ok {
 		// A backend that can tell when the interface went quiet is strictly
 		// better than a fixed interval, and by a lot: most events redraw in a
 		// millisecond and the occasional one takes a hundred, so any single
 		// number is either too slow for the common case or too fast for the
 		// case that matters.
-		if ev.Kind == EventWait && ev.Delay > 0 {
-			e.pause(ctx, ev.Delay)
+		if ev.Kind == EventWait && delay > 0 {
+			e.pause(ctx, delay)
 		}
 		s.Settle(ctx)
 		return
 	}
 	d := e.opts.Settle
-	if ev.Kind == EventWait && ev.Delay > d {
-		d = ev.Delay
+	if ev.Kind == EventWait && delay > d {
+		d = delay
 	}
 	e.pause(ctx, d)
 }
@@ -464,8 +497,14 @@ func ParseEvent(line string) (Event, bool) {
 	return Event{Kind: EventText, Text: line}, true
 }
 
+// twoInts reads a pair of numbers written the way a person writes one.
+//
+// A space is the canonical separator and what String produces. A comma and an
+// "x" are accepted too, because "click 100,20" and "resize 80x24" are what
+// somebody seeding a campaign by hand actually types — and a seed line silently
+// dropped for its punctuation is a sequence that quietly does less than it says.
 func twoInts(s string) (int, int, bool) {
-	a, b, ok := strings.Cut(s, " ")
+	a, b, ok := cutAny(s, " ", ",", "x")
 	if !ok {
 		return 0, 0, false
 	}
@@ -475,4 +514,19 @@ func twoInts(s string) (int, int, bool) {
 		return 0, 0, false
 	}
 	return x, y, true
+}
+
+// cutAny splits on the first of several separators to appear.
+func cutAny(s string, seps ...string) (before, after string, found bool) {
+	best := -1
+	var sep string
+	for _, c := range seps {
+		if i := strings.Index(s, c); i >= 0 && (best < 0 || i < best) {
+			best, sep = i, c
+		}
+	}
+	if best < 0 {
+		return s, "", false
+	}
+	return s[:best], s[best+len(sep):], true
 }
