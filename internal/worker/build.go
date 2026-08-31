@@ -47,10 +47,17 @@ type built struct {
 	// Its own region rather than a corner of the coverage map: the two are
 	// written at different rates and read for different reasons, and a campaign
 	// that wants coverage and not comparisons should not map the second.
-	cmp     *feedback.CmpObserver
-	cmpShm  executor.SharedMemory
-	valueP  *feedback.ValueProfile
-	sandbox *safety.Sandbox
+	cmp    *feedback.CmpObserver
+	cmpShm executor.SharedMemory
+	valueP *feedback.ValueProfile
+
+	// blocks, blockShm and distance are the directed campaign's machinery: what
+	// the execution entered, where those addresses come from, and how far each
+	// is from the places the campaign was aimed at.
+	blocks   *feedback.BlockObserver
+	blockShm executor.SharedMemory
+	distance *feedback.DistanceFeedback
+	sandbox  *safety.Sandbox
 
 	// sessionAddr is the resolved per-worker address, empty on a file campaign.
 	// Resolved before the sandbox because the sandbox has to know about it: a
@@ -91,6 +98,13 @@ type built struct {
 	// slower tier is visible in the first second rather than in a post-mortem.
 	tier           string
 	fallbackReason string
+
+	// directedNote and directionReport say what a directed campaign is aimed at
+	// and how much of the target can see it. Both go in the ready message: a
+	// campaign whose targets half resolved, or whose target is reachable from a
+	// tenth of the program, is one whose direction is worth less than it looks.
+	directedNote    string
+	directionReport string
 
 	// analysisNote says what static recovery found on a binary-only campaign,
 	// so an operator can judge the coverage figures rather than trusting them.
@@ -359,6 +373,10 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 	b.coverage.SetBackend(cfg.Feedback.Coverage)
 	b.mapFB = feedback.NewMapFeedback("coverage", b.coverage)
 
+	if err := b.buildDirection(cfg, provider); err != nil {
+		return err
+	}
+
 	if cfg.Feedback.CmpLog {
 		cmpShm, err := provider.Create(feedback.CmpRegionSize)
 		if err != nil {
@@ -374,6 +392,94 @@ func (b *built) buildFeedback(cfg *campaign.Resolved) error {
 	return nil
 }
 
+// buildDirection prepares a directed campaign: the analysis of the target, the
+// distance map, and the region the target reports its blocks in.
+//
+// All of it before the campaign starts. Every failure here — a target that
+// cannot be analysed, an address from a different build, a function nothing can
+// reach — produces a campaign that runs perfectly and steers nowhere, which is
+// the one outcome that cannot be diagnosed from the outside (ADR-0007).
+func (b *built) buildDirection(cfg *campaign.Resolved, provider executor.SharedMemoryProvider) error {
+	d := cfg.Feedback.Directed
+	if d == nil {
+		return nil
+	}
+
+	im, err := binary.Open(cfg.Target.Path)
+	if err != nil {
+		return fmt.Errorf("worker: a directed campaign has to analyse its target: %w", err)
+	}
+	defer im.Close()
+
+	specs := make([]binary.TargetSpec, 0, len(d.Targets))
+	for _, t := range d.Targets {
+		specs = append(specs, binary.TargetSpec(t))
+	}
+	addrs, rerr := binary.Resolve(im, specs)
+	if addrs == nil {
+		return fmt.Errorf("worker: %w", rerr)
+	}
+	if rerr != nil {
+		// Some resolved and some did not. Running is right; running without
+		// saying which were dropped would report progress towards a place
+		// nobody asked about.
+		b.directedNote = rerr.Error()
+	}
+
+	analysis, aerr := binary.Analyze(im)
+	if aerr != nil {
+		return fmt.Errorf("worker: a directed campaign needs the target's control flow: %w", aerr)
+	}
+	dist, derr := binary.BuildDistanceMap(analysis, addrs)
+	if derr != nil {
+		return fmt.Errorf("worker: %w", derr)
+	}
+
+	reach := dist.Coverage(analysis)
+	if d.MinReachable > 0 && reach < d.MinReachable {
+		return fmt.Errorf("worker: only %.1f%% of the target's recovered blocks can reach "+
+			"any of its %d target location(s), below the %.1f%% this campaign requires. "+
+			"Direction measured over that little of the program is not direction: every "+
+			"input scores the same and the campaign looks like it is simply not making "+
+			"progress yet", 100*reach, len(dist.Targets), 100*d.MinReachable)
+	}
+
+	// Where the block addresses come from. A tier that watches the process
+	// reports them itself; an instrumented build writes them into a region, and
+	// then the load base has to be recovered from a symbol the runtime
+	// publishes.
+	var region []byte
+	if !campaign.IsBinaryOnlyCoverage(cfg.Feedback.Coverage) {
+		shm, serr := provider.Create(feedback.BlockRegionSize)
+		if serr != nil {
+			return fmt.Errorf("worker: creating the block-trace region: %w", serr)
+		}
+		b.blockShm = shm
+		b.closers = append(b.closers, closer{"block-trace region", shm.Close})
+		region = shm.Bytes()
+	}
+
+	b.blocks = feedback.NewBlockObserver("blocks", region)
+	if region != nil {
+		anchor, ok := im.Lookup(blockAnchorSymbol)
+		if !ok {
+			return fmt.Errorf("worker: the target carries no %s symbol, so the addresses it "+
+				"reports blocks at cannot be related back to the binary. Build it with "+
+				"xfuzz-cc and leave it unstripped, or use a binary-only coverage backend",
+				blockAnchorSymbol)
+		}
+		b.blocks.SetAnchor(anchor)
+	}
+	b.distance = feedback.NewDistanceFeedback("distance", b.blocks, dist)
+	b.directionReport = fmt.Sprintf("directed at %d location(s); %d of %d blocks reach one (%.0f%%), "+
+		"furthest %d", len(dist.Targets), dist.Reachable, len(analysis.Blocks), 100*reach, dist.Max)
+	return nil
+}
+
+// blockAnchorSymbol is the function the runtime publishes the runtime address
+// of, so the fuzzer can recover where a position-independent target was loaded.
+const blockAnchorSymbol = "xfuzz_map"
+
 func (b *built) observers() []feedback.Observer {
 	obs := []feedback.Observer{b.output}
 	if b.coverage != nil {
@@ -381,6 +487,9 @@ func (b *built) observers() []feedback.Observer {
 	}
 	if b.cmp != nil {
 		obs = append(obs, b.cmp)
+	}
+	if b.blocks != nil {
+		obs = append(obs, b.blocks)
 	}
 	if b.state != nil {
 		// The session executor feeds this one during the session rather than
@@ -434,6 +543,14 @@ func (b *built) feedbackStack(cfg *campaign.Resolved) feedback.Feedback {
 	}
 	if cfg.Feedback.Novelty {
 		stack = append(stack, feedback.NewNoveltyFeedback("output-novelty", b.output))
+	}
+	if b.distance != nil {
+		// A peer of coverage, in an Any stack: an input that reached new code is
+		// still worth keeping even when it went nowhere near the target, and one
+		// that got closer is worth keeping even when it covered nothing new.
+		// Requiring both would make each a filter on the other and the campaign
+		// would keep almost nothing.
+		stack = append(stack, b.distance)
 	}
 	if b.valueP != nil {
 		// A peer of coverage, not a replacement for it. Value profiling admits
@@ -507,7 +624,7 @@ func (b *built) buildExecutor(ctx context.Context, cfg *campaign.Resolved) error
 	case campaign.ExecutorForkServer:
 		fs := executor.NewForkServer("forkserver", spawner, spec)
 		fs.Coverage, fs.Shm, fs.Output = b.coverage, b.shm, b.output
-		fs.CmpShm = b.cmpShm
+		fs.CmpShm, fs.BlockShm = b.cmpShm, b.blockShm
 		fs.Timeout = cfg.Target.Timeout.Std()
 		if err := fs.Start(ctx); err != nil {
 			if cfg.Target.Executor != campaign.ExecutorAuto {
@@ -616,7 +733,7 @@ func (b *built) buildSubprocess(cfg *campaign.Resolved, spawner *safety.Spawner,
 		sub.Coverage, sub.Shm = b.coverage, b.shm
 		sub.Backend = cfg.Feedback.Coverage
 	}
-	sub.CmpShm = b.cmpShm
+	sub.CmpShm, sub.BlockShm = b.cmpShm, b.blockShm
 	b.executor = sub
 	b.tier = "subprocess"
 	b.closers = append(b.closers, closer{"subprocess executor", sub.Close})
@@ -762,7 +879,19 @@ func scheduleFor(cfg *campaign.Resolved, strategy string) corpus.Scheduler {
 	case "roundrobin":
 		return corpus.NewRoundRobinScheduler()
 	default:
-		return corpus.NewFastScheduler()
+		fast := corpus.NewFastScheduler()
+		// The other half of directed fuzzing. A distance feedback decides which
+		// inputs to keep; without a schedule that spends more of the budget on
+		// them, a corpus of ten thousand entries of which four are near the
+		// target gives those four a four-in-ten-thousand share of the machine.
+		// Direction that is kept and not spent does not arrive.
+		if d := cfg.Feedback.Directed; d != nil {
+			fast.Directed = d.Weight
+			if fast.Directed == 0 {
+				fast.Directed = corpus.DefaultDirectedWeight
+			}
+		}
+		return fast
 	}
 }
 
@@ -855,6 +984,12 @@ func (b *built) describe() string {
 	}
 	if b.analysisNote != "" {
 		desc = fmt.Sprintf("%s (%s)", desc, b.analysisNote)
+	}
+	if b.directionReport != "" {
+		desc = fmt.Sprintf("%s; %s", desc, b.directionReport)
+	}
+	if b.directedNote != "" {
+		desc = fmt.Sprintf("%s; %s", desc, b.directedNote)
 	}
 	return desc
 }

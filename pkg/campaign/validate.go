@@ -226,6 +226,38 @@ func (r *Resolved) validateFeedback(add addFunc) {
 			"both read the same comparison table, and nothing collects it unless cmplog is on")
 	}
 
+	if d := f.Directed; d != nil {
+		if len(d.Targets) == 0 {
+			add("feedback.directed.targets", "is empty",
+				"a directed campaign with nowhere to aim is a coverage-guided one; "+
+					"remove the directed block, or name a function, a file.c:123, or an address")
+		}
+		for _, t := range d.Targets {
+			if strings.TrimSpace(t) == "" {
+				add("feedback.directed.targets", "contains an empty entry", "")
+			}
+		}
+		if d.Weight < 0 {
+			add("feedback.directed.weight", "is negative",
+				"zero leaves the schedule undirected; larger values favour seeds nearer the target")
+		}
+		if d.MinReachable < 0 || d.MinReachable > 1 {
+			add("feedback.directed.min_reachable", "is not a fraction between 0 and 1", "")
+		}
+		// Direction is measured against block addresses, and the only backends
+		// that report them are the ones that watch the process and the
+		// instrumented runtime's own block trace. A black-box campaign has
+		// neither, so it would score every input identically and report a
+		// directed campaign making no progress.
+		switch f.Coverage {
+		case CoverageSancov, CoveragePtraceBB, CoverageQemu, CoverageFrida:
+		default:
+			add("feedback.directed", fmt.Sprintf("cannot measure distance with %q coverage", f.Coverage),
+				"distance is a property of a block address; use sancov for an instrumented "+
+					"build, or ptrace-bb, qemu or frida for one that cannot be rebuilt")
+		}
+	}
+
 	if len(f.Objectives) == 0 {
 		add("feedback.objectives", "is empty",
 			"a campaign with nothing to find cannot report anything")

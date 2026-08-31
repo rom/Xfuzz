@@ -101,6 +101,31 @@
           "description": "Coverage backend: sancov, ptrace-bb, qemu, frida, blackbox, or none.",
           "type": "string"
         },
+        "directed": {
+          "additionalProperties": false,
+          "description": "Aim the campaign at particular locations in the target.",
+          "properties": {
+            "min_reachable": {
+              "description": "Refuse to start if less than this fraction of blocks can reach a target.",
+              "type": "number"
+            },
+            "targets": {
+              "description": "Where to aim: a function name, file.c:123, or 0xADDRESS.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "weight": {
+              "description": "How much the schedule favours seeds closer to the target.",
+              "type": "number"
+            }
+          },
+          "required": [
+            "targets"
+          ],
+          "type": "object"
+        },
         "map_size": {
           "description": "Coverage map size in bytes.",
           "type": [

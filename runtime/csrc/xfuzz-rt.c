@@ -39,6 +39,10 @@
 #define XFUZZ_CMP_OPERAND  16
 #define XFUZZ_CMP_ENTRIES  ((XFUZZ_CMP_SIZE - 16) / 40)
 
+/* The block trace, for directed fuzzing. Must match feedback.BlockRegionSize. */
+#define XFUZZ_BB_SIZE    (1 << 20)
+#define XFUZZ_BB_ENTRIES ((XFUZZ_BB_SIZE - 32) / 8)
+
 /* Default control and status descriptors, matching AFL so that a binary built
  * against either runtime can be driven by either fuzzer (ASR-0013). Both are
  * overridable through the environment, because passing descriptor 198 through
@@ -61,6 +65,10 @@
  * instrumented binary run without a fuzzer neither crashes nor needs a
  * conditional on the hottest path in the program. */
 static uint8_t xfuzz_local_map[XFUZZ_MAP_SIZE];
+
+/* Declared early because the block trace publishes its address as the anchor a
+ * fuzzer recovers the load base from. */
+uint8_t *xfuzz_map(void);
 
 uint8_t *__xfuzz_area = xfuzz_local_map;
 
@@ -103,12 +111,55 @@ void __sanitizer_cov_trace_pc_guard_init(uint32_t *start, uint32_t *stop) {
     }
 }
 
+/*
+ * The block trace.
+ *
+ * Coverage says whether an input went somewhere new. Directed fuzzing needs to
+ * know whether it went somewhere *closer*, and that question cannot be answered
+ * from the coverage map: the map holds hashed edge identities, and the distance
+ * to a target is a property of an address. So a directed campaign asks for the
+ * addresses themselves.
+ *
+ * One store and one increment per basic block executed, which is several times
+ * what the coverage update costs and is why this is attached only when a
+ * campaign asks for direction. The region is bounded and the overflow counted
+ * rather than wrapped, for the same reason the comparison table is: the blocks
+ * an execution runs first are the ones nearest its entry to the program.
+ *
+ * The addresses are where the code is loaded, which for a position-independent
+ * binary is somewhere new on every run. The header carries the runtime address
+ * of a known function so the fuzzer can subtract it from its link-time address
+ * and recover the base — without which every execution would report a different
+ * set of blocks for the same path.
+ */
+struct xfuzz_bb_hdr {
+    uint32_t count;
+    uint32_t capacity;
+    uint32_t dropped;
+    uint32_t reserved;
+    uint64_t anchor; /* runtime address of xfuzz_map */
+    uint64_t unused;
+};
+
+static struct xfuzz_bb_hdr *xfuzz_bb;
+static uint64_t *xfuzz_bb_pcs;
+
 /* Called on every instrumented basic block. This is the hottest code in the
  * system: a few instructions here multiply by billions of executions. */
 void __sanitizer_cov_trace_pc_guard(uint32_t *guard) {
     uint32_t loc = *guard;
     __xfuzz_area[(xfuzz_prev_loc ^ loc) & (XFUZZ_MAP_SIZE - 1)]++;
     xfuzz_prev_loc = loc >> 1;
+
+    /* Inert unless a directed campaign attached the region: one load, one test
+     * and a not-taken branch for every other campaign. */
+    struct xfuzz_bb_hdr *h = xfuzz_bb;
+    if (!h) return;
+    if (h->count >= h->capacity) {
+        h->dropped++;
+        return;
+    }
+    xfuzz_bb_pcs[h->count++] = (uint64_t)(uintptr_t)__builtin_return_address(0);
 }
 
 /*
@@ -308,6 +359,18 @@ static void xfuzz_attach_map(void) {
  * The capacity is published by the target rather than assumed by the fuzzer, so
  * that a target built against an older runtime is read correctly instead of
  * being read past its end. */
+/* Attach the block trace, if a directed campaign asked for one. */
+static void xfuzz_attach_bb(void) {
+    void *p = xfuzz_attach("XFUZZ_BB_ID", XFUZZ_BB_SIZE);
+    if (!p) return;
+    xfuzz_bb = (struct xfuzz_bb_hdr *)p;
+    xfuzz_bb_pcs = (uint64_t *)((uint8_t *)p + sizeof(struct xfuzz_bb_hdr));
+    xfuzz_bb->capacity = XFUZZ_BB_ENTRIES;
+    xfuzz_bb->count = 0;
+    xfuzz_bb->dropped = 0;
+    xfuzz_bb->anchor = (uint64_t)(uintptr_t)&xfuzz_map;
+}
+
 static void xfuzz_attach_cmp(void) {
     void *p = xfuzz_attach("XFUZZ_CMP_ID", XFUZZ_CMP_SIZE);
     if (!p) return;
@@ -400,6 +463,7 @@ void xfuzz_manual_init(void) {
     xfuzz_started = 1;
     xfuzz_attach_map();
     xfuzz_attach_cmp();
+    xfuzz_attach_bb();
     if (getenv("XFUZZ_FORKSERVER")) xfuzz_fork_server();
 }
 

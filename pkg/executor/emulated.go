@@ -171,6 +171,15 @@ func (e *Emulated) Run(ctx context.Context, in Input, obs []feedback.Observer) (
 	if e.Coverage != nil {
 		FoldTrace(e.Coverage.Buffer(), tr.Blocks, tr.Ordered)
 	}
+	// A directed campaign wants the addresses themselves, not the folded map:
+	// distance to a target is a property of an address, and the fold hashes it
+	// away. This tier already has them, which is why directed fuzzing against a
+	// binary nobody can rebuild works at all.
+	for _, o := range obs {
+		if s, ok := o.(BlockSink); ok {
+			s.RecordBlocks(tr.Blocks)
+		}
+	}
 
 	res := tr.Result
 	ek := res.ExitKind()

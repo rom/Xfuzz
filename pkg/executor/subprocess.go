@@ -30,6 +30,14 @@ const FilePlaceholder = "@@"
 // identifier to an instrumented child.
 const ShmEnvVar = "XFUZZ_SHM_ID"
 
+// BlockShmEnvVar names the environment variable carrying the block-trace
+// region's identifier.
+//
+// A third region, for the same reason there is a second: directed fuzzing costs
+// a store per basic block executed, several times what the coverage update
+// costs, and a campaign that is not directed should not pay it.
+const BlockShmEnvVar = "XFUZZ_BB_ID"
+
 // CmpShmEnvVar names the environment variable carrying the comparison table's
 // identifier.
 //
@@ -68,8 +76,10 @@ type Subprocess struct {
 	Coverage *feedback.CoverageMap
 	Shm      SharedMemory
 
-	// CmpShm is the comparison table, when the campaign asked for one.
-	CmpShm SharedMemory
+	// CmpShm is the comparison table, when the campaign asked for one, and
+	// BlockShm the block trace a directed campaign reads.
+	CmpShm   SharedMemory
+	BlockShm SharedMemory
 
 	// Backend names the instrumentation in use, for reporting.
 	Backend string
@@ -118,6 +128,9 @@ func (e *Subprocess) prepare(in Input) (ProcSpec, error) {
 	}
 	if e.CmpShm != nil {
 		spec.Env = append(append([]string(nil), spec.Env...), CmpShmEnvVar+"="+e.CmpShm.ID())
+	}
+	if e.BlockShm != nil {
+		spec.Env = append(append([]string(nil), spec.Env...), BlockShmEnvVar+"="+e.BlockShm.ID())
 	}
 
 	switch e.Delivery {

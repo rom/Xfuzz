@@ -25,9 +25,15 @@ type Block struct {
 	// Confidence exists.
 	Succ []uint64
 
-	// Call is the target of a direct call made by the last instruction, if it
-	// was one.
-	Call uint64
+	// Calls are the targets of the direct calls this block makes.
+	//
+	// A list, not one address. A call does not end a basic block — control comes
+	// back to it — so one block routinely makes several, and on an instrumented
+	// binary the first is always the coverage callback. Keeping only the last
+	// would give almost every block an edge to a sanitizer helper and lose every
+	// real call edge in the program, which does not fail: it produces a call
+	// graph that looks complete and in which nothing reaches anything.
+	Calls []uint64
 }
 
 // Function is a run of blocks reached from one entry point.
@@ -278,7 +284,7 @@ func (w *walker) block(addr uint64) (Block, []uint64) {
 			// A call does not end a block, but its target begins one — that is
 			// how descent reaches a function nothing else names.
 			if in.HasTarget {
-				b.Call = in.Target
+				b.Calls = append(b.Calls, in.Target)
 				next = append(next, in.Target)
 			}
 			continue

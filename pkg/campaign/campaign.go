@@ -211,6 +211,36 @@ type Feedback struct {
 
 	// Objectives selects what counts as a finding.
 	Objectives []string `yaml:"objectives,omitempty" json:"objectives,omitempty" doc:"What counts as a finding: crash, hang, oom, sanitizer."`
+
+	// Directed aims the campaign at particular places in the target, so that an
+	// input which reached no new code but got closer is kept and favoured.
+	Directed *Directed `yaml:"directed,omitempty" json:"directed,omitempty" doc:"Aim the campaign at particular locations in the target."`
+}
+
+// Directed turns a coverage-guided campaign into a directed one.
+//
+// Its presence is what selects direction, in the same way the session block
+// selects a stateful campaign (ADR-0016): a separate mode switch would let a
+// file name targets and not use them, or ask for direction and give nowhere to
+// go, and both look valid and cannot work.
+type Directed struct {
+	// Targets are the places to aim at, in whichever form the evidence came in:
+	// a function name, a file and line from a patch, or an address from a crash
+	// report.
+	Targets []string `yaml:"targets" json:"targets" doc:"Where to aim: a function name, file.c:123, or 0xADDRESS."`
+
+	// Weight is how much closeness is worth in the schedule. Zero takes the
+	// default; direction that is kept but never spent does not arrive.
+	Weight float64 `yaml:"weight,omitempty" json:"weight,omitempty" doc:"How much the schedule favours seeds closer to the target."`
+
+	// MinReachable refuses to start when too small a share of the recovered
+	// blocks can reach any target.
+	//
+	// A campaign directed at a function reachable only through a computed call
+	// sees a handful of blocks with distances and every input scoring the same,
+	// which looks exactly like a directed campaign that is not yet making
+	// progress. Refusing is better than running for a week and finding out.
+	MinReachable float64 `yaml:"min_reachable,omitempty" json:"min_reachable,omitempty" doc:"Refuse to start if less than this fraction of blocks can reach a target."`
 }
 
 // Session turns a campaign into a stateful one.

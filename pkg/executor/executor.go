@@ -171,6 +171,16 @@ type InputSink interface {
 	RecordInput([]byte)
 }
 
+// BlockSink is an observer that wants the addresses of the basic blocks an
+// execution entered.
+//
+// Structural, like InputSink and for the same reason: pkg/feedback must not
+// depend on pkg/executor (ARCHITECTURE section 2), so the observer that
+// implements this declares the method and never names this interface.
+type BlockSink interface {
+	RecordBlocks([]uint64)
+}
+
 // Arm prepares the observers for one execution.
 //
 // Every executor does this identically, and identically is the point: an

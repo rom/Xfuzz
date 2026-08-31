@@ -157,7 +157,34 @@ type FastScheduler struct {
 	// weighs — size, coverage, times fuzzed, depth — is derived from the corpus
 	// rather than from the clock, and is reproducible.
 	PreferFast bool
+
+	// Directed weights entries by how close they came to a directed campaign's
+	// target, which is the half of directed fuzzing that coverage-guided
+	// scheduling does not supply.
+	//
+	// A distance feedback decides which inputs to *keep*; without this, the
+	// schedule then spends its budget on them no differently from anything else,
+	// and a corpus of ten thousand entries of which four are near the target
+	// gives those four a four-in-ten-thousand share of the machine. Direction
+	// that is not spent is direction that does not arrive.
+	//
+	// Zero leaves the schedule undirected, which is what a campaign with no
+	// target wants. One makes an entry at the target worth DirectedWeight times
+	// as much as one as far away as anything gets.
+	Directed float64
 }
+
+// DefaultDirectedWeight is how much closeness is worth when a campaign is
+// directed.
+//
+// Eight, rather than something decisive. Direction has to bias the schedule
+// without capturing it: a campaign that spends everything on its closest seeds
+// stops exploring, and the route to a target usually runs through code that is
+// not itself near the target — a parser has to accept the file before any of it
+// reaches the function under investigation. AFLGo's annealing solves this by
+// starting undirected and tightening over time; a fixed, moderate weight is the
+// same trade without a schedule that depends on the clock (ASR-0008).
+const DefaultDirectedWeight = 8.0
 
 // NewFastScheduler returns a weighted schedule with defaults.
 func NewFastScheduler() *FastScheduler {
@@ -234,6 +261,13 @@ func (s *FastScheduler) weight(tc *Testcase, avg Averages) float64 {
 	// decisive boost.
 	if tc.Meta.Favoured {
 		w *= 4
+	}
+
+	// Entries that came closer to a directed campaign's target are worth more.
+	// Score.Distance is normalised to 0 at the target and 1 as far away as
+	// anything gets, so this rises smoothly as a campaign descends towards it.
+	if s.Directed > 0 {
+		w *= 1 + (s.Directed-1)*(1-clamp(tc.Meta.Score.Distance, 0, 1))
 	}
 
 	// Depth stands in for age, because wall-clock time must not influence a
