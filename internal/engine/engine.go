@@ -688,9 +688,23 @@ func bucketKey(f feedback.Finding) string {
 // number, an error code, the index of a planted bug — and collapsing those
 // merges bugs the target went to the trouble of telling apart. Measured on
 // stateful_proto, whose four bugs each print their own number: collapsing every
-// digit run reported all four as one bucket. This is the same rule triage's own
-// classifier applies, so a finding's bucket during a run and after triage are
-// computed alike.
+// digit run reported all four as one bucket.
+//
+// It applies the same *rules* as triage's classifier — the address and digit
+// normalisation, and control characters dropped — without being the same
+// function. Two differences are deliberate: this one takes the first non-empty
+// line where triage searches for a known prefix, and it caps at 64 bytes where
+// triage allows 160. This marker is provisional by design, computed on the hot
+// path from whatever the target happened to print; triage's is computed from a
+// minimised reproducer and an execution it watched itself, and replaces this
+// one. Where they disagree, triage is right, which is what re-bucketing is for.
+//
+// The control characters are not a matter of taste. This marker reaches the
+// live bucket key, the event stream, and the line an operator watches scroll
+// past during `xfuzz run` — and it comes verbatim from a program being driven
+// into undefined behaviour, which SECURITY.md treats as hostile output. A
+// target emitting an escape sequence would otherwise be choosing what that
+// terminal does.
 func markerOf(detail string) string {
 	line := detail
 	if i := strings.IndexAny(line, "\r\n"); i >= 0 {
@@ -703,6 +717,14 @@ func markerOf(detail string) string {
 
 	var b strings.Builder
 	for i := 0; i < len(line) && b.Len() < maxMarkerBytes; {
+		// Dropped rather than replaced with a space: this marker is capped at
+		// 64 bytes and padding it with spaces spends that budget on nothing.
+		// Bytes at or above 0x80 pass through — they are UTF-8 continuation
+		// bytes, and cutting one produces mojibake.
+		if line[i] < 0x20 || line[i] == 0x7f {
+			i++
+			continue
+		}
 		if n := hexAddrAt(line, i); n > 0 {
 			b.WriteString("0xADDR")
 			i += n
@@ -716,7 +738,7 @@ func markerOf(detail string) string {
 		b.WriteByte(line[i])
 		i++
 	}
-	return b.String()
+	return strings.TrimSpace(b.String())
 }
 
 // volatileDigits is how long a digit run has to be before it is treated as
