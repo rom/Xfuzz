@@ -83,6 +83,10 @@ type Worker struct {
 	stopMsg  string
 	incoming chan *daemon.Message
 
+	// lastDistill is when the corpus was last reduced. Owned by the loop
+	// goroutine, which is the only thing that reads or writes it.
+	lastDistill time.Time
+
 	// saidSkipped keeps the undeliverable-event warning to one occurrence. It
 	// is a property of the corpus rather than of a moment, so repeating it
 	// every reporting interval would bury everything else the worker says.
@@ -263,6 +267,12 @@ func (w *Worker) loop(ctx context.Context) error {
 		}
 
 		w.drainCommands(ctx)
+
+		if err := w.distillIfDue(ctx); err != nil {
+			w.report("error", err.Error())
+			w.finish("distilling: " + err.Error())
+			return err
+		}
 
 		if w.isPaused() {
 			// Paused rather than stopped, so the engine keeps its corpus,
@@ -691,4 +701,50 @@ func (w *Worker) Close() error {
 		}
 	})
 	return w.closeErr
+}
+
+// distillIfDue reduces the corpus to its minimal covering subset, on the
+// interval the campaign asked for.
+//
+// Between slices rather than inside one, because it re-executes the whole
+// corpus: doing it mid-slice would stall the reporting the slice boundary
+// exists to guarantee, and a worker silent for the length of a corpus run is
+// the failure the slice bound was added to prevent.
+//
+// The result is reported rather than done quietly. Removing entries from a
+// corpus is the most surprising thing a fuzzer can do to it, and an operator
+// who sees the count drop is entitled to know why and by how much.
+func (w *Worker) distillIfDue(ctx context.Context) error {
+	every := w.opts.Config.Storage.DistillInterval.Std()
+	if every <= 0 || w.built == nil || w.built.engine == nil {
+		return nil
+	}
+	now := time.Now()
+	if w.lastDistill.IsZero() {
+		// Not on the first pass: a campaign's opening corpus is its seeds, and
+		// distilling those before anything has been learned would throw away
+		// the starting points an operator chose.
+		w.lastDistill = now
+		return nil
+	}
+	if now.Sub(w.lastDistill) < every {
+		return nil
+	}
+	w.lastDistill = now
+
+	before := w.built.engine.CorpusLen()
+	rep, err := w.built.engine.Distill(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			// The campaign was stopped part-way through the measurement. The
+			// corpus is untouched, because nothing is removed until every entry
+			// has been measured.
+			return nil
+		}
+		return fmt.Errorf("worker: distilling the corpus: %w", err)
+	}
+	w.report("info", fmt.Sprintf(
+		"distilled the corpus: %d entries to %d, %d to %d bytes, covering %d features",
+		before, len(rep.Keep), rep.BeforeBytes, rep.AfterBytes, rep.Covered))
+	return nil
 }

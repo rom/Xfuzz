@@ -213,3 +213,95 @@ func TestATimeBudgetBoundsASliceRatherThanASeed(t *testing.T) {
 			"so a slow tier's worker is unresponsive for a whole seed", elapsed)
 	}
 }
+
+// countingExecutor reports a fixed coverage set per input, so distillation can
+// be exercised without a target.
+type countingExecutor struct {
+	echoExecutor
+	cov  map[string][]int
+	m    *feedback.CoverageMap
+	runs int
+}
+
+func (e *countingExecutor) Run(ctx context.Context, in executor.Input, obs []feedback.Observer) (feedback.ExitKind, error) {
+	ek, err := e.echoExecutor.Run(ctx, in, obs)
+	if err != nil {
+		return ek, err
+	}
+	e.runs++
+	// After Arm, which cleared the map: what is written now is this input's
+	// coverage and nothing else, which is exactly what the real observers do.
+	for _, i := range e.cov[string(in.Bytes)] {
+		e.m.Buffer()[i] = 1
+	}
+	return ek, nil
+}
+
+func TestEngineDistillKeepsACoveringSubset(t *testing.T) {
+	m := feedback.NewCoverageMap("coverage", 64)
+	ex := &countingExecutor{
+		m: m,
+		cov: map[string][]int{
+			"a":   {1, 2},
+			"bb":  {2, 3},
+			"ccc": {1, 2, 3},
+		},
+	}
+	out := feedback.NewOutputObserver("output")
+	eng, err := New(Config{
+		CampaignSeed:  1,
+		Executor:      ex,
+		Observers:     []feedback.Observer{m, out},
+		Feedback:      feedback.NewMapFeedback("coverage", m),
+		Objective:     &wordObjective{exec: &ex.echoExecutor, word: "never"},
+		Corpus:        corpus.New(),
+		Schedule:      corpus.NewFastScheduler(),
+		Mutators:      mutate.Default(),
+		Codec:         codec.Raw{},
+		MaxInputBytes: 4096,
+	})
+	if err != nil {
+		t.Fatalf("building the engine: %v", err)
+	}
+	defer eng.Close()
+
+	for _, seed := range []string{"a", "bb", "ccc"} {
+		if err := eng.AddSeed(context.Background(), []byte(seed), "test"); err != nil {
+			t.Fatalf("AddSeed(%q): %v", seed, err)
+		}
+	}
+	before := eng.CorpusLen()
+
+	rep, err := eng.Distill(context.Background())
+	if err != nil {
+		t.Fatalf("Distill: %v", err)
+	}
+	if eng.CorpusLen() != 1 {
+		t.Fatalf("the corpus has %d entries after distilling, want 1", eng.CorpusLen())
+	}
+	if rep.Covered != rep.Features || rep.Features != 3 {
+		t.Errorf("covered %d of %d features, want 3 of 3", rep.Covered, rep.Features)
+	}
+	// One execution per entry and no more: measuring inside the selection loop
+	// would make it quadratic in executions, which for a slow tier is the
+	// difference between a minute and an afternoon.
+	if ex.runs != before+3 {
+		t.Errorf("%d executions for a corpus of %d (three of them the seeds' own runs)",
+			ex.runs, before)
+	}
+}
+
+func TestEngineDistillRefusesWithoutCoverage(t *testing.T) {
+	// Without coverage there is nothing to compare, and dropping an entry would
+	// be dropping it at random.
+	eng, _ := newSeedEngine(t)
+	if err := eng.AddSeed(context.Background(), []byte("a"), "test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := eng.Distill(context.Background()); err == nil {
+		t.Fatal("a corpus with no coverage was distilled anyway")
+	}
+	if eng.CorpusLen() != 1 {
+		t.Errorf("the corpus lost an entry to a refused distillation")
+	}
+}

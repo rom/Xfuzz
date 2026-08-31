@@ -605,6 +605,18 @@ type Storage struct {
 	// CheckpointInterval is how often resume state is written. It is also how
 	// much a kill costs.
 	CheckpointInterval Duration `yaml:"checkpoint_interval,omitempty" json:"checkpoint_interval,omitempty" doc:"How often resume state is written."`
+
+	// DistillInterval is how often the corpus is re-measured and reduced to the
+	// smallest subset that still reaches everything it reached.
+	//
+	// Off by default, and deliberately: it costs one execution per entry, which
+	// on a fast target is a second and on the driver tier is minutes. What it
+	// buys is a corpus that stays a corpus — a long campaign admits an entry
+	// whenever it sees anything new, and most of what it admits after the first
+	// hour is a slightly different route to somewhere it has already been. The
+	// caps above cull by size; this culls by redundancy, which is the question
+	// a person asks when they want the seeds rather than the sediment.
+	DistillInterval Duration `yaml:"distill_interval,omitempty" json:"distill_interval,omitempty" doc:"How often to reduce the corpus to a minimal covering subset. 0 never does."`
 }
 
 // Health is where a campaign disagrees with the defaults about what "unhealthy"

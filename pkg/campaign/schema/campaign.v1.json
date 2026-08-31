@@ -749,6 +749,11 @@
           "description": "Store directory. Empty uses the daemon's data directory.",
           "type": "string"
         },
+        "distill_interval": {
+          "description": "How often to reduce the corpus to a minimal covering subset. 0 never does.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h|d)$",
+          "type": "string"
+        },
         "max_corpus_bytes": {
           "description": "Corpus size cap in bytes. 0 is unlimited.",
           "type": [

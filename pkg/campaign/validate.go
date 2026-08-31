@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Problem is one thing wrong with a campaign file.
@@ -74,6 +75,7 @@ func (r *Resolved) Validate() error {
 	r.validateTriage(add)
 	r.validateHealth(add)
 	r.validateStop(add)
+	r.validateStorage(add)
 	r.validateSeeds(add)
 	r.validateSession(add)
 	r.validateAPI(add)
@@ -827,4 +829,23 @@ func (r *Resolved) usesScriptState(name string) bool {
 	}
 	got, _, _ := strings.Cut(r.State.Script, ":")
 	return got == name
+}
+
+// validateStorage checks the corpus's lifecycle settings.
+func (r *Resolved) validateStorage(add addFunc) {
+	d := r.Storage.DistillInterval.Std()
+	if d == 0 {
+		return
+	}
+	if d < time.Minute {
+		add("storage.distill_interval", fmt.Sprintf("%s is shorter than a minute", d),
+			"distilling costs one execution per corpus entry, so doing it every few "+
+				"seconds spends the campaign's budget re-measuring what it already knows")
+	}
+	if r.Feedback.Coverage == CoverageNone {
+		add("storage.distill_interval", "needs coverage",
+			"distilling keeps the smallest set of entries that reaches everything the "+
+				"corpus reaches, and without coverage there is nothing to compare — "+
+				"dropping any entry would be dropping it at random")
+	}
 }

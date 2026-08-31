@@ -392,6 +392,75 @@ func (e *Engine) AddSeed(ctx context.Context, data []byte, origin string) error 
 	return nil
 }
 
+// CorpusLen returns how many entries the corpus holds.
+func (e *Engine) CorpusLen() int { return e.cfg.Corpus.Len() }
+
+// Distill re-measures every corpus entry and keeps the smallest subset that
+// reaches everything the corpus reaches.
+//
+// Re-measured rather than remembered, and that is the expensive half: a corpus
+// entry's stored coverage is a *count*, and keeping a bitmap per entry across a
+// corpus of thousands costs more memory than the corpus. So this runs the
+// corpus once, which for a fast target is seconds and for the driver tier is
+// the reason a campaign should not do it often.
+//
+// It is a real removal (ASR-0013): what it drops is gone, and what makes that
+// safe is that every dropped entry reaches something a kept one also reaches.
+func (e *Engine) Distill(ctx context.Context) (corpus.DistillReport, error) {
+	var rep corpus.DistillReport
+	cov, ok := e.coverageMap()
+	if !ok {
+		return rep, errors.New("engine: distilling needs coverage: without it there " +
+			"is no way to tell which entries are redundant, and dropping any of " +
+			"them would be dropping them at random")
+	}
+
+	// Measured in full before anything is removed. A failure part-way through
+	// would otherwise leave a corpus distilled against half an answer, which is
+	// a corpus missing entries nothing has replaced.
+	measured := make(map[corpus.Digest][]uint32, e.cfg.Corpus.Len())
+	for i := 0; i < e.cfg.Corpus.Len(); i++ {
+		if err := ctx.Err(); err != nil {
+			return rep, err
+		}
+		tc := e.cfg.Corpus.At(i)
+		if _, err := e.cfg.Executor.Run(ctx,
+			executor.Input{Bytes: tc.Bytes, Node: tc.Input}, e.cfg.Observers); err != nil {
+			return rep, fmt.Errorf("engine: measuring %s for distillation: %w", tc.ID, err)
+		}
+		e.stats.Execs++
+		measured[tc.ID] = coveredIndices(cov.Buffer())
+	}
+
+	rep = e.cfg.Corpus.Distill(func(tc *corpus.Testcase) []uint32 { return measured[tc.ID] })
+	return rep, nil
+}
+
+// coverageMap finds the map the campaign is guided by.
+func (e *Engine) coverageMap() (*feedback.CoverageMap, bool) {
+	for _, o := range e.cfg.Observers {
+		if m, ok := o.(*feedback.CoverageMap); ok && m.Size() > 0 {
+			return m, true
+		}
+	}
+	return nil, false
+}
+
+// coveredIndices returns the entries of a coverage map that were touched.
+//
+// Indices rather than counts: distillation asks which features an input
+// reached, and how many times it reached them is a different question that
+// would split one feature into several and defeat the cover.
+func coveredIndices(buf []byte) []uint32 {
+	var out []uint32
+	for i, v := range buf {
+		if v != 0 {
+			out = append(out, uint32(i))
+		}
+	}
+	return out
+}
+
 // Run fuzzes until the budget is exhausted.
 func (e *Engine) Run(ctx context.Context, b Budget) (Stats, error) {
 	if e.cfg.Corpus.Len() == 0 {
