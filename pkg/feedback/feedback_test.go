@@ -433,6 +433,10 @@ func TestSlowFeedback(t *testing.T) {
 func TestTimingObserver(t *testing.T) {
 	o := NewTimingObserver("time")
 	o.Pre()
+	// Something to measure. Two adjacent clock reads are not guaranteed to
+	// differ — on Windows they routinely do not — and a test that depends on
+	// the resolution of the platform's clock is testing the platform.
+	time.Sleep(2 * time.Millisecond)
 	o.Post(ExitOK)
 	if o.Elapsed() <= 0 {
 		t.Error("the observer recorded no elapsed time")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -119,8 +120,20 @@ func (p *testPeer) Kill() error {
 }
 
 // shellTarget writes a tiny script that reads its input and reports on it.
+//
+// A shell script, which is a fixture limitation rather than a claim about the
+// tier: the pool is the *portable* stand-in for the fork server (ADR-0009), and
+// where there is no shell to run one of these, its portability is covered by
+// the end-to-end campaign that runs on every platform. Windows reports a script
+// as "%1 is not a valid Win32 application", which reads as a broken executor
+// rather than a fixture nobody can run.
 func shellTarget(t *testing.T, body string) string {
 	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("these use a shell script as the target and this platform has no " +
+			"shell; the pool tier's own portability is covered by the end-to-end " +
+			"campaign, which does run here")
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "target.sh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
