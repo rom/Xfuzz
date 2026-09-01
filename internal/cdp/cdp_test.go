@@ -268,7 +268,16 @@ func TestProtocolErrorIsReturnedNotSwallowed(t *testing.T) {
 
 func TestEventsReachTheHandler(t *testing.T) {
 	s := newTestServer(t, nil)
+	// The browser speaks only once the handler is registered. It cannot be
+	// registered until Dial returns, and the server's accept hook runs as soon
+	// as the handshake is answered — so a server that sent the event there would
+	// be racing the test, and on a loaded machine would win: the event arrives
+	// with nothing to dispatch it to, is dropped, and the test reports that no
+	// event ever came. What is under test is that an event reaches a handler,
+	// not that one arriving before any handler exists is kept.
+	ready := make(chan struct{})
 	s.onAccept = func(sc *serverConn) {
+		<-ready
 		ev, _ := json.Marshal(message{Method: "Runtime.exceptionThrown",
 			SessionID: "S1", Params: json.RawMessage(`{"text":"boom"}`)})
 		sc.send(opText, ev)
@@ -280,6 +289,7 @@ func TestEventsReachTheHandler(t *testing.T) {
 	defer c.Close()
 	got := make(chan Event, 1)
 	c.OnEvent(func(e Event) { got <- e })
+	close(ready)
 	select {
 	case e := <-got:
 		if e.Method != "Runtime.exceptionThrown" || e.SessionID != "S1" {
@@ -288,7 +298,7 @@ func TestEventsReachTheHandler(t *testing.T) {
 		if !strings.Contains(string(e.Params), "boom") {
 			t.Fatalf("the event lost its payload: %s", e.Params)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("no event arrived")
 	}
 }

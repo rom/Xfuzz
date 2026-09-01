@@ -8,12 +8,19 @@ import (
 )
 
 func TestSeatbeltProfileDeniesWritesAndTheNetwork(t *testing.T) {
-	p := SeatbeltProfile([]string{"/tmp/campaign"}, false)
+	// A path the host agrees is absolute, rather than a literal Unix one. The
+	// profile is built from the paths a campaign was given and makes them
+	// absolute by the host's rule, so on Windows "/tmp/campaign" arrives as
+	// "D:\tmp\campaign" and the assertion would be measuring that rule rather
+	// than this builder. What is under test — a writable path becomes a subpath
+	// allowance, quoted — is the same claim on any of them.
+	dir := filepath.Join(t.TempDir(), "campaign")
+	p := SeatbeltProfile([]string{dir}, false)
 	for _, want := range []string{
 		"(version 1)",
 		"(deny file-write*)",
 		"(deny network*)",
-		`(allow file-write* (subpath "/tmp/campaign"))`,
+		"(allow file-write* (subpath " + seatbeltString(dir) + "))",
 	} {
 		if !strings.Contains(p, want) {
 			t.Errorf("the profile does not contain %s:\n%s", want, p)
