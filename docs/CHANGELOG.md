@@ -240,6 +240,17 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
+- **A fork server lost to a late reply no longer ends the campaign.** The
+  child's own timer is what bounds an execution; the fuzzer's deadline only
+  decides how late a reply may be before the server is declared gone — and the
+  server is dropped and restarted on the next execution, which the code said and
+  then contradicted by returning an error as well. A machine under load, which a
+  fuzzing host is by construction, could therefore turn one slow execution into
+  "the fuzzer broke": measured on a CI runner testing every package at once
+  under the race detector, a twenty-thousand-execution campaign against a target
+  answering in milliseconds ended on `read: i/o timeout`. It is a timeout now,
+  counted as one, and `ForkServer.BackstopSlack` sets how much room a late reply
+  gets on a host that needs more than the default fifteen seconds.
 - **A browser does not start under the macOS Seatbelt profile**: it decides
   where its default profile lives from the operating system rather than from
   `HOME`, creates it under the real user's home before reading its command line,

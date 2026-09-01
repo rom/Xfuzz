@@ -80,6 +80,15 @@ type ForkServer struct {
 	// both would have to be the larger of the two.
 	HandshakeTimeout time.Duration
 
+	// BackstopSlack is how much longer than Timeout the fuzzer waits before
+	// concluding the fork server is gone. Zero means DefaultBackstopSlack.
+	//
+	// A judgement about the machine rather than about the target: the child's
+	// own timer is what bounds an execution, and this only decides how late a
+	// reply may be before the server is dropped and restarted. On a host that
+	// swaps, or one running several campaigns at once, late is not lost.
+	BackstopSlack time.Duration
+
 	// Timeout bounds one execution. On expiry the child is killed and the
 	// server serves the next input; the server itself survives.
 	Timeout time.Duration
@@ -310,8 +319,26 @@ func (e *ForkServer) Run(ctx context.Context, in Input, obs []feedback.Observer)
 	start := time.Now()
 	ek, err := e.cycle()
 	elapsed := time.Since(start)
-	if err != nil {
+	if err != nil && ek != feedback.ExitTimeout {
 		return feedback.ExitError, err
+	}
+	if err != nil {
+		// A timeout that also lost the server is still a timeout. The input is
+		// what took too long, the server has been dropped, and the next
+		// execution starts a new one — which is what cycle's own comment says
+		// and what this used to contradict by returning the error as well.
+		//
+		// Ending the campaign here lets a machine under load turn one slow
+		// execution into "the fuzzer broke", and a fuzzing host is a machine
+		// under load by construction. Measured: a CI runner running the whole
+		// suite under the race detector at once, against a target that answers
+		// in milliseconds, ended a twenty-thousand-execution campaign on
+		// `read: i/o timeout`.
+		//
+		// It is not silent — the timeout is counted, and a target that always
+		// hangs still produces nothing but timeouts, which is what a campaign
+		// finding no coverage reports.
+		e.lastStatus = 0
 	}
 	e.execs++
 
@@ -403,9 +430,15 @@ func (e *ForkServer) cycleDeadline() time.Duration {
 	// on a two-core runner building and testing four packages at once, against
 	// a target that answers in milliseconds: `read |0: i/o timeout` after five
 	// seconds, and a campaign that reported its own harness as the failure.
-	const slack = 15 * time.Second
+	slack := e.BackstopSlack
+	if slack <= 0 {
+		slack = DefaultBackstopSlack
+	}
 	return e.Timeout + slack
 }
+
+// DefaultBackstopSlack is the room a late reply gets by default.
+const DefaultBackstopSlack = 15 * time.Second
 
 // serverDied reports the loss of the fork server and drops the handle so the
 // next execution restarts it.

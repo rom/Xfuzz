@@ -65,7 +65,7 @@ func TestTUIStartsAProgramAndReadsItsScreen(t *testing.T) {
 	if err := d.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	screen := string(d.State())
+	screen := awaitScreen(t, d, "1) items")
 	if !strings.Contains(screen, "tui_menu") || !strings.Contains(screen, "1) items") {
 		t.Fatalf("the program's first screen was not read:\n%s", screen)
 	}

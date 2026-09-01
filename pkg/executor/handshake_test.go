@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rom/Xfuzz/pkg/feedback"
 )
 
 // A fork server's status pipe is the one thing in the executor that reads bytes
@@ -160,5 +162,43 @@ func TestForkServerAcceptsTheRealHandshake(t *testing.T) {
 	}
 	if h.killed {
 		t.Error("a valid fork server was killed")
+	}
+}
+
+// TestAForkServerLostToATimeoutDoesNotEndTheCampaign pins what happens when
+// the backstop fires: the reply never came, so the server is dropped and will
+// be started again — and the execution is a timeout rather than a failure of
+// the fuzzer.
+//
+// The distinction is the whole campaign. Returning an error here ends it, and
+// the condition that produces one is a machine under load, which a fuzzing host
+// is by construction: measured on a CI runner testing every package at once
+// under the race detector, a twenty-thousand-execution campaign against a target
+// that answers in milliseconds ended on `read: i/o timeout`.
+func TestAForkServerLostToATimeoutDoesNotEndTheCampaign(t *testing.T) {
+	var hello [4]byte
+	binary.LittleEndian.PutUint32(hello[:], forkServerHello)
+	fs, h, err := startWithReply(t, hello[:])
+	if err != nil {
+		t.Fatalf("the handshake was rejected: %v", err)
+	}
+
+	// The scripted server answers the handshake and then says nothing at all,
+	// which is exactly the shape of a child that never returned.
+	fs.Timeout = 10 * time.Millisecond
+	fs.BackstopSlack = 200 * time.Millisecond
+
+	ek, err := fs.Run(context.Background(), Input{Bytes: []byte("x")}, nil)
+	if err != nil {
+		t.Fatalf("a lost fork server ended the campaign: %v", err)
+	}
+	if ek != feedback.ExitTimeout {
+		t.Errorf("exit kind = %v, want ExitTimeout: the input is what took too long", ek)
+	}
+	if !h.killed {
+		t.Error("the server that never replied was left running")
+	}
+	if _, timeouts, _ := fs.Stats(); timeouts == 0 {
+		t.Error("the timeout was not counted, so a campaign of them looks like a campaign of successes")
 	}
 }
