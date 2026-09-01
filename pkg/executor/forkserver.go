@@ -201,7 +201,16 @@ func (e *ForkServer) Start(ctx context.Context) error {
 	}
 	if err := h.Status().SetReadDeadline(time.Now().Add(handshake)); err != nil {
 		h.Kill()
-		return fmt.Errorf("executor %s: %w", e.name, err)
+		// Named for what it means rather than passed through. Every read in
+		// this tier is bounded by a deadline — that is what keeps a target
+		// which never answers from wedging the campaign — and a platform whose
+		// pipes cannot carry one cannot run a fork server at all. "file type
+		// does not support deadline" is a true sentence that tells nobody
+		// which tier to use instead.
+		return fmt.Errorf("executor %s: this platform's pipes cannot carry a read "+
+			"deadline, so the fork server cannot bound a target that never "+
+			"answers and cannot run here: %w\nuse the pooled tier "+
+			"(executor: pool), which is the portable stand-in", e.name, err)
 	}
 	var hello uint32
 	if err := readWord(h.Status(), &hello); err != nil {

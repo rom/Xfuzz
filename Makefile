@@ -87,7 +87,14 @@ test-integration: ## Layers 3, 4, 5, 8, and the milestone exit criteria
 
 .PHONY: test-security
 test-security: ## Layer 12: sandbox escape, scope guard, audit integrity
-	$(GO) test -race -tags security -timeout 15m ./...
+	# The whole suite, under the race detector, with the escape attempts added
+	# by the build tag — so the timeout has to cover the slowest package rather
+	# than the escape attempts, which are quick. internal/engine runs campaigns
+	# of tens of thousands of executions and took over fifteen minutes here on a
+	# two-core runner, which the previous limit reported as a hang: a goroutine
+	# dump instead of a result, in the one job whose output nobody expects to
+	# read closely.
+	$(GO) test -race -tags security -timeout 45m ./...
 
 .PHONY: test-all
 test-all: lint test test-integration test-security bench-check ## Everything except extended fuzzing

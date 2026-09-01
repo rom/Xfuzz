@@ -88,6 +88,16 @@ func (s *scriptedSpawner) StartPeer(context.Context, ProcSpec) (Peer, error) {
 func startWithReply(t *testing.T, reply []byte) (*ForkServer, *scriptedHandle, error) {
 	t.Helper()
 	h := newScriptedHandle(t, reply)
+	// Every read in this tier is bounded by a deadline, and a pipe that cannot
+	// carry one belongs to a platform where the fork server does not run —
+	// Windows, whose anonymous pipes are not opened for overlapped I/O. Skipping
+	// says which of the two it is; the tier reports the same thing to a campaign
+	// that asks for it there.
+	if err := h.status.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+		t.Skipf("this platform's pipes do not carry deadlines (%v), so the fork "+
+			"server cannot run here", err)
+	}
+	_ = h.status.SetReadDeadline(time.Time{})
 	fs := NewForkServer("fs", &scriptedSpawner{handle: h},
 		ProcSpec{Path: trueBin, Args: []string{trueBin}})
 	// Short, because these tests are about what a bad handshake does rather
