@@ -63,15 +63,7 @@ func buildPEFrom(t *testing.T, src string, link []string) string {
 	if err != nil {
 		t.Skip("clang is needed to compile for the Microsoft target")
 	}
-	// lld-link ships with LLVM everywhere; link.exe is the Microsoft one, and is
-	// only ever on the path on Windows.
-	var linker string
-	for _, name := range []string{"lld-link", "link.exe", "lld-link.exe"} {
-		if p, err := exec.LookPath(name); err == nil {
-			linker = p
-			break
-		}
-	}
+	linker := findCOFFLinker()
 	if linker == "" {
 		t.Skip("no COFF linker on this host, so a PE cannot be produced")
 	}
@@ -354,4 +346,28 @@ func TestPEExportsAreNamesWhenThereAreNoSymbols(t *testing.T) {
 				"block starts there", f.start)
 		}
 	}
+}
+
+// findCOFFLinker returns a linker that can produce a PE, or the empty string.
+//
+// The name is spelled several ways. LLVM installs it as lld-link, a
+// distribution's versioned packages as lld-link-18 and the like, and
+// Microsoft's own is link.exe. Which is present is a property of the host, so
+// all of them are looked for rather than one being required and the test
+// skipping everywhere else.
+func findCOFFLinker() string {
+	for _, name := range []string{"lld-link", "lld-link.exe", "link.exe"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p
+		}
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		matches, _ := filepath.Glob(filepath.Join(dir, "lld-link-*"))
+		for _, m := range matches {
+			if st, err := os.Stat(m); err == nil && !st.IsDir() {
+				return m
+			}
+		}
+	}
+	return ""
 }
