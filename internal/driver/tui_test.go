@@ -100,15 +100,15 @@ func TestTUINavigates(t *testing.T) {
 	}
 
 	send(t, d, "key 1")
-	if got := string(d.State()); !strings.Contains(got, "alpha") {
+	if got := awaitScreen(t, d, "alpha"); !strings.Contains(got, "alpha") {
 		t.Fatalf("the list did not open:\n%s", got)
 	}
-	if got := string(d.State()); !strings.Contains(got, "selected: alpha") {
+	if got := awaitScreen(t, d, "selected: alpha"); !strings.Contains(got, "selected: alpha") {
 		t.Fatalf("the selection is not on the first item:\n%s", got)
 	}
 
 	send(t, d, "key down")
-	if got := string(d.State()); !strings.Contains(got, "selected: beta") {
+	if got := awaitScreen(t, d, "selected: beta"); !strings.Contains(got, "selected: beta") {
 		t.Fatalf("the arrow key did not move the selection:\n%s", got)
 	}
 	// An arrow key is three bytes and which three depends on a mode the program
@@ -116,7 +116,7 @@ func TestTUINavigates(t *testing.T) {
 	// nothing at all — so the assertion above is the one that catches it.
 
 	send(t, d, "key escape")
-	if got := string(d.State()); !strings.Contains(got, "1) items") {
+	if got := awaitScreen(t, d, "1) items"); !strings.Contains(got, "1) items") {
 		t.Fatalf("escape did not return to the menu:\n%s", got)
 	}
 }
@@ -163,14 +163,14 @@ func TestTUIResetRestarts(t *testing.T) {
 	}
 	send(t, d, "key 1")
 	send(t, d, "key down")
-	if got := string(d.State()); !strings.Contains(got, "selected: beta") {
+	if got := awaitScreen(t, d, "selected: beta"); !strings.Contains(got, "selected: beta") {
 		t.Fatalf("setup failed:\n%s", got)
 	}
 
 	if err := d.Reset(); err != nil {
 		t.Fatal(err)
 	}
-	got := string(d.State())
+	got := awaitScreen(t, d, "1) items")
 	if !strings.Contains(got, "1) items") {
 		t.Errorf("after a reset the program is not back at its first screen:\n%s", got)
 	}
@@ -213,7 +213,9 @@ func TestTUIIgnoresAClickTheProgramNeverAskedFor(t *testing.T) {
 	if err := d.Start(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	before := string(d.State())
+	// Waited for, not merely read: an empty first screen compared against a
+	// drawn one is a difference this test would blame on the click.
+	before := awaitScreen(t, d, "1) items")
 	send(t, d, "click 5 3")
 	if got := string(d.State()); got != before {
 		t.Errorf("a click changed a program with no mouse tracking:\nbefore:\n%s\nafter:\n%s",
