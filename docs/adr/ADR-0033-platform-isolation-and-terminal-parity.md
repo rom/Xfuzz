@@ -39,6 +39,27 @@
 > *told* the numbers rather than assuming them. A child on that path gives up
 > its own standard input and output, which is why asking is part of it: a
 > browser and a terminal program must keep theirs.
+>
+> **On Windows the symbol-less executable is not the hard case, it is every
+> case.** `pkg/binary` treated a missing symbol table as the exception a
+> stripped ELF represents. Microsoft's linker writes every name into a separate
+> PDB file, so an ordinary Windows build — not stripped, not hardened — arrives
+> with no symbol table at all, and the tests that asked the fixture for a
+> function by name were asking for something the platform does not put in the
+> image. What stands in for it is the exception directory: unwinding an x64
+> stack is table-driven with no frame-pointer fallback, so the ABI requires a
+> `.pdata` entry for every non-leaf function, the table is needed at run time,
+> and unlike a DWARF call-frame entry it states where each function *ends* as
+> well as where it starts. Reading it needs the image base, which is in the
+> optional header and which this package had been guessing at by rounding the
+> first executable section's address down — right for the usual layout, and a
+> whole section short for any image whose code starts past the first 64K, where
+> every function address it produced pointed at nothing. Recovery on such an
+> image is now measured directly rather than inferred from the ELF case: the
+> fixture is a freestanding program built for the Microsoft target, which any
+> clang can compile and any COFF linker can link without a Windows SDK, so the
+> platform's normal shape is exercised on every host rather than only on the one
+> where it ships.
 
 ## Context
 

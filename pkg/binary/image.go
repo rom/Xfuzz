@@ -5,6 +5,7 @@ import (
 	"debug/elf"
 	"debug/macho"
 	"debug/pe"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -100,6 +101,11 @@ type Image struct {
 	// dynamic linking requires. It is the condition the whole binary-only path
 	// exists for, so it is reported rather than inferred by the caller.
 	Stripped bool
+
+	// base is the address the image is linked at. It is only meaningful for a
+	// PE, whose exception directory and export table record every address as an
+	// offset from it; ELF and Mach-O record addresses directly.
+	base uint64
 
 	sections []Section
 	symbols  []Sym
@@ -355,6 +361,20 @@ func openELF(path string, f *os.File) (*Image, error) {
 	return im, nil
 }
 
+// PE section characteristics, as the header records them.
+const (
+	scnCntCode = 0x00000020
+	scnMemExec = 0x20000000
+	scnMemRead = 0x40000000
+)
+
+// dataDirectory is one entry of the optional header's directory table: an
+// address relative to the image base, and how far it runs.
+type dataDirectory struct {
+	VirtualAddress uint32
+	Size           uint32
+}
+
 func openPE(path string, f *os.File) (*Image, error) {
 	p, err := pe.NewFile(f)
 	if err != nil {
@@ -374,24 +394,25 @@ func openPE(path string, f *os.File) (*Image, error) {
 	}
 
 	var base uint64
+	var exportDir dataDirectory
 	switch oh := p.OptionalHeader.(type) {
 	case *pe.OptionalHeader64:
 		base = oh.ImageBase
 		im.Entry = base + uint64(oh.AddressOfEntryPoint)
 		im.PIE = oh.DllCharacteristics&0x0040 != 0 // DYNAMIC_BASE
+		if len(oh.DataDirectory) > 0 {
+			exportDir = dataDirectory{oh.DataDirectory[0].VirtualAddress, oh.DataDirectory[0].Size}
+		}
 	case *pe.OptionalHeader32:
 		base = uint64(oh.ImageBase)
 		im.Entry = base + uint64(oh.AddressOfEntryPoint)
 		im.PIE = oh.DllCharacteristics&0x0040 != 0
+		if len(oh.DataDirectory) > 0 {
+			exportDir = dataDirectory{oh.DataDirectory[0].VirtualAddress, oh.DataDirectory[0].Size}
+		}
 	}
+	im.base = base
 
-	const (
-		scnCntCode  = 0x00000020
-		scnMemExec  = 0x20000000
-		scnMemRead  = 0x40000000
-		scnMemWrite = 0x80000000
-	)
-	_ = scnMemWrite
 	for _, s := range p.Sections {
 		if s.Characteristics&scnMemRead == 0 {
 			continue
@@ -411,15 +432,31 @@ func openPE(path string, f *os.File) (*Image, error) {
 		})
 	}
 
+	// The COFF symbol table, which a MinGW or Cygwin toolchain writes into the
+	// image and which the Microsoft one does not: link.exe puts names in a
+	// separate PDB, so a perfectly ordinary release build arrives here with no
+	// symbol table at all. That is the case the rest of this package exists for
+	// and it is reported, not worked around.
 	var syms []Sym
 	for _, s := range p.Symbols {
 		if s.SectionNumber <= 0 || int(s.SectionNumber) > len(p.Sections) {
 			continue
 		}
 		sec := p.Sections[s.SectionNumber-1]
+		if sec.Characteristics&(scnMemExec|scnCntCode) == 0 {
+			// Only code is named here. A data symbol is never an entry point,
+			// and letting one through would put a name on whatever function
+			// happens to precede its address.
+			continue
+		}
 		syms = append(syms, Sym{Name: s.Name, Addr: base + uint64(sec.VirtualAddress) + uint64(s.Value)})
 	}
 	im.Stripped = len(syms) == 0
+	// The export table survives stripping and names every exported function,
+	// which for a DLL is the whole of its interface. It is the PE counterpart of
+	// the ELF dynamic symbol table, and worth the same: little for an
+	// executable, a great deal for a library.
+	syms = append(syms, peExports(im, exportDir)...)
 	im.symbols = sortSymbols(syms)
 	if d, err := p.DWARF(); err == nil {
 		im.dwarf = d
@@ -485,4 +522,92 @@ func openMachO(path string, f *os.File) (*Image, error) {
 		}
 	}
 	return im, nil
+}
+
+// maxExports bounds what an export table is believed to declare. A count is a
+// field in the file, so a corrupt or hostile image can name four billion
+// exports; nothing legitimate names more than a few tens of thousands.
+const maxExports = 1 << 16
+
+// peExports reads the export directory and returns the exported code addresses.
+//
+// The directory holds three parallel arrays: the addresses of every export by
+// ordinal, the names, and for each name the ordinal it refers to. Only the named
+// ones are useful here — an export by ordinal alone has no name to report — and
+// an address that lands back inside the directory is a forwarder, a string
+// naming another library's export rather than code in this image.
+func peExports(im *Image, dir dataDirectory) []Sym {
+	if dir.VirtualAddress == 0 || dir.Size < 0x28 {
+		return nil
+	}
+	hdr, ok := im.At(im.base+uint64(dir.VirtualAddress), 0x28)
+	if !ok || len(hdr) < 0x28 {
+		return nil
+	}
+	var (
+		nFuncs    = binary.LittleEndian.Uint32(hdr[0x14:])
+		nNames    = binary.LittleEndian.Uint32(hdr[0x18:])
+		funcsRVA  = binary.LittleEndian.Uint32(hdr[0x1C:])
+		namesRVA  = binary.LittleEndian.Uint32(hdr[0x20:])
+		ordsRVA   = binary.LittleEndian.Uint32(hdr[0x24:])
+		dirStart  = uint64(dir.VirtualAddress)
+		dirEnd    = dirStart + uint64(dir.Size)
+		out       []Sym
+		haveNames = nNames > 0 && namesRVA != 0 && ordsRVA != 0
+	)
+	if !haveNames || funcsRVA == 0 || nFuncs == 0 {
+		return nil
+	}
+	if nNames > maxExports {
+		nNames = maxExports
+	}
+	names, ok := im.At(im.base+uint64(namesRVA), int(nNames)*4)
+	if !ok || len(names) < int(nNames)*4 {
+		return nil
+	}
+	ords, ok := im.At(im.base+uint64(ordsRVA), int(nNames)*2)
+	if !ok || len(ords) < int(nNames)*2 {
+		return nil
+	}
+	for i := 0; i < int(nNames); i++ {
+		ord := uint32(binary.LittleEndian.Uint16(ords[i*2:]))
+		if ord >= nFuncs {
+			continue
+		}
+		fn, ok := im.At(im.base+uint64(funcsRVA)+uint64(ord)*4, 4)
+		if !ok || len(fn) < 4 {
+			continue
+		}
+		rva := uint64(binary.LittleEndian.Uint32(fn))
+		if rva == 0 || (rva >= dirStart && rva < dirEnd) {
+			continue // unused ordinal, or a forwarder to another library
+		}
+		name := peString(im, uint64(binary.LittleEndian.Uint32(names[i*4:])))
+		if name == "" {
+			continue
+		}
+		out = append(out, Sym{Name: name, Addr: im.base + rva})
+	}
+	return out
+}
+
+// maxSymbolName bounds a name read out of the image, which is terminated by a
+// byte the image itself supplies.
+const maxSymbolName = 4096
+
+// peString reads a NUL-terminated name at an address relative to the image base.
+func peString(im *Image, rva uint64) string {
+	if rva == 0 {
+		return ""
+	}
+	b, ok := im.At(im.base+rva, maxSymbolName)
+	if !ok {
+		return ""
+	}
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return ""
 }

@@ -22,6 +22,23 @@ const ErrTruncated = decodeError("binary: instruction truncated")
 // gone wrong, and bounding it stops a runaway prefix loop.
 const maxInstLen = 15
 
+// isPrefix reports whether a byte is a legacy prefix or a REX prefix. The VEX
+// and EVEX escapes are not included: they carry the fields REX would and must be
+// read as the start of the instruction, not as something before it.
+func isPrefix(c byte) bool {
+	switch {
+	case c == 0x66 || c == 0x67:
+		return true
+	case c == 0xF0 || c == 0xF2 || c == 0xF3:
+		return true
+	case c == 0x2E || c == 0x36 || c == 0x3E || c == 0x26 || c == 0x64 || c == 0x65:
+		return true
+	case c >= 0x40 && c <= 0x4F:
+		return true
+	}
+	return false
+}
+
 // Decode decodes one x86-64 instruction at the start of code, which is located
 // at virtual address pc.
 //
@@ -42,27 +59,33 @@ func Decode(code []byte, pc uint64) (Inst, error) {
 		sawRex   bool
 	)
 
-	// Legacy prefixes, then REX. REX must be the last prefix before the opcode,
-	// so a prefix appearing after one cancels it — which real encoders do not
-	// emit, but which decoders must not mis-measure.
+	// Legacy prefixes, then REX. REX must immediately precede the opcode, so one
+	// followed by another prefix is ignored by the processor entirely.
+	//
+	// The ignored run is reported as its own instruction rather than folded into
+	// the one that follows. Nothing executes differently either way — the bytes
+	// are a no-op in both readings — but every disassembler splits them, so
+	// folding them would put this decoder exactly one byte out of step with the
+	// reference it is checked against, on encodings that do occur in real
+	// images.
 prefixes:
 	for ; i < len(code) && i < maxInstLen; i++ {
-		switch c := code[i]; {
-		case c == 0x66:
-			opsize16, sawRex, rexW = true, false, false
-		case c == 0x67:
-			addr32, sawRex, rexW = true, false, false
-		case c == 0xF0 || c == 0xF2 || c == 0xF3,
-			c == 0x2E || c == 0x36 || c == 0x3E || c == 0x26,
-			c == 0x64 || c == 0x65:
-			sawRex, rexW = false, false
-		case c >= 0x40 && c <= 0x4F:
-			sawRex, rexW = true, c&0x08 != 0
-		default:
+		c := code[i]
+		if !isPrefix(c) {
 			break prefixes
 		}
+		if sawRex {
+			return Inst{Len: i, Kind: KindOther}, nil
+		}
+		switch {
+		case c == 0x66:
+			opsize16 = true
+		case c == 0x67:
+			addr32 = true
+		case c >= 0x40 && c <= 0x4F:
+			sawRex, rexW = true, c&0x08 != 0
+		}
 	}
-	_ = sawRex
 	if i >= len(code) {
 		return Inst{}, ErrTruncated
 	}

@@ -18,7 +18,10 @@ import "encoding/binary"
 // information — the default on Linux and macOS, and required by the ABI for
 // anything a C++ exception can pass through — has an entry naming its start
 // address and its length. That table is needed at run time, so stripping cannot
-// remove it. Windows keeps the equivalent in .pdata.
+// remove it. Windows keeps the equivalent in .pdata, where it is mandatory
+// rather than merely usual, and where it is very often the only thing left: the
+// Microsoft toolchain writes names to a PDB and not into the image, so an
+// ordinary Windows build arrives here in the same shape a stripped ELF does.
 //
 // Address-taken code is the other. A pointer to a function that nothing calls
 // directly is loaded with a RIP-relative lea, and its target is computable from
@@ -30,47 +33,64 @@ import "encoding/binary"
 // that what it is given decodes as code before it trusts it, so a wrong root
 // costs a failed decode rather than a corrupted analysis.
 
-// unwindStarts returns the function start addresses named by the image's unwind
-// tables.
-func unwindStarts(im *Image) []uint64 {
+// funcRange is a function's extent as an unwind table declares it. End is zero
+// when the table names only where the function starts, which is all that is read
+// out of DWARF call-frame information here.
+type funcRange struct {
+	Start uint64
+	End   uint64
+}
+
+// unwindRanges returns the functions named by the image's unwind tables.
+func unwindRanges(im *Image) []funcRange {
 	switch im.Format {
 	case FormatELF, FormatMachO:
 		for _, s := range im.sections {
 			if s.Name == ".eh_frame" || s.Name == "__TEXT,__eh_frame" {
-				return ehFrameStarts(s.Data, s.Addr)
+				starts := ehFrameStarts(s.Data, s.Addr)
+				out := make([]funcRange, 0, len(starts))
+				for _, a := range starts {
+					out = append(out, funcRange{Start: a})
+				}
+				return out
 			}
 		}
 	case FormatPE:
+		// An entry is three 32-bit fields on x64 and two on ARM64, so reading
+		// the wrong architecture's table would not misread a field, it would
+		// misread every field after the first.
+		if im.Arch != ArchAMD64 {
+			return nil
+		}
 		for _, s := range im.sections {
 			if s.Name == ".pdata" {
-				return pdataStarts(s.Data, im)
+				return pdataRanges(s.Data, im.base)
 			}
 		}
 	}
 	return nil
 }
 
-// pdataStarts reads Windows' exception directory: an array of three RVAs per
-// function, of which the first is the start.
-func pdataStarts(data []byte, im *Image) []uint64 {
-	var base uint64
-	for _, s := range im.sections {
-		if s.Executable {
-			// .pdata holds RVAs, and the image base is the section address
-			// minus its own RVA. Recovering it from the entry point is not
-			// possible here, so the lowest executable section start rounded down
-			// to the image-base granularity is used instead.
-			base = s.Addr &^ 0xFFFF
-			break
-		}
-	}
-	var out []uint64
+// pdataRanges reads Windows' exception directory: three addresses per function,
+// each relative to the image base, of which the first two are where the function
+// begins and ends.
+//
+// It is the best source of function boundaries any of these formats offers.
+// Unwinding an x64 stack is table-driven with no frame-pointer fallback, so the
+// ABI requires an entry for every non-leaf function; the table is needed at run
+// time, so stripping cannot remove it; and unlike a call-frame description
+// entry, it states where the function ends as well as where it starts.
+func pdataRanges(data []byte, base uint64) []funcRange {
+	var out []funcRange
 	for i := 0; i+12 <= len(data); i += 12 {
-		rva := binary.LittleEndian.Uint32(data[i:])
-		if rva == 0 {
+		begin := uint64(binary.LittleEndian.Uint32(data[i:]))
+		end := uint64(binary.LittleEndian.Uint32(data[i+4:]))
+		if begin == 0 || end <= begin {
+			// A zeroed entry is table padding, and one that does not run
+			// forwards is not describing anything this can use.
 			continue
 		}
-		out = append(out, base+uint64(rva))
+		out = append(out, funcRange{Start: base + begin, End: base + end})
 	}
 	return out
 }

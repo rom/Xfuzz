@@ -79,6 +79,21 @@ func TestDecodeKnownEncodings(t *testing.T) {
 
 		// Segment-prefixed, which compilers emit for thread-local storage.
 		{"mov rax,fs:[0x28]", "64488b0425 28000000", 9, binary.KindOther, 0},
+
+		// A REX prefix only applies when it immediately precedes the opcode.
+		// One followed by another prefix is ignored by the processor, and both
+		// objdump and this decoder end the instruction there — folding it into
+		// what follows would measure every later instruction from a byte too far
+		// back, and these sequences do occur in linked images.
+		{"rex before another rex", "49488b0424", 1, binary.KindOther, 0},
+		{"rex before 66", "4966894424 08", 1, binary.KindOther, 0},
+		{"66 before a dangling rex", "6649488b0424", 2, binary.KindOther, 0},
+		{"rex before f3", "49f30f1efa", 1, binary.KindOther, 0},
+
+		// The two that look similar and are not: a REX before an opcode, and a
+		// REX before a VEX escape, are each one instruction.
+		{"rex before an opcode", "490fb6c0", 4, binary.KindOther, 0},
+		{"rex before vex", "49c5f877", 4, binary.KindOther, 0},
 	}
 
 	const pc = 0x1000

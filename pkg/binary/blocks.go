@@ -38,8 +38,19 @@ type Block struct {
 
 // Function is a run of blocks reached from one entry point.
 type Function struct {
-	Name   string
-	Entry  uint64
+	Name  string
+	Entry uint64
+
+	// End is where the function ends, when something in the image says so: a
+	// symbol with a size, or a Windows exception-directory entry. Zero means
+	// nothing declared it, which is the usual case on ELF — call-frame
+	// information does carry a length, but only the start is read here.
+	//
+	// It bounds the function rather than defining it. Recursive descent follows
+	// control flow, and a tail call or a hot/cold split puts real blocks of a
+	// function outside the range its own table declares.
+	End uint64
+
 	Blocks []uint64
 }
 
@@ -141,15 +152,20 @@ func Analyze(im *Image) (*Analysis, error) {
 	// supplies almost all of them; on a stripped one it supplies none, and the
 	// unwind tables and address-taken references in entries.go are what stand in
 	// for it.
-	roots := []uint64{}
+	roots := []funcRange{}
 	if im.Entry != 0 {
-		roots = append(roots, im.Entry)
+		roots = append(roots, funcRange{Start: im.Entry})
 	}
 	for _, s := range im.symbols {
-		roots = append(roots, s.Addr)
+		r := funcRange{Start: s.Addr}
+		if s.Size > 0 {
+			r.End = s.Addr + s.Size
+		}
+		roots = append(roots, r)
 	}
-	roots = append(roots, unwindStarts(im)...)
-	a.UnwindEntries = len(roots)
+	unwind := unwindRanges(im)
+	roots = append(roots, unwind...)
+	a.UnwindEntries = len(unwind)
 
 	// Descend from what is known first, then again from every address the code
 	// just walked was seen taking. The order matters: an address-taken candidate
@@ -167,7 +183,7 @@ func Analyze(im *Image) (*Analysis, error) {
 		if w.seen[cand] {
 			continue
 		}
-		w.root(cand)
+		w.root(funcRange{Start: cand})
 		a.AddressTaken++
 	}
 
@@ -177,22 +193,20 @@ func Analyze(im *Image) (*Analysis, error) {
 
 // root descends from one candidate entry point and records what it reached as a
 // function.
-func (w *walker) root(root uint64) {
-	{
-		if !w.executable(root) || w.seen[root] {
-			return
-		}
-		before := len(w.blocks)
-		w.descend(root)
-		if len(w.blocks) == before {
-			return
-		}
-		fn := Function{Entry: root, Blocks: w.since(before)}
-		if s, ok := w.im.SymbolAt(root); ok && s.Addr == root {
-			fn.Name = s.Name
-		}
-		w.an.Functions = append(w.an.Functions, fn)
+func (w *walker) root(r funcRange) {
+	if !w.executable(r.Start) || w.seen[r.Start] {
+		return
 	}
+	before := len(w.blocks)
+	w.descend(r.Start)
+	if len(w.blocks) == before {
+		return
+	}
+	fn := Function{Entry: r.Start, End: r.End, Blocks: w.since(before)}
+	if s, ok := w.im.SymbolAt(r.Start); ok && s.Addr == r.Start {
+		fn.Name = s.Name
+	}
+	w.an.Functions = append(w.an.Functions, fn)
 }
 
 // walker holds recursive-descent state.

@@ -20,9 +20,13 @@ in. Xfuzz watches it run and works out which basic blocks it entered.
   blocks. An x86-64 length decoder — not a disassembler; it answers how long an
   instruction is and whether it changes control flow, and refuses every other
   question — checked against `objdump` over 984,000 instructions from a Go
-  binary, a C toolchain and bash, with no disagreements. Blocks are found by
-  recursive descent rather than a linear sweep, which decodes jump tables and
-  string literals as though they were code and cannot tell that it did.
+  binary, a C toolchain and bash, and over 461,000 more from a Go binary built
+  for Windows, which is where the one disagreement was: a REX prefix that is not
+  immediately before the opcode is ignored by the processor, and both `objdump`
+  and this decoder now end the instruction there rather than folding the ignored
+  bytes into what follows. Blocks are found by recursive descent rather than a
+  linear sweep, which decodes jump tables and string literals as though they were
+  code and cannot tell that it did.
 - Descent from the ELF entry point alone finds one block and six per cent of the
   text on a stripped binary: `_start` does not call `main`, it loads its address
   into a register, and it reaches libc through a stub that ends in an indirect
@@ -217,6 +221,30 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
 
 ### Fixed
 
+- **Every Windows executable looked stripped to the binary-only tier, and the
+  addresses that stood in for its symbols were computed against a guess.**
+  Microsoft's linker writes names into a separate PDB, so an ordinary Windows
+  build has no symbol table at all — `pkg/binary` had treated that as the
+  stripped-ELF exception rather than the platform's normal case. What replaces
+  it is the exception directory, which the x64 ABI requires for every non-leaf
+  function and which states where each function ends as well as where it starts.
+  Reading it needs the image base, and the base was being guessed by rounding
+  the first executable section's address down to 64K: right for the usual
+  layout, and a whole section short for an image whose code starts past that
+  point, where every function address it produced pointed at nothing and
+  recovery silently found no blocks there. The base now comes from the optional
+  header where it is written, the exception directory yields exact function
+  bounds rather than starts alone (`Function.End`), and the export table is read
+  as a second source of names — the PE counterpart of the ELF dynamic symbol
+  table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
+  counted every root including the symbols, so on an unstripped image it
+  reported the unwind tables had supplied entries they had not.
+- **The length decoder folded an ignored prefix into the next instruction.** A
+  REX prefix only applies when it immediately precedes the opcode; one followed
+  by another prefix is ignored by the processor, and every disassembler ends the
+  instruction there. Measured against `objdump` over 461,000 instructions from a
+  Go binary built for Windows: one disagreement, at the one address where that
+  encoding occurs.
 - **The macOS Seatbelt profile denied the fuzzer its own coverage map.** The
   shared maps live under the temporary directory on a system with no `/dev/shm`,
   the profile allowed only the working directory, and so every coverage test on

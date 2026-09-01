@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/rom/Xfuzz/pkg/binary"
@@ -16,25 +18,117 @@ import (
 // whose source the fuzzer never sees, and building one is how that is arranged.
 func buildC(t *testing.T, src string, extra ...string) string {
 	t.Helper()
-	cc, err := exec.LookPath("clang")
-	if err != nil {
-		cc, err = exec.LookPath("gcc")
-		if err != nil {
-			t.Skip("no C compiler; the binary-only path needs a native target to analyse")
+	out, _ := buildFixture(t, false, src, extra)
+	return out
+}
+
+// buildNamedC is buildC for the tests that need the fixture to carry a symbol
+// table: the ones that ask for a function by name, and the one that measures
+// what stripping costs and so needs something to strip.
+//
+// Which compiler produces one is a platform question rather than a preference.
+// On Windows clang targets Microsoft's toolchain by default, and that linker
+// writes every name into a separate PDB file — the executable has no symbol
+// table however it was built, which is a shape TestAnalyzeRecoversASymbolLessPE
+// covers directly instead. MinGW's gcc writes a COFF symbol table into the
+// image, so where both are installed this builds with that one.
+func buildNamedC(t *testing.T, src string, extra ...string) string {
+	t.Helper()
+	out, named := buildFixture(t, true, src, extra)
+	if !named {
+		t.Skip("no C compiler on this host writes a symbol table into the executable, " +
+			"so there is no named fixture to ask about; the symbol-less path is covered " +
+			"by TestAnalyzeRecoversASymbolLessPE")
+	}
+	return out
+}
+
+// buildFixture compiles src with the host's C compilers in turn and reports
+// whether the executable it returns has a symbol table. It stops at the first
+// one that builds, unless names are wanted and that one produced none.
+func buildFixture(t *testing.T, wantNames bool, src string, extra []string) (string, bool) {
+	t.Helper()
+	var ccs []string
+	for _, name := range []string{"clang", "gcc", "cc"} {
+		if p, err := exec.LookPath(name); err == nil {
+			ccs = append(ccs, p)
 		}
 	}
+	if len(ccs) == 0 {
+		t.Skip("no C compiler; the binary-only path needs a native target to analyse")
+	}
+
+	var first string
+	var failures []string
+	for _, cc := range ccs {
+		out, why := compileC(t, cc, src, extra)
+		if out == "" {
+			failures = append(failures, fmt.Sprintf("%s: %s", cc, why))
+			continue
+		}
+		named := hasSymbolTable(out)
+		if first == "" {
+			first = out
+		}
+		if named || !wantNames {
+			return out, named
+		}
+	}
+	if first == "" {
+		t.Skipf("no C compiler here could build the fixture: %s", strings.Join(failures, "; "))
+	}
+	return first, false
+}
+
+// compileC builds src with one compiler, and returns the executable or the
+// compiler's own account of why there is none.
+func compileC(t *testing.T, cc, src string, extra []string) (string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	in := filepath.Join(dir, "t.c")
 	if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	out := filepath.Join(dir, "t")
-	args := append([]string{"-O0", "-o", out, in}, extra...)
-	cmd := exec.Command(cc, args...)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("compiling the fixture failed (%v): %s", err, b)
+	if runtime.GOOS == "windows" {
+		out += ".exe"
 	}
-	return out
+	args := append([]string{"-O0", "-o", out, in}, extra...)
+	b, err := exec.Command(cc, args...).CombinedOutput()
+	if err != nil {
+		return "", fmt.Sprintf("%v: %s", err, b)
+	}
+	if _, err := os.Stat(out); err != nil {
+		// A MinGW toolchain appends .exe to an output name that has none, so
+		// the compiler can succeed and leave nothing at the path it was given.
+		if _, err := os.Stat(out + ".exe"); err == nil {
+			return out + ".exe", ""
+		}
+		return "", fmt.Sprintf("the compiler wrote no %s", out)
+	}
+	return out, ""
+}
+
+func hasSymbolTable(path string) bool {
+	im, err := binary.Open(path)
+	if err != nil {
+		return false
+	}
+	defer im.Close()
+	return !im.Stripped
+}
+
+// copyFile duplicates the fixture so one copy can be stripped and the other kept
+// to compare against.
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	b, err := os.ReadFile(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(to, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
 }
 
 const ladderSrc = `
@@ -53,7 +147,7 @@ int main(void) {
 `
 
 func TestAnalyzeFindsTheFunctionsAndTheirBlocks(t *testing.T) {
-	target := buildC(t, ladderSrc)
+	target := buildNamedC(t, ladderSrc)
 	im, err := binary.Open(target)
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +235,7 @@ func TestAnalyzeWorksOnAStrippedBinary(t *testing.T) {
 	if err != nil {
 		t.Skip("strip is not installed, so a stripped fixture cannot be made")
 	}
-	target := buildC(t, ladderSrc)
+	target := buildNamedC(t, ladderSrc)
 
 	im, err := binary.Open(target)
 	if err != nil {
@@ -174,9 +268,7 @@ func TestAnalyzeWorksOnAStrippedBinary(t *testing.T) {
 	}
 
 	stripped := target + ".stripped"
-	if b, err := exec.Command("cp", target, stripped).CombinedOutput(); err != nil {
-		t.Fatalf("copying the fixture: %v: %s", err, b)
-	}
+	copyFile(t, target, stripped)
 	if b, err := exec.Command(strip, stripped).CombinedOutput(); err != nil {
 		t.Skipf("strip failed (%v): %s", err, b)
 	}
@@ -260,7 +352,7 @@ func TestAnalyzeFollowsAnAddressTakenFunction(t *testing.T) {
 	if err != nil {
 		t.Skip("strip is not installed")
 	}
-	target := buildC(t, ladderSrc, "-fno-asynchronous-unwind-tables", "-fno-unwind-tables")
+	target := buildNamedC(t, ladderSrc, "-fno-asynchronous-unwind-tables", "-fno-unwind-tables")
 
 	im, err := binary.Open(target)
 	if err != nil {

@@ -863,7 +863,7 @@ was measured for it, and what it does not cover.
 
 | Piece | Where | Evidence |
 | --- | --- | --- |
-| Block recovery from a stripped executable | `pkg/binary` | Decoder agrees with `objdump` over 984,000 instructions; every block in the program's own functions survives `strip`, asserted against the unstripped analysis of the same binary |
+| Block recovery from a stripped executable | `pkg/binary` | Decoder agrees with `objdump` over 984,000 instructions on Linux and 461,000 on Windows; every block in the program's own functions survives `strip`, asserted against the unstripped analysis of the same binary; every function a PE's exception directory declares gets a block, including one nothing calls and in an image whose code starts past the first 64K |
 | T5 executor over a `Tracer` interface | `pkg/executor/emulated.go` | Fold is order-aware and refuses to invent edges; portable tests with a fake backend |
 | `ptrace-bb` | `internal/tracer/ptrace.go` | End to end: deeper inputs cover more, the same input covers the same, a crash is a crash, a hang is a hang, a cancelled context stops it |
 | `qemu`, `frida` | `internal/tracer/` | Format readers tested against all three of QEMU's log shapes and both DRcov module-table versions; both backends exercised end to end against stub tools that emit the real formats |
