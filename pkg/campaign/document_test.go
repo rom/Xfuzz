@@ -1,8 +1,6 @@
 package campaign
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -162,11 +160,8 @@ func TestDocumentSetCreatesAndUnsetRemoves(t *testing.T) {
 // showed.
 func TestEditedDocumentsResolveAsThemselves(t *testing.T) {
 	dir := t.TempDir()
-	target := filepath.Join(dir, "target")
-	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	src := "name: nightly\n\ntarget:\n  # why this timeout\n  path: " + target +
+	path := target(t, dir)
+	src := "name: nightly\n\ntarget:\n  # why this timeout\n  path: " + path +
 		"\n\nseeds:\n  inline: [\"a\"]\n\nworkers:\n  count: 2\n"
 
 	d, err := ParseDocument([]byte(src))

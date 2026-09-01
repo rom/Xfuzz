@@ -28,14 +28,27 @@ var trueBin = func() string {
 }()
 
 // target writes an executable stub, so validation has something real to stat.
+//
+// Named for the platform, because that is how the platform decides: Windows
+// reads the extension and its stat never returns an execute bit, so a file
+// called "target" there is not executable however it was written — and a
+// fixture that cannot be run tests the refusal rather than the campaign.
 func target(t *testing.T, dir string) string {
 	t.Helper()
-	p := filepath.Join(dir, "target")
+	p := filepath.Join(dir, targetName)
 	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
+
+// targetName is what an executable stub has to be called here.
+var targetName = func() string {
+	if runtime.GOOS == "windows" {
+		return "target.exe"
+	}
+	return "target"
+}()
 
 func write(t *testing.T, dir, name, body string) string {
 	t.Helper()

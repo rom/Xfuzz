@@ -24,7 +24,11 @@ func TestPublishedSchemaIsCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the published schema: %v", err)
 	}
-	if string(got) != string(want) {
+	// Compared without its line endings, which belong to the checkout rather
+	// than to the schema: git hands out CRLF on Windows by default, and a
+	// generator that writes LF would otherwise report the file as stale on
+	// every machine where it is checked out that way.
+	if unixEndings(string(got)) != unixEndings(string(want)) {
 		t.Fatalf("%s is out of date; regenerate it with\n\n\tgo run ./pkg/campaign/gen_schema.go\n", schemaPath)
 	}
 }
@@ -108,6 +112,12 @@ func TestExampleCampaignIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the example: %v", err)
 	}
+	// The example names ./target, which is what a reader on a Unix machine
+	// would write. Here it has to name whatever this platform will run, and the
+	// substitution is the test's business rather than the document's.
+	if targetName != "target" {
+		src = []byte(strings.ReplaceAll(string(src), "./target", "./"+targetName))
+	}
 	path := filepath.Join(dir, "example.yaml")
 	if err := os.WriteFile(path, src, 0o644); err != nil {
 		t.Fatal(err)
@@ -132,3 +142,6 @@ func TestExampleCampaignIsValid(t *testing.T) {
 		}
 	}
 }
+
+// unixEndings normalises CRLF to LF.
+func unixEndings(s string) string { return strings.ReplaceAll(s, "\r\n", "\n") }
