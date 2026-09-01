@@ -238,13 +238,27 @@ func (s *session) written() uint64 {
 func (d *TUI) settle(ctx context.Context, s *session, bound time.Duration) {
 	deadline := time.Now().Add(bound)
 	last := s.written()
+	// Whether the program has said anything at all yet in this session. Until
+	// it has, quiet does not mean settled — it means unscheduled, and the
+	// terminal has been quiet since before the program existed. Returning then
+	// hands the caller an empty screen as the program's state: measured on a
+	// loaded runner, where a campaign recorded that empty screen as one of the
+	// program's states and the sequence after it as transitions from nothing.
+	//
+	// Only until the first byte. After that a settle that sees no output is a
+	// program that had nothing to draw, which is the ordinary case for an event
+	// that changes nothing, and waiting for it would cost the bound every time.
+	silent := last == 0
 	quiet := time.NewTimer(d.opts.Settle)
 	defer quiet.Stop()
 	for {
 		select {
 		case <-quiet.C:
 			now := s.written()
-			if now == last || time.Now().After(deadline) {
+			if time.Now().After(deadline) {
+				return
+			}
+			if now == last && (now > 0 || !silent) {
 				return
 			}
 			last = now

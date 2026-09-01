@@ -253,6 +253,14 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   answers from wedging the campaign — and Windows pipes are not opened for
   overlapped I/O. "file type does not support deadline" is a true sentence that
   names no remedy; it now names the pooled tier.
+- **A terminal that has said nothing is not settled.** The driver waited for one
+  quiet interval, and a program that has not been scheduled yet has been
+  perfectly quiet — so on a loaded machine a start or a reset returned an empty
+  screen, and the campaign recorded it as one of the program's states with the
+  sequence after it as transitions from nothing. It now waits for the first byte
+  before the quiet rule applies, and only for the first: after that a settle
+  that sees no output is a program with nothing to draw, which is the ordinary
+  case for an event that changes nothing.
 - **A fork server lost to a late reply no longer ends the campaign.** The
   child's own timer is what bounds an execution; the fuzzer's deadline only
   decides how late a reply may be before the server is declared gone — and the
