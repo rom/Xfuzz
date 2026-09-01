@@ -114,6 +114,13 @@ func listen(l Listener) (net.Listener, func(), error) {
 		// Owner-only. This is the access control on the default transport, so
 		// it is set explicitly rather than left to the umask, which a user may
 		// have set to anything.
+		//
+		// Where a mode is not what decides who may open a file it does nothing:
+		// os.Chmod on Windows sets the read-only attribute and no more, and what
+		// stands between the socket and another user there is the permissions
+		// the containing directory inherits. The call is kept because it is
+		// correct where it applies and harmless where it does not, and the
+		// difference is reported rather than assumed (ADR-0033).
 		if err := os.Chmod(l.Socket, 0o600); err != nil {
 			ln.Close()
 			lock.Release()

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"os"
+	"github.com/rom/Xfuzz/internal/testenv"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -168,10 +168,7 @@ func TestEveryCommandIsInTheGuide(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	guide, err := os.ReadFile(filepath.Join(root, "docs", "GUIDE.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	guide := testenv.ReadDoc(t, filepath.Join(root, "docs", "GUIDE.md"))
 
 	rowRe := regexp.MustCompile("(?m)^\\| `xfuzz ([a-z-]+)` \\| (.+?) \\|$")
 	listed := map[string]string{}

@@ -32,10 +32,7 @@ func newFixture(t *testing.T, yaml string, workers int) *fixture {
 	t.Helper()
 
 	dir := testenv.ReachableDir(t)
-	targetPath := filepath.Join(dir, testenv.TargetName())
-	if err := os.WriteFile(targetPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testenv.StubTarget(t, dir)
 	path := filepath.Join(dir, "c.yaml")
 	if err := os.WriteFile(path, []byte(testenv.ForThisPlatform(yaml)), 0o644); err != nil {
 		t.Fatal(err)
@@ -397,8 +394,7 @@ func TestCampaignPauseAndResume(t *testing.T) {
 func TestCampaignRefusesARemoteRunWithoutAuthorization(t *testing.T) {
 	// Caught before anything starts, not after the first packet.
 	dir := testenv.ReachableDir(t)
-	targetPath := filepath.Join(dir, testenv.TargetName())
-	os.WriteFile(targetPath, []byte("#!/bin/sh\n"), 0o755)
+	testenv.StubTarget(t, dir)
 	path := filepath.Join(dir, "c.yaml")
 	os.WriteFile(path, []byte(testenv.ForThisPlatform(`
 name: remote
@@ -447,7 +443,7 @@ func TestDaemonRefusesDuplicateAndOverLimitCampaigns(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755)
+	testenv.StubTarget(t, cfgDir)
 	mk := func(name string) *campaign.Resolved {
 		p := filepath.Join(cfgDir, name+".yaml")
 		os.WriteFile(p, []byte(testenv.ForThisPlatform("name: "+name+"\ntarget:\n  path: ./target\nseeds:\n  inline: [\"s\"]\n")), 0o644)
@@ -484,7 +480,7 @@ func TestDaemonSharesOneStorePerDirectory(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755)
+	testenv.StubTarget(t, cfgDir)
 	var stores []*store.Store
 	for _, name := range []string{"a", "b"} {
 		p := filepath.Join(cfgDir, name+".yaml")
@@ -519,10 +515,7 @@ func TestFinishedCampaignsLoadWithoutTheirFile(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	target := filepath.Join(cfgDir, testenv.TargetName())
-	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	target := testenv.StubTarget(t, cfgDir)
 	path := filepath.Join(cfgDir, "c.yaml")
 	doc := "name: kept\ntarget:\n  path: " + target + "\nseeds:\n  inline: [\"s\"]\n"
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
@@ -587,9 +580,7 @@ func TestCampaignGeneratesSeedsFromItsGrammar(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	if err := os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testenv.StubTarget(t, cfgDir)
 	grammar := filepath.Join(cfgDir, "g.xfg")
 	if err := os.WriteFile(grammar, []byte(
 		"format message {\n  tag:  magic \"MSG\"\n  body: bytes<1..16>\n}\n"), 0o644); err != nil {

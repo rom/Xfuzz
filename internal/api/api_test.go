@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,10 +48,7 @@ func newHarness(t *testing.T) *harness {
 // document returns a valid campaign file whose target exists.
 func (h *harness) document(name string) string {
 	h.t.Helper()
-	target := filepath.Join(h.dir, "target")
-	if err := os.WriteFile(target, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		h.t.Fatal(err)
-	}
+	target := testenv.StubTarget(h.t, h.dir)
 	return fmt.Sprintf(`
 name: %s
 target:
@@ -456,6 +453,17 @@ func TestUnixSocketIsOwnerOnly(t *testing.T) {
 	}
 	// Filesystem permissions are the access control on the default transport,
 	// so they are set explicitly rather than left to whatever umask is in force.
+	//
+	// Where a file's mode is not what decides who may open it, this measures
+	// nothing: os.Chmod on Windows sets the read-only attribute and nothing
+	// else, so the mode comes back 0666 for a socket that may or may not be
+	// reachable by another user — the answer there is the directory's inherited
+	// permissions, which this cannot read. Skipped rather than asserted loosely,
+	// and the gap is recorded in ADR-0033 rather than left in a passing test.
+	if runtime.GOOS == "windows" {
+		t.Skipf("a file's mode is not the access control here; the socket reports %v "+
+			"and what protects it is the directory's permissions", fi.Mode().Perm())
+	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("socket mode = %v, want 0600", perm)
 	}

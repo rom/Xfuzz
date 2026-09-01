@@ -1,6 +1,7 @@
 package bench
 
 import (
+	"github.com/rom/Xfuzz/internal/testenv"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -84,10 +85,7 @@ func TestFloorsMatchDocumentation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	body := testenv.ReadDoc(t, filepath.Join(root, "docs", "TESTS.md"))
 	row := regexp.MustCompile(`(?m)^\| (T\d) ([^|]+?) \| ([\d,]+) exec/s \|$`)
 	documented := map[Tier]float64{}
 	names := map[Tier]string{}

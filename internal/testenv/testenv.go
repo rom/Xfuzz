@@ -12,6 +12,7 @@ package testenv
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -215,6 +216,66 @@ func ForThisPlatform(body string) string {
 		return body
 	}
 	return strings.ReplaceAll(body, "./target", "./"+TargetName())
+}
+
+// StubTarget writes an executable target into dir and returns its path.
+//
+// A real program rather than a shell script, because a campaign file names a
+// target and something eventually tries to start it. A script is a program
+// where there is a shell to read it and a file the loader refuses where there
+// is not, so naming one with an executable extension does not make it one — it
+// only moves the failure from the campaign's validation to the moment it runs.
+//
+// It reads a line and repeats it behind a marker, which is an exit status to
+// classify and a line of output to attribute. Built once per test binary and
+// copied, so a fixture directory costs a copy rather than a compile.
+func StubTarget(t testing.TB, dir string) string {
+	t.Helper()
+	stubOnce.Do(func() {
+		d, err := os.MkdirTemp("", "xfuzz-stub-")
+		if err != nil {
+			stubErr = err
+			return
+		}
+		stubDir = d
+		stubPath = BuildAt(t, filepath.Join(d, "stub"), "./testdata/targets/go/echoer")
+	})
+	if stubErr != nil {
+		t.Fatalf("building the stub target: %v", stubErr)
+	}
+	b, err := os.ReadFile(stubPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, TargetName())
+	if err := os.WriteFile(out, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+var (
+	stubOnce sync.Once
+	stubPath string
+	stubDir  string
+	stubErr  error
+)
+
+// ReadDoc reads a documentation file with its line endings normalised.
+//
+// A checkout on Windows has CRLF, and a multi-line pattern anchored with $
+// matches nothing against it: the carriage return is still there, before the
+// newline the anchor is looking for. A test that parses a table out of the
+// documentation then reports that the table is missing, which is true of no
+// file in the repository.
+func ReadDoc(t testing.TB, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
+	return bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
 }
 
 // Sleeper builds a target that will not finish on its own, for the tests that

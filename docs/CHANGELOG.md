@@ -239,6 +239,19 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **A documentation table read as missing on a Windows checkout.** Two tests
+  parse a table out of `docs/` with a multi-line pattern anchored at the end of
+  the line, and a checkout there has CRLF: the carriage return sits where the
+  anchor is looking, nothing matches, and the test reports that the table was
+  removed — which is true of no file in the repository. It is the same fault
+  `docslint` was fixed for, in `bench` and `cmd/xfuzz`, and they read
+  documentation through one normalising reader now.
+- **The daemon's socket is not owner-only on Windows.** `os.Chmod` there sets
+  the read-only attribute and nothing else, so the mode the Unix path relies on
+  is not enforced and what protects the socket is whatever permissions its
+  directory inherits. The call is kept — correct where it applies, harmless
+  where it does not — and the gap is recorded in ADR-0033 and asserted by a test
+  that says what it cannot measure rather than passing quietly.
 - **Two daemons could serve one store on Windows, and the comment said they
   could not.** The socket lock is what tells a starting daemon that another one
   is already running — a connect probe cannot tell "a daemon is starting" from

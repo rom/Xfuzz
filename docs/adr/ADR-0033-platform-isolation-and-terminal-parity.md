@@ -71,6 +71,19 @@
 > function runs to the next entry point, the end of its declared extent, or the
 > end of the section, whichever comes first — which is what the field always
 > claimed to mean.
+>
+> **Two more things this platform does not have, now stated rather than
+> assumed.** The daemon's socket lock took no lock: the non-Unix implementation
+> opened the lock file with `os.OpenFile` while its comment claimed Windows
+> "takes the lock by opening the file without sharing", which is not what Go
+> does — it opens shared, so every daemon took the lock and two would have
+> served one store. That is `LockFileEx` now, and the exclusion has a test that
+> runs on every platform rather than on the one it was assumed on. The socket's
+> *permissions* are the one still missing: `os.Chmod` here sets the read-only
+> attribute and nothing else, so the owner-only mode the Unix path relies on is
+> not enforced, and what stands between the socket and another user is whatever
+> permissions the containing directory inherits. Windows stays at `minimal`
+> isolation and this is part of why.
 
 ## Context
 
