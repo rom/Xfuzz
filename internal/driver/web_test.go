@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -384,44 +385,43 @@ func TestFindBrowserNamesWhatItTried(t *testing.T) {
 	}
 }
 
-// TestTheBrowserGetsAFreshHomeAndTemporaryDirectory pins the environment a
-// harness browser runs in, which no test that needs a browser can check on a
-// machine that has none — and which is what a whole platform's web tests failed
-// on.
+// TestTheBrowserGetsAScratchTemporaryDirectoryAndKeepsItsHome pins the
+// environment a harness browser runs in, which no test that needs a browser can
+// check on a machine that has none — and which is what a whole platform's web
+// tests failed on, twice, in opposite directions.
 //
-// Two things depend on it. Confinement allows the profile directory and little
-// else, and a browser works out where its *default* profile would live from the
-// home directory and creates it before it has read a command line: on macOS that
-// failed as `Failed to get the path for 1001`, naming the user data directory
-// while `--user-data-dir` pointed at a perfectly good one. And reproducibility:
-// a browser pointed at the operator's home reads the operator's profile, and a
-// finding that depends on their extensions and cookies does not reproduce
-// anywhere else (ASR-0008).
-func TestTheBrowserGetsAFreshHomeAndTemporaryDirectory(t *testing.T) {
-	profile := t.TempDir()
-	home := filepath.Join(profile, "home")
-	tmp := filepath.Join(profile, "tmp")
+// The temporary directory moves into the profile because confinement allows the
+// profile and little else, and a browser that cannot write a temporary file
+// fails in ways that read as the page being broken. The home directory does
+// *not* move with it: a fresh home looks like the right thing — the profile a
+// browser finds in the operator's home is the operator's, and a finding that
+// depends on their extensions reproduces nowhere else — but `--user-data-dir`
+// already gives this browser its own profile, and on macOS a scratch home stops
+// it starting at all.
+func TestTheBrowserGetsAScratchTemporaryDirectoryAndKeepsItsHome(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "tmp")
 
-	env := browserEnv(nil, home, tmp)
+	env := browserEnv(nil, tmp)
 	got := map[string]string{}
 	for _, e := range env {
 		if k, v, ok := strings.Cut(e, "="); ok {
 			got[k] = v
 		}
 	}
-	if got["HOME"] != home {
-		t.Errorf("HOME = %q, want the scratch home %q", got["HOME"], home)
-	}
 	if got["TMPDIR"] != tmp {
 		t.Errorf("TMPDIR = %q, want the scratch temporary directory %q", got["TMPDIR"], tmp)
 	}
+	if home, ok := os.LookupEnv("HOME"); ok && got["HOME"] != home {
+		t.Errorf("HOME = %q, want the session's own %q: a browser that cannot find "+
+			"the home the platform expects does not start", got["HOME"], home)
+	}
 
 	// And the campaign wins where it named one, which is the rule every session
-	// variable follows: an operator who set HOME meant that directory.
-	env = browserEnv([]string{"HOME=/somewhere/else"}, home, tmp)
+	// variable follows: an operator who set TMPDIR meant that directory.
+	env = browserEnv([]string{"TMPDIR=/somewhere/else"}, tmp)
 	for _, e := range env {
-		if e == "HOME="+home {
-			t.Error("the campaign's own HOME was overridden by the scratch one")
+		if e == "TMPDIR="+tmp {
+			t.Error("the campaign's own TMPDIR was overridden by the scratch one")
 		}
 	}
 }

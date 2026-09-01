@@ -240,16 +240,23 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
-- **The web backend is verified on Linux and not on macOS**, which is now what
-  the tests say rather than what they assumed. Measured there: under the
-  Seatbelt profile a browser dies before reading its command line, because it
-  decides where its default profile lives from the operating system rather than
-  from `HOME`; with no confinement at all it starts and then announces no
-  debugging endpoint within the start timeout, having spent it waking a software
-  updater. The test helper now probes the browser it found — with a plain
-  command line rather than through this driver, so a regression still fails
-  rather than skips — and says what the browser said when it will not be driven.
-  A campaign gets the same message, and the isolation it was started under.
+- **A browser does not start under the macOS Seatbelt profile**: it decides
+  where its default profile lives from the operating system rather than from
+  `HOME`, creates it under the real user's home before reading its command line,
+  and is denied — reporting `Failed to get the path for 1001`, which names a
+  user data directory and says nothing about a sandbox. The tests start it
+  unconfined, as the terminal tests already do; a campaign that needs it
+  confined on macOS has no answer yet, and ADR-0034 says so.
+- **The browser keeps the session's own home**, which reverses a change made
+  earlier in this release. A scratch home looked right — a browser pointed at
+  the operator's home reads the operator's profile — but `--user-data-dir`
+  already gives this browser a profile of its own, and on macOS a scratch home
+  stopped it announcing a debugging endpoint at all.
+- **The test helper probes the browser it found** before handing it over, with a
+  plain command line rather than through this driver, so a regression still
+  fails rather than skips. A host whose browser will not be driven is skipped
+  with what the browser said, instead of eleven tests failing after their own
+  start timeouts.
 - **A Go traceback had no frames on Windows**, because the frame pattern
   required a path with no colon in it and a Windows path begins `C:\`. Without
   frames, bucketing falls through to the message — and a message carrying the

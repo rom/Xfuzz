@@ -259,29 +259,24 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 	// start — with an error about the profile rather than about the sandbox.
 	_ = os.Chmod(dataDir, 0o755)
 
-	// A browser writes three kinds of thing, and only one of them is the profile
-	// the command line names. Its temporary files go to TMPDIR, and — before it
-	// has read a command line at all — it works out where its *default* profile
-	// would live from the home directory and creates it. Both are somewhere
-	// confinement does not allow, and the second is the one that kills it:
-	// measured on macOS, Chromium dies with `Failed to get the path for 1001`,
-	// which is the user data directory, while `--user-data-dir` names a
-	// perfectly good one somewhere else.
+	// A browser writes temporary files as well as profile files, and under
+	// confinement the system temporary directory is not writable either — so it
+	// gets one inside the profile, which is the one place already allowed.
 	//
-	// So both go inside the profile directory, which is the one place already
-	// writable. That is not only a fix for confinement: a browser pointed at the
-	// operator's home directory reads the operator's profile — their extensions,
-	// their cookies, their settings — and a finding that depends on those does
-	// not reproduce anywhere else (ASR-0008). A harness gets a fresh home.
+	// Its home directory is *not* moved with it, and that was learned the hard
+	// way. A fresh home looks like the right thing — the profile a browser finds
+	// there is the operator's, and a finding that depends on their extensions
+	// reproduces nowhere else — but `--user-data-dir` already gives this browser
+	// a profile of its own, and on macOS a scratch home stops it starting
+	// altogether: measured, a plain command line with the session's own
+	// environment announces its debugging endpoint and the same command line
+	// with a scratch home does not.
 	tmpDir := filepath.Join(dataDir, "tmp")
-	homeDir := filepath.Join(dataDir, "home")
-	for _, d := range []string{tmpDir, homeDir} {
-		if err := os.Mkdir(d, 0o777); err != nil {
-			os.RemoveAll(dataDir)
-			return nil, fmt.Errorf("driver: creating the browser's scratch directory: %w", err)
-		}
-		_ = os.Chmod(d, 0o777)
+	if err := os.Mkdir(tmpDir, 0o777); err != nil {
+		os.RemoveAll(dataDir)
+		return nil, fmt.Errorf("driver: creating the browser's temporary directory: %w", err)
 	}
+	_ = os.Chmod(tmpDir, 0o777)
 
 	// A pipe rather than a file: the endpoint is announced on standard error
 	// and the announcement is what says the browser is ready. Polling an HTTP
@@ -299,8 +294,9 @@ func (d *Web) launch(ctx context.Context) (*webSession, error) {
 		// A headless browser needs less of the session than a desktop
 		// application does, and it still needs a home directory to put its
 		// profile beside and a display when the campaign asked to watch it.
-		// Everything the browser writes is under one path — see browserEnv.
-		Env: browserEnv(d.opts.Env, homeDir, tmpDir),
+		// The session the browser needs, with its scratch directory — see
+		// browserEnv.
+		Env: browserEnv(d.opts.Env, tmpDir),
 		// The profile directory, and not because the browser cares where it
 		// starts: the working directory is what a sandbox keeps writable.
 		//
@@ -437,18 +433,14 @@ func (t *tail) String() string {
 	return strings.TrimSpace(string(t.buf[t.pos:]) + string(t.buf[:t.pos]))
 }
 
-// browserEnv points the browser's home and temporary directories inside its
-// profile, and then fills in the rest of the session as any harness gets it.
+// browserEnv points the browser's temporary directory inside its profile, and
+// then fills in the rest of the session as any harness gets it.
 //
 // Set before WithSessionEnv rather than after, which is what makes the campaign
 // win: that function adds only what is missing, so a variable named here is one
-// it will not override — and an operator who set HOME or TMPDIR meant those
-// directories.
-func browserEnv(env []string, home, tmp string) []string {
-	out := append([]string(nil), env...)
-	out = withVar(out, "HOME", home)
-	out = withVar(out, "TMPDIR", tmp)
-	return WithSessionEnv(out)
+// it will not override — and an operator who set TMPDIR meant that directory.
+func browserEnv(env []string, tmp string) []string {
+	return WithSessionEnv(withVar(append([]string(nil), env...), "TMPDIR", tmp))
 }
 
 // withVar sets a variable unless it is already there.

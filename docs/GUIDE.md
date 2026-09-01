@@ -595,14 +595,12 @@ runs in the host's network namespace because it has to reach the page, so the
 allowlist here is a declaration of where you are authorised to test rather than
 an enforcement of it.
 
-Verified on Linux. On macOS the browser does not start under the campaign's
-confinement — it decides where its default profile lives from the operating
-system rather than from the environment, and creates it under the real user's
-home, which the Seatbelt profile denies; the message it gives is about a path
-number and says nothing about a sandbox, which is why a failed launch here also
-reports the isolation it was started under. Unconfined it starts and then does
-not announce a debugging endpoint within the start timeout. Both were measured,
-and neither has an answer yet:
+On macOS the browser does not start under the campaign's confinement: it decides
+where its default profile lives from the operating system rather than from the
+environment, and creates it under the real user's home, which the Seatbelt
+profile denies. The message it gives names a path number and says nothing about
+a sandbox, which is why a failed launch here also reports the isolation it was
+started under. There is no answer to that yet, and
 [ADR-0034](adr/ADR-0034-web-and-desktop-driver-backends.md) says so rather than
 leaving it to be discovered.
 

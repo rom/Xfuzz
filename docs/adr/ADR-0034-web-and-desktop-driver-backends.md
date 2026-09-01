@@ -4,27 +4,36 @@
 - **Date:** 2026-08-31
 - **Serves:** ASR-0001, ASR-0010, ASR-0013
 
-> **Amendment.** The web backend is verified on Linux and is *not* verified on
-> macOS, and this is what was measured rather than what was assumed.
+> **Amendment.** Two things about starting a browser were learned from a macOS
+> job, in the order that made them hardest to see, and both are recorded because
+> each was diagnosed wrongly first.
 >
-> Under the Seatbelt profile [ADR-0033](ADR-0033-platform-isolation-and-terminal-parity.md)
-> applies, a browser dies before it has read its command line: it works out
-> where its default profile lives from the operating system rather than from
-> `HOME`, creates a directory under the real user's home, and is denied — which
-> it reports as `Failed to get the path for 1001`, naming a user data directory
-> and saying nothing about a sandbox. Giving it a writable working directory
-> does not help, and neither does giving it a fresh `HOME`; both were tried.
-> Started with no confinement at all it does start, and then announces no
-> debugging endpoint within the start timeout, having spent that time waking a
-> software updater.
+> **A browser does not start under the Seatbelt profile**
+> [ADR-0033](ADR-0033-platform-isolation-and-terminal-parity.md) applies. It
+> works out where its default profile lives from the operating system rather
+> than from the environment, creates a directory under the real user's home
+> before it has read a command line, and is denied — reporting `Failed to get
+> the path for 1001`, which names a user data directory and says nothing about a
+> sandbox. Giving it a writable working directory does not help, and neither
+> does a fresh `HOME`; both were tried. So the tests start it unconfined, on the
+> reasoning the terminal tests already give, and a campaign that needs the
+> browser confined on macOS has no answer yet.
 >
-> So there are two problems and only the first is Xfuzz's. The tests state the
-> position rather than assuming it: `internal/testenv.Browser` now probes the
-> browser it found with a plain command line — not through this driver, so a
-> regression here still fails rather than skips — and a host whose browser will
-> not announce an endpoint is skipped with what the browser said. A campaign on
-> such a host fails with the same message, plus the isolation it was started
-> under, which is the one thing the browser cannot know to mention.
+> **And the browser keeps the session's own home.** A fresh home was the second
+> wrong diagnosis, and it made things worse rather than merely not better: with
+> one, the browser stopped announcing its debugging endpoint at all on macOS,
+> which read as "unconfined it starts and then does nothing" until the same
+> command line with the ordinary environment was tried beside it. It is not
+> needed for what it was reaching for either: `--user-data-dir` already gives
+> the browser a profile of its own, so a campaign does not inherit the
+> operator's extensions and cookies whatever `HOME` says.
+>
+> `internal/testenv.Browser` now probes the browser it found — a plain command
+> line with the two switches the protocol needs, deliberately not through this
+> driver, so a regression here still fails rather than skips — and a host whose
+> browser will not announce an endpoint is skipped with what the browser said.
+> A campaign on such a host fails with the same message, plus the isolation it
+> was started under, which is the one thing the browser cannot know to mention.
 
 ## Context
 
