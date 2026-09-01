@@ -420,6 +420,19 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   but no HTTP, so a caller that looked at the value before the error got a
   campaign with nothing to send rather than one that refused to start. Found by
   the self-fuzzing job; the input it found is now a seed.
+- **Two CI jobs capped the whole suite at thirty minutes, and `internal/engine`
+  needs more than that on a hosted runner.** The limit had already been raised
+  to forty-five in the matrix job and the security job, where the problem was
+  first seen; `build at the go.mod floor` and `test (linux, CGO_ENABLED=0)` run
+  the same package and kept the old cap, so the fix went to the two jobs that
+  had reported the failure and not to the two that had not yet. It duly failed
+  in one of them — `FAIL internal/engine 1815.429s`, killed fifteen seconds past
+  the limit and without the race detector, reporting a goroutine dump instead of
+  a result. A package killed at its timeout reads as a hang in the fuzzer rather
+  than a slow machine, which is the whole reason the limit is explicit. Every
+  Linux job that runs the package now allows at least forty-five minutes.
+  Windows keeps thirty: it runs without the race detector and finished the whole
+  suite in 77 seconds.
 - `TestTiersAreOrderedAsADR0009Claims` asserted a 1.2x margin for T3 over T4 and
   failed CI twice. The pool's advantage needs a spare core to overlap on, and
   core count is not the same as a core being free. ADR-0009 claims an ordering,

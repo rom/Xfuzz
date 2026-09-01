@@ -265,8 +265,16 @@ jobs:
         run: go version
       - name: build
         run: go build ./...
+      # Forty-five minutes, for the reason the matrix job above records and
+      # measured in this one: internal/engine was killed here at 1815.429s,
+      # fifteen seconds past a thirty-minute limit and without the race
+      # detector, and reported a goroutine dump instead of a result. Every Linux
+      # job that runs that package now allows the same; a limit that differs
+      # between two jobs running the same tests only decides which of them
+      # reports a hang first. Windows keeps thirty: it runs without the race
+      # detector and finished the whole suite in 77 seconds.
       - name: test
-        run: go test -timeout 30m ./...
+        run: go test -timeout 45m ./...
 
   # ADR-0017 — the pure-Go build must always work. A CGO_ENABLED=0 binary is
   # slower or less featureful, never broken.
@@ -283,8 +291,9 @@ jobs:
           cache: true
       - name: build
         run: go build ./...
+      # Forty-five minutes, as above: the same packages, on the same runners.
       - name: test
-        run: go test -timeout 30m ./...
+        run: go test -timeout 45m ./...
       - name: version reports nocgo
         run: go run ./cmd/xfuzz --version | grep -q nocgo
 

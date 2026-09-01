@@ -724,7 +724,10 @@ defers by name — rather than with new ambitions.
 ### 6.1 Where each clause stands
 
 Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30 and
-2026-08-31. Each row names what was run, not what is believed.
+2026-08-31. Each row names what was run, not what is believed. Clause 7 is the
+exception to the machine and the dates alike: it is a claim about CI, so it can
+only be measured in CI, and its row was re-measured against run 146 on
+2026-09-01 (§ 6.4).
 
 | # | Clause | Status | Evidence |
 | --- | --- | --- | --- |
@@ -734,7 +737,7 @@ Measured on Linux amd64 (Intel Xeon @ 2.80 GHz, 4 cores), 2026-08-30 and
 | 4 | Determinism and cross-host replay | met | `test/e2e/determinism_test.go`. Two runs of one file and seed, under separate daemons, produced the same corpus by the same derivation; a third with another seed differed. A store carried to a second data directory, daemon and target binary replayed three findings, three of three trials each |
 | 5 | Security tests pass | met | `make test-security`: eleven tests, no skips. Now a CI job that fails on a skip, which it was not before this audit |
 | 6 | Fault injection; clean resume | met | Nine of nine, M8, re-run in the suite below. Corrupt blob quarantined, corrupt database refused, full tmpfs degrading with no partial blob, a store from the future refused, killed worker replaced, hanging target recorded as a hang, fork bomb contained, dying plugin ending its campaign in its own words, killed daemon resuming |
-| 7 | CI green on three platforms, with and without cgo | **was claimed on the wrong evidence; see § 6.3** | The commands were run locally and pass. CI itself was red for every run of this audit, and nobody looked until the release workflow checked out a tag |
+| 7 | CI green on three platforms, with and without cgo | not met, for a much smaller reason than before; see § 6.3 and § 6.4 | Claimed first from local commands while CI was red on every run of the audit (§ 6.3). Since then the failures behind that have been retired one at a time, most of them on Windows. Run 146 (`d6a4375`, 2026-09-01) is the first in which no job failed on the code: ten of fifteen green, `test (macos-latest)` and `test (windows-latest)` among them, and the other five lost their runner part-way through a step. Two things are still missing. No single run has had all fifteen green. And two Linux jobs capped the whole suite at thirty minutes, which `internal/engine` alone exceeded on run 143 — 1815.429s, killed at the limit, reporting a goroutine dump rather than a result; that cap is raised to the forty-five the other jobs already allowed, and has not been through a run yet |
 | 8 | Self-fuzzing clean | met, after a fix | Ten targets across eight packages, re-run at 120s each after the audit's code changes: 35.1M executions, no crash. It failed the first time — `FuzzClassify` found a crash marker carrying a carriage return into its bucket key, which is the only defect this audit found by running something rather than by reading it. Clean on the re-run after the fix. In M8 the API target found a real path-cleaning defect on its first run |
 | 9 | Docs current | met | `tools/docslint` passes; CHANGELOG complete, with a known-issues section. The audit produced ADR-0026 and fourteen corrections, of which thirteen came from reading the decision records against the code and one from a fuzzer. The sharpest was a documented Go build incantation that does not link |
 | 10 | A new user reaches a finding | met | `test/e2e/guide_test.go` walks the guide's own commands against the shipped binaries. It found `xfuzz init` writing a file `xfuzz validate` rejects, two commands into the documented path |
@@ -853,6 +856,63 @@ that "it passes here" was never evidence for "CI is green", and this row should
 have been checked against the runs rather than inferred. The remedy is
 mechanical and now exists: a release cannot publish without a clean build of
 the tagged commit on a machine that starts from `git clone`.
+
+### 6.4 Clause 7, re-measured
+
+Fixing the missing slash made the repository compile. It did not make CI green,
+and the more useful thing it did was make CI's failures legible: eleven jobs
+that had been dying at `go build` started running tests, and those tests were
+the first execution this code had ever had on a machine that was not this one.
+
+What they found was mostly not test breakage. Windows had never run the suite,
+and the suite it had never run was checking real claims: that a PE's image base
+is read rather than guessed, that a basic block belongs to the function whose
+range contains it rather than to whichever function reached it first, that a
+`REX` prefix followed by another prefix is not part of the next instruction,
+that a killed child reports being killed, that `xfuzz-cc` refuses to instrument
+a target whose coverage map has nowhere to live, and that the daemon's socket
+lock takes a lock. Each is listed on its own in the changelog's Fixed section;
+the majority are defects in the product rather than in a test, and none of them
+could have been found from here.
+
+Run 146 (`d6a4375`) is the first run with no job failing on the code. Ten of the
+fifteen were green: `lint`, `cross-compile`, `govulncheck`, `benchmarks`,
+`self-fuzzing`, `test (macos-latest)`, `test (windows-latest)`, and the
+subprocess campaign on all three platforms. The Windows test step took 77
+seconds.
+
+The other five produced no result at all. `security (escape attempts)`,
+`integration (planted bugs)` and `test (ubuntu-latest)` each ended with
+`Process completed with exit code 143` and `The runner has received a shutdown
+signal`, part-way through a step and with every package that had reported so
+far passing. `build at the go.mod floor` and `test (linux, CGO_ENABLED=0)`
+ended one second apart with their `test` step still marked in progress, their
+post-steps never run, and their logs returning 404 — forty-seven minutes into a
+step whose own limit is shorter than that, so a timeout would have reported at
+the limit and did not. That is a runner that stopped reporting, and it is not a
+pass. This token cannot re-run a job (`rerun_failed_jobs` answers 403), so the
+evidence accumulates across runs rather than within one — which is exactly the
+weakness § 6.3 is about, and worth saying plainly rather than rounding to
+"green".
+
+Writing this row also turned up a failure that was neither Windows nor
+infrastructure. On run 143, `build at the go.mod floor` failed with
+`FAIL github.com/rom/Xfuzz/internal/engine 1815.429s` — killed fifteen seconds
+past its own thirty-minute limit, without the race detector. The limit had been
+raised to forty-five minutes shortly before, in the two jobs that had reported
+the problem, and not in the two that had not yet; a package that takes half an
+hour on a two-core runner then sat under a half-hour cap in the jobs nobody was
+watching. Both are raised now. That is a real fix and it has not been through a
+run.
+
+The two halves of the clause have each been green, at different commits.
+`test (ubuntu-latest)` passed on run 143 (`e101857`) with its race suite
+finishing in 31m32s — which is also the measurement that justifies forty-five
+minutes rather than thirty. `test (windows-latest)` and `test (macos-latest)`
+passed on run 146 (`d6a4375`), two commits later. `test (linux, CGO_ENABLED=0)`
+has completed on neither. The clause asks for all of them at one commit, and no
+run has produced that, so the row stays unmet — but it is now unmet by the
+distance between two runs rather than by eleven jobs that never compiled.
 
 ## 7. v0.2 to v0.9
 
