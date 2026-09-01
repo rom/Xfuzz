@@ -240,6 +240,19 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   daemon at all. The control and status streams are now requested rather than
   always created, placed on standard input and output where descriptors cannot
   be inherited, and the child is told the numbers rather than assuming them.
+- **The AFL corpus layout is refused on Windows rather than half-written.** AFL
+  names its queue entries `id:000000,orig:...` and a colon is not a character a
+  Windows filename may contain, so the export failed per file with "the
+  filename, directory name, or volume label syntax is incorrect" — which reads
+  as a bug in the exporter. Naming them anything else would produce a directory
+  that is not an AFL corpus, so the format is refused with that reason and the
+  portable layouts are named. Probed rather than assumed from the operating
+  system, because the answer belongs to the filesystem.
+- **The fork server says it cannot run where pipes carry no deadline.** Every
+  read in that tier is bounded by one — it is what stops a target that never
+  answers from wedging the campaign — and Windows pipes are not opened for
+  overlapped I/O. "file type does not support deadline" is a true sentence that
+  names no remedy; it now names the pooled tier.
 - **A fork server lost to a late reply no longer ends the campaign.** The
   child's own timer is what bounds an execution; the fuzzer's deadline only
   decides how late a reply may be before the server is declared gone — and the

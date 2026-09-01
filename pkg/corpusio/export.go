@@ -55,6 +55,20 @@ func Export(dir string, tcs []*corpus.Testcase, opts ExportOptions) (ExportRepor
 	}
 	rep := ExportReport{Format: format, Dir: dir}
 
+	if format == FormatAFL && !AFLNamesSupported() {
+		// Named here rather than discovered on the first file. AFL calls its
+		// queue entries `id:000000,orig:...`, a colon is not a character a
+		// Windows filename may contain, and the alternative — writing them
+		// under some other name — produces a directory that is not an AFL
+		// corpus: afl-cmin would not read it and the importer here keys on the
+		// same prefix. The interoperation is the whole point of the format, so
+		// it is refused rather than approximated.
+		return rep, fmt.Errorf("corpusio: the AFL layout names its entries " +
+			"`id:000000,orig:...` and this platform's filenames cannot contain " +
+			"a colon, so an AFL corpus cannot be written here; export as " +
+			"libfuzzer or raw, which name their files portably")
+	}
+
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return rep, fmt.Errorf("corpusio: creating %s: %w", dir, err)
 	}
@@ -127,4 +141,24 @@ func exportName(format Format, index int, tc *corpus.Testcase) string {
 	default:
 		return tc.ID.String() + ".bin"
 	}
+}
+
+// AFLNamesSupported reports whether this platform allows a colon in a
+// filename, which is what the AFL layout requires.
+//
+// Probed rather than assumed from the operating system's name: the answer
+// belongs to the filesystem, and a Unix host with a mounted share behaves like
+// the share.
+func AFLNamesSupported() bool {
+	dir, err := os.MkdirTemp("", "xfuzz-name-probe-")
+	if err != nil {
+		return true // Not the question being asked; let the write report it.
+	}
+	defer os.RemoveAll(dir)
+
+	p := filepath.Join(dir, "id:000000,orig:probe")
+	if err := os.WriteFile(p, nil, 0o644); err != nil {
+		return false
+	}
+	return true
 }

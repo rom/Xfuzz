@@ -22,7 +22,25 @@ func write(t *testing.T, dir, name, content string) {
 	}
 }
 
+// needAFLNames skips a test that cannot run where a filename may not contain a
+// colon.
+//
+// AFL calls its queue entries `id:000000,orig:...`, and on Windows that is not
+// a filename at all — the failure is "the filename, directory name, or volume
+// label syntax is incorrect", which reads as a bug in this package rather than
+// as a format nobody there can write. Export refuses it for the same reason and
+// says so; these tests state the same fact from the other side.
+func needAFLNames(t *testing.T) {
+	t.Helper()
+	if !AFLNamesSupported() {
+		t.Skip("this platform's filenames cannot contain a colon, so an AFL " +
+			"corpus cannot be written or read here; Export refuses the format " +
+			"with that reason")
+	}
+}
+
 func TestImportAFLQueue(t *testing.T) {
+	needAFLNames(t)
 	out := t.TempDir()
 	write(t, out, "queue/id:000000,orig:seed", "alpha")
 	write(t, out, "queue/id:000001,src:000000,op:havoc,+cov", "beta")
@@ -218,6 +236,7 @@ func TestExportLibFuzzerNaming(t *testing.T) {
 }
 
 func TestExportAFLNaming(t *testing.T) {
+	needAFLNames(t)
 	dir := filepath.Join(t.TempDir(), "out")
 	tcs := corpusOf("a", "b")
 	tcs[0].Meta.Favoured = true
@@ -256,6 +275,7 @@ func TestExportFavouredOnly(t *testing.T) {
 }
 
 func TestExportIsStable(t *testing.T) {
+	needAFLNames(t)
 	tcs := corpusOf("one", "two", "three", "four")
 	names := func() []string {
 		dir := filepath.Join(t.TempDir(), "out")
@@ -290,6 +310,9 @@ func TestRoundTripThroughEveryFormat(t *testing.T) {
 
 	for _, format := range []Format{FormatAFL, FormatLibFuzzer, FormatRaw} {
 		t.Run(format.String(), func(t *testing.T) {
+			if format == FormatAFL {
+				needAFLNames(t)
+			}
 			dir := filepath.Join(t.TempDir(), "out")
 			if _, err := Export(dir, original, ExportOptions{Format: format}); err != nil {
 				t.Fatalf("Export: %v", err)

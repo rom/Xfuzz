@@ -844,6 +844,12 @@ $ xfuzz corpus import first --dir ./afl-output/queue
 $ xfuzz corpus export first --dir ./out --format afl --favoured
 ```
 
+The AFL layout is not available on Windows, and the export says so rather than
+half-writing one: AFL names its queue entries `id:000000,orig:...`, and a colon
+is not a character a Windows filename may contain. Naming them anything else
+would produce a directory that is not an AFL corpus — `afl-cmin` would not read
+it — so `--format libfuzzer` or `--format raw` are the portable ones.
+
 ## Repeating a campaign exactly
 
 Every campaign has a root seed. Left out of the file, one is drawn and recorded;
