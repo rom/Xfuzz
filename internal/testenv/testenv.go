@@ -129,6 +129,7 @@ func BuildGoTarget(t testing.TB, name string) string {
 // it does not belong in examples/ where someone might copy it.
 func BuildAt(t testing.TB, out, src string) string {
 	t.Helper()
+	out = exePath(out)
 	cmd := exec.Command("go", "build", "-o", out, src)
 	cmd.Dir = RepoRoot(t)
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -150,7 +151,7 @@ func BuildAt(t testing.TB, out, src string) string {
 // process can get wrong.
 func BuildPlugin(t testing.TB, dir, name string) string {
 	t.Helper()
-	out := filepath.Join(dir, name)
+	out := filepath.Join(dir, ExeName(name))
 	cmd := exec.Command("go", "build", "-o", out, "./examples/plugins/"+name)
 	cmd.Dir = RepoRoot(t)
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -170,6 +171,41 @@ func BuildPlugin(t testing.TB, dir, name string) string {
 // file that is sitting right there — which is how every Windows e2e test in
 // this project failed, from the first one written to the first CI run that
 // could compile.
+// exePath gives a built binary the extension its platform requires to run it.
+//
+// Windows decides what may be executed by exactly that, so a build written to a
+// name without one produces a file that exists and cannot be started — and the
+// error says only that it was not found, which reads as a build that never
+// happened rather than as a name that cannot be run.
+func exePath(out string) string {
+	if runtime.GOOS == "windows" && filepath.Ext(out) == "" {
+		return out + ".exe"
+	}
+	return out
+}
+
+// SkipPOSIXTarget skips a test whose fixture target is a POSIX program.
+//
+// Several fixtures here put a terminal into raw mode, resize on SIGWINCH, or
+// name a syscall the way Unix does; they are written against x/sys/unix and do
+// not build for Windows. Whether that particular program has been ported is a
+// different question from the one the test asks — whether a driver drives, a
+// sandbox holds, a spawner spawns — and a build error naming a missing constant
+// answers neither.
+func SkipPOSIXTarget(t testing.TB, what string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skipf("%s is a POSIX program and does not build for this platform", what)
+	}
+}
+
+// Sleeper builds a target that will not finish on its own, for the tests that
+// measure what stops one.
+func Sleeper(t testing.TB, dir string) string {
+	t.Helper()
+	return BuildAt(t, filepath.Join(dir, "sleeper"), "./testdata/targets/go/sleeper")
+}
+
 func ExeName(command string) string {
 	if runtime.GOOS == "windows" {
 		return command + ".exe"

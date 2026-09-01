@@ -239,6 +239,14 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **`xfuzz-cc` instrumented for a platform with nowhere to put the map.** The
+  coverage map is a shared-memory object the target writes and the fuzzer reads,
+  and on a platform with no such thing an instrumented target would still
+  compile, still run, and record its coverage where nobody can see it — every
+  input finding nothing, which is indistinguishable from a target with no
+  branches. It refuses by name now. What it said before was whatever the
+  compiler disliked first, which on the Microsoft target is `-fPIC`: true, and
+  about nothing that matters.
 - **The frida backend read "may be relocated" as "linked at zero".** A DRcov
   file records where a block is inside the module, because an offset is the only
   thing that survives relocation, and turning that back into a link-time address

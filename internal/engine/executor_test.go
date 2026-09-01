@@ -9,6 +9,7 @@ import (
 
 	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/safety"
+	"github.com/rom/Xfuzz/internal/testenv"
 	"github.com/rom/Xfuzz/pkg/executor"
 	"github.com/rom/Xfuzz/pkg/feedback"
 )
@@ -192,15 +193,28 @@ func TestForkServerRejectsAnUninstrumentedTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the handshake to fail against an uninstrumented target")
 	}
+	if !platform.ExtraFilesSupported() {
+		// The fork server never gets as far as a handshake where a child
+		// inherits no descriptors past the standard three: it refuses at the
+		// spawn, for a reason that is also true and is not this one. That tier
+		// is not the tier here — ADR-0009 puts the process pool in its place —
+		// so what is left to check is that it fails rather than pretending.
+		t.Skipf("no fork server on this platform, so the handshake is never "+
+			"reached: %v", err)
+	}
 	if !strings.Contains(err.Error(), "xfuzz-cc") {
 		t.Errorf("the error should say how to fix it, got: %v", err)
 	}
 }
 
 func TestSpawnerEnforcesTimeouts(t *testing.T) {
+	// A target that will not finish on its own, built rather than found:
+	// /bin/sleep is a program on Unix and nothing at all on Windows, and a test
+	// that names it measures the host's coreutils before it measures this.
+	sleeper := testenv.Sleeper(t, t.TempDir())
 	sp := safety.NewSpawner()
 	res, err := sp.Run(context.Background(), executor.ProcSpec{
-		Path: "/bin/sleep", Args: []string{"/bin/sleep", "30"},
+		Path: sleeper, Args: []string{sleeper},
 		Timeout: 200 * time.Millisecond,
 	})
 	if err != nil {

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/pkg/feedback"
 )
 
@@ -66,6 +67,14 @@ func buildTarget(t testing.TB, name string) string {
 	t.Helper()
 	if !haveClang() {
 		t.Skip("clang is not installed; instrumented targets cannot be built here")
+	}
+	// The runtime keeps its coverage map in shared memory, and where there is
+	// none there is no instrumented target to build: the compiler wrapper says
+	// so and stops. Reported here as what it is, rather than as whatever the
+	// compiler happens to complain about first.
+	if !platform.NewSharedMemoryProvider().Available() {
+		t.Skip("this platform has no shared memory for the runtime's coverage map, " +
+			"so a C target cannot be instrumented here")
 	}
 
 	onceAny, _ := buildOnce.LoadOrStore(name, &sync.Once{})

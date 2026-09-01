@@ -24,6 +24,11 @@ func newTUI(t *testing.T, opts driver.TUIOptions) *driver.TUI {
 	if !safety.PTYSupported() {
 		t.Skip("no pseudo-terminal support on this host")
 	}
+	// The pseudo-terminal is not the only thing this needs: the program driven
+	// through it takes the alternate screen and goes into raw mode by calling
+	// the terminal the way Unix does, and it is that program, not this driver,
+	// that has no Windows build.
+	testenv.SkipPOSIXTarget(t, "the tui_menu fixture")
 	dir := testenv.ReachableDir(t)
 	opts.Path = testenv.BuildAt(t, filepath.Join(dir, "tui_menu"), "./testdata/targets/go/tui_menu")
 	if opts.Cols == 0 {

@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/internal/version"
 	xfuzzrt "github.com/rom/Xfuzz/runtime"
 )
@@ -85,6 +86,23 @@ func run(args []string) error {
 			"Set XFUZZ_CC=clang, or set XFUZZ_NO_INST=1 to build without coverage "+
 			"(the target still runs under the subprocess tier, black-box)",
 			compiler, strings.Join(xfuzzrt.InstrumentFlags, " "))
+	}
+
+	// And a platform where the runtime would have nowhere to put its map.
+	//
+	// The coverage map is a shared-memory object the target writes and the
+	// fuzzer reads. Without one, an instrumented target still compiles and still
+	// runs — and records its coverage where nobody can see it, so every input
+	// looks like it found nothing, which is indistinguishable from a target with
+	// no branches. Refused here, by name, rather than at whichever flag the
+	// compiler happens to dislike first: on the Microsoft target that is -fPIC,
+	// which says nothing about any of this.
+	if instrument && !platform.NewSharedMemoryProvider().Available() {
+		return errors.New("this platform has no shared memory, so the Xfuzz runtime has " +
+			"nowhere to keep the coverage map an instrumented target writes.\n" +
+			"Set XFUZZ_NO_INST=1 to build without coverage; the target still runs " +
+			"under the subprocess tier, black-box, which is what ADR-0020 scopes " +
+			"this platform to")
 	}
 
 	sanitize := os.Getenv("XFUZZ_SANITIZE")
