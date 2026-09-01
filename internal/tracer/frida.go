@@ -52,7 +52,7 @@ type Frida struct {
 	mu       sync.Mutex
 	analysis *binary.Analysis
 	known    []uint64
-	pie      bool
+	linkBase uint64
 	tool     string
 	dir      string
 	agent    string
@@ -120,7 +120,7 @@ func (f *Frida) Start(context.Context) error {
 		return fmt.Errorf("tracer: frida: writing the agent: %w", err)
 	}
 
-	f.tool, f.pie, f.dir, f.agent, f.started = tool, im.PIE, dir, agent, true
+	f.tool, f.linkBase, f.dir, f.agent, f.started = tool, im.LinkBase(), dir, agent, true
 	return nil
 }
 
@@ -148,7 +148,7 @@ func (f *Frida) Analysis() *binary.Analysis {
 // Trace implements executor.Tracer.
 func (f *Frida) Trace(ctx context.Context, spec executor.ProcSpec) (executor.Trace, error) {
 	f.mu.Lock()
-	tool, dir, agent, pie, started := f.tool, f.dir, f.agent, f.pie, f.started
+	tool, dir, agent, linkBase, started := f.tool, f.dir, f.agent, f.linkBase, f.started
 	f.mu.Unlock()
 	if !started {
 		return executor.Trace{}, errors.New("tracer: frida: Start was not called")
@@ -192,7 +192,7 @@ func (f *Frida) Trace(ctx context.Context, spec executor.ProcSpec) (executor.Tra
 		return executor.Trace{Result: res}, fmt.Errorf("tracer: frida: %w", perr)
 	}
 	return executor.Trace{
-		Blocks:  cov.blocksFor(filepath.Base(f.Exe), pie),
+		Blocks:  cov.blocksFor(filepath.Base(f.Exe), linkBase),
 		Ordered: false,
 		Result:  res,
 	}, nil

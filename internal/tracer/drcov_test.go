@@ -84,21 +84,33 @@ func TestDRcovBlocksAreAttributedToOneModule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A position-independent image: the offsets are already link-time addresses.
-	got := f.blocksFor("target", true)
+	// An image linked at zero — a position-independent ELF: the offsets are
+	// already link-time addresses.
+	got := f.blocksFor("target", 0)
 	want := []uint64{0x1136, 0x1150}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Errorf("position-independent: got %#x, want %#x", got, want)
+		t.Errorf("linked at zero: got %#x, want %#x", got, want)
 	}
 
-	// A fixed-address image: the module base is its link base, so it is added.
-	got = f.blocksFor("target", false)
+	// A fixed-address ELF, whose link base is where the loader must put it.
+	got = f.blocksFor("target", 0x400000)
 	want = []uint64{0x401136, 0x401150}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("fixed address: got %#x, want %#x", got, want)
 	}
 
-	if got := f.blocksFor("no-such-module", true); got != nil {
+	// A relocatable image that is nonetheless not linked at zero: a PE at its
+	// ImageBase, and a Mach-O at 4GB. Reading "may move" as "linked at zero" —
+	// which is only true of an ELF — puts every one of these blocks at an
+	// address the image has no code at, and a campaign then collects coverage
+	// that matches nothing it analysed.
+	got = f.blocksFor("target", 0x140000000)
+	want = []uint64{0x140001136, 0x140001150}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("relocatable but based: got %#x, want %#x", got, want)
+	}
+
+	if got := f.blocksFor("no-such-module", 0); got != nil {
 		t.Errorf("a module that is not in the file returned %#x", got)
 	}
 }

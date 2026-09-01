@@ -239,6 +239,19 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **The frida backend read "may be relocated" as "linked at zero".** A DRcov
+  file records where a block is inside the module, because an offset is the only
+  thing that survives relocation, and turning that back into a link-time address
+  means adding the base the image is linked at. The backend used the
+  position-independent flag for it, which is right only for an ELF: a
+  relocatable ELF *is* linked at zero, while a Mach-O is linked at 4GB and a PE
+  at its `ImageBase` whatever their flags say. On those two the addresses landed
+  where the image has no code at all, so a campaign collected coverage that
+  matched nothing it had analysed — and silently, since the map does not care
+  what the addresses mean. `binary.Image.LinkBase` now reports it, read from the
+  image rather than inferred: for an ELF, the address that file offset zero maps
+  to, which is not the lowest segment's own address on anything a current linker
+  produces.
 - **A child the fuzzer killed reported nothing on Windows.** A Unix kernel puts
   the signal in the wait status without being asked; `TerminateProcess` leaves
   an exit code and nothing else, so a worker or a fork server that was

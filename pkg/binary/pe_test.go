@@ -394,3 +394,59 @@ func findCOFFLinker() string {
 	}
 	return ""
 }
+
+// peImageBase reads the optional header's ImageBase, independently of the
+// package under test.
+func peImageBase(t *testing.T, path string) uint64 {
+	t.Helper()
+	f, err := pe.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	switch oh := f.OptionalHeader.(type) {
+	case *pe.OptionalHeader64:
+		return oh.ImageBase
+	case *pe.OptionalHeader32:
+		return uint64(oh.ImageBase)
+	}
+	t.Fatal("the fixture has no optional header, so it has no image base")
+	return 0
+}
+
+// TestLinkBaseIsWhatAModuleOffsetIsMeasuredFrom pins the distinction a coverage
+// tool's output depends on.
+//
+// A tool reports where a block is inside the module, because an offset is the
+// only thing that survives relocation; the analysis is in link-time addresses.
+// Turning one into the other is an addition, and the thing to add is the base
+// the image is linked at — which is *not* "zero if it can be relocated". That
+// is true only of an ELF. A PE that may be relocated is still linked at its
+// ImageBase, and reading the flag instead of the header puts every traced block
+// at an address the image has no code at.
+func TestLinkBaseIsWhatAModuleOffsetIsMeasuredFrom(t *testing.T) {
+	for _, layout := range [][]string{nil, {"/align:65536", "/filealign:512"}} {
+		target := buildPE(t, layout...)
+		im, err := xbin.Open(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := peImageBase(t, target)
+		if got := im.LinkBase(); got != want {
+			im.Close()
+			t.Fatalf("the link base is %#x; the optional header says %#x", got, want)
+		}
+		// The property that makes it usable: every executable byte is at or
+		// above it, so a module offset added to it lands inside the image.
+		for _, sec := range im.Text() {
+			if sec.Addr < im.LinkBase() {
+				t.Errorf("the section %s is at %#x, below the link base %#x",
+					sec.Name, sec.Addr, im.LinkBase())
+			}
+		}
+		if im.LinkBase() == 0 {
+			t.Error("a PE reported a link base of zero, which no PE has")
+		}
+		im.Close()
+	}
+}

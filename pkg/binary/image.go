@@ -102,9 +102,7 @@ type Image struct {
 	// exists for, so it is reported rather than inferred by the caller.
 	Stripped bool
 
-	// base is the address the image is linked at. It is only meaningful for a
-	// PE, whose exception directory and export table record every address as an
-	// offset from it; ELF and Mach-O record addresses directly.
+	// base is the address the image is linked at. See LinkBase.
 	base uint64
 
 	sections []Section
@@ -152,6 +150,23 @@ func (im *Image) Close() error {
 	}
 	return nil
 }
+
+// LinkBase is the address the beginning of the image is linked at, and so what
+// an offset into the module is measured from.
+//
+// Zero for a position-independent ELF, whose addresses are already offsets from
+// wherever the loader put it. The __TEXT segment's address for a Mach-O, which
+// is position-independent and still linked at 4GB. The optional header's
+// ImageBase for a PE, which keeps its base whether or not it may be relocated —
+// "may move" and "is linked at zero" are the same thing for an ELF and two
+// different things for the other two, which is the trap.
+//
+// It is what turns a module-relative offset back into an address the analysis
+// can be compared against. A coverage tool reports offsets because an offset is
+// the only thing that survives relocation, and adding the wrong base produces
+// addresses that are not wrong by a little: they are in no block at all, and the
+// campaign records coverage nothing can be matched to.
+func (im *Image) LinkBase() uint64 { return im.base }
 
 // Sections returns the loadable sections, executable ones included.
 func (im *Image) Sections() []Section { return im.sections }
@@ -320,6 +335,21 @@ func openELF(path string, f *os.File) (*Image, error) {
 		im.Arch = ArchOther
 	}
 	im.PIE = e.Type == elf.ET_DYN
+	// The address the beginning of the file is mapped at, which is what an
+	// offset into the module is measured from. Taking the lowest segment's own
+	// address instead would be wrong by however far into the file that segment
+	// starts — 0x1000 on anything a current linker produces, which is small
+	// enough to look like a rounding question and large enough to put every
+	// address in the wrong block.
+	first := true
+	for _, p := range e.Progs {
+		if p.Type != elf.PT_LOAD {
+			continue
+		}
+		if b := p.Vaddr - p.Off; first || b < im.base {
+			im.base, first = b, false
+		}
+	}
 
 	for _, s := range e.Sections {
 		if s.Type == elf.SHT_NOBITS || s.Flags&elf.SHF_ALLOC == 0 || s.Size == 0 {
@@ -482,8 +512,13 @@ func openMachO(path string, f *os.File) (*Image, error) {
 		im.Arch = ArchOther
 	}
 	// MH_PIE. Mach-O executables have been position-independent by default for
-	// long enough that the flag is effectively always set.
+	// long enough that the flag is effectively always set — which does not make
+	// them linked at zero: __TEXT is at 4GB, and that is the base every address
+	// here is measured from.
 	im.PIE = m.Flags&0x00200000 != 0
+	if seg := m.Segment("__TEXT"); seg != nil {
+		im.base = seg.Addr
+	}
 
 	for _, s := range m.Sections {
 		data, err := s.Data()

@@ -206,12 +206,15 @@ func parseNum(s string) (uint64, error) {
 // blocksFor returns the link-time addresses of the blocks recorded against one
 // module, identified by a suffix of its path.
 //
-// The offsets in the file are already relative to where the module was loaded.
-// For a position-independent image that is the link-time address directly; for
-// one loaded at a fixed address it is that address minus the link base, which is
-// the module's own base. Either way nothing has to be inferred, which is the
-// advantage this format has over reading an emulator's log.
-func (f *drcovFile) blocksFor(pathSuffix string, pie bool) []uint64 {
+// The offsets in the file are relative to where the module was loaded, so the
+// link-time address is the image's own link base plus the offset. Nothing has
+// to be inferred, which is the advantage this format has over reading an
+// emulator's log — but the base has to come from the image rather than from
+// whether it is relocatable. Those coincide only for an ELF: one that can move
+// is linked at zero, so an offset is already a link-time address. A Mach-O that
+// can move is linked at 4GB and a PE at its ImageBase, and taking either for
+// zero yields addresses that fall in no recovered block at all.
+func (f *drcovFile) blocksFor(pathSuffix string, linkBase uint64) []uint64 {
 	want := -1
 	for id, m := range f.Modules {
 		if strings.HasSuffix(m.Path, pathSuffix) {
@@ -222,14 +225,10 @@ func (f *drcovFile) blocksFor(pathSuffix string, pie bool) []uint64 {
 	if want < 0 {
 		return nil
 	}
-	base := uint64(0)
-	if !pie {
-		base = f.Modules[want].Base
-	}
 	out := make([]uint64, 0, len(f.Blocks))
 	for _, b := range f.Blocks {
 		if int(b.Module) == want {
-			out = append(out, base+uint64(b.Offset))
+			out = append(out, linkBase+uint64(b.Offset))
 		}
 	}
 	return out

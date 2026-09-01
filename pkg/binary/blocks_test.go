@@ -411,3 +411,46 @@ func TestAnalyzeFollowsAnAddressTakenFunction(t *testing.T) {
 	t.Logf("no unwind tables: %d blocks, %d functions, %d address-taken, %.0f%% of text",
 		len(a.Blocks), len(a.Functions), a.AddressTaken, 100*a.Coverage)
 }
+
+// TestLinkBaseMatchesTheFormatsRule is the ELF and Mach-O half of what
+// TestLinkBaseIsWhatAModuleOffsetIsMeasuredFrom pins for a PE.
+//
+// The rule differs by format and is easy to state wrongly as one rule. An ELF
+// that may be relocated is linked at zero, so its addresses are already offsets.
+// A Mach-O is relocatable too and linked at 4GB regardless. Both are read from
+// the image rather than inferred from the flag.
+func TestLinkBaseMatchesTheFormatsRule(t *testing.T) {
+	target := buildC(t, ladderSrc)
+	im, err := binary.Open(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer im.Close()
+
+	switch im.Format {
+	case binary.FormatELF:
+		if im.PIE && im.LinkBase() != 0 {
+			t.Errorf("a position-independent ELF reported a link base of %#x; it is "+
+				"linked at zero, and its addresses are offsets already", im.LinkBase())
+		}
+		if !im.PIE && im.LinkBase() == 0 {
+			t.Error("a fixed-address ELF reported a link base of zero; it is linked " +
+				"at the address the loader has to place it")
+		}
+	case binary.FormatMachO:
+		if im.LinkBase() == 0 {
+			t.Error("a Mach-O reported a link base of zero; __TEXT is at 4GB and " +
+				"being position-independent does not change that")
+		}
+	default:
+		t.Skipf("this host builds a %v; the PE rule is pinned separately", im.Format)
+	}
+
+	for _, sec := range im.Text() {
+		if sec.Addr < im.LinkBase() {
+			t.Errorf("the section %s is at %#x, below the link base %#x",
+				sec.Name, sec.Addr, im.LinkBase())
+		}
+	}
+	t.Logf("%v, position-independent %v, linked at %#x", im.Format, im.PIE, im.LinkBase())
+}
