@@ -199,6 +199,24 @@ func SkipPOSIXTarget(t testing.TB, what string) {
 	}
 }
 
+// TargetName is what an executable stub must be called on this platform, for
+// the tests that write one rather than build one.
+func TargetName() string { return ExeName("target") }
+
+// ForThisPlatform rewrites a campaign fixture's target path to the name an
+// executable can have here.
+//
+// Campaign validation decides executability by extension on Windows, because
+// that is how the platform decides it, so a fixture naming ./target describes a
+// file that cannot be run and is refused before any of the campaign under test
+// happens.
+func ForThisPlatform(body string) string {
+	if TargetName() == "target" {
+		return body
+	}
+	return strings.ReplaceAll(body, "./target", "./"+TargetName())
+}
+
 // Sleeper builds a target that will not finish on its own, for the tests that
 // measure what stops one.
 func Sleeper(t testing.TB, dir string) string {

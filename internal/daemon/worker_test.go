@@ -291,14 +291,33 @@ func TestSupervisorBroadcastSkipsTheOriginator(t *testing.T) {
 		t.Fatal("worker 1 never received the broadcast")
 	}
 
-	// Worker 0 does not. Its pipe must be empty, which a non-blocking read of a
-	// pipe with a deadline can establish.
-	a.workerIn.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
-	buf := make([]byte, 1)
-	if n, err := a.workerIn.Read(buf); err == nil && n > 0 {
+	// Worker 0 does not. Establishing that its pipe is empty means a read that
+	// gives up, and a deadline is not the way to arrange one everywhere: an
+	// anonymous pipe on Windows supports none, so SetReadDeadline fails and the
+	// read that follows waits for data that is never coming — for thirty
+	// minutes, until the test binary's own timeout kills it. The read waits on
+	// its own goroutine instead, and this one stops listening.
+	arrived := make(chan struct{}, 1)
+	failed := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 1)
+		switch n, err := a.workerIn.Read(buf); {
+		case n > 0:
+			arrived <- struct{}{}
+		case err != nil:
+			failed <- err
+		}
+	}()
+	select {
+	case <-arrived:
 		t.Fatal("the originating worker received its own discovery back")
-	} else if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, io.EOF) {
-		t.Fatalf("unexpected read error: %v", err)
+	case err := <-failed:
+		if !errors.Is(err, os.ErrDeadlineExceeded) && !errors.Is(err, io.EOF) {
+			t.Fatalf("unexpected read error: %v", err)
+		}
+	case <-time.After(150 * time.Millisecond):
+		// Nothing arrived, which is the claim. The read is released by the
+		// cancel below, which closes the pipe.
 	}
 
 	cancel()

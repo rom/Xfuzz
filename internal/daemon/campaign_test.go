@@ -32,12 +32,12 @@ func newFixture(t *testing.T, yaml string, workers int) *fixture {
 	t.Helper()
 
 	dir := testenv.ReachableDir(t)
-	targetPath := filepath.Join(dir, "target")
+	targetPath := filepath.Join(dir, testenv.TargetName())
 	if err := os.WriteFile(targetPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "c.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(testenv.ForThisPlatform(yaml)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -397,10 +397,10 @@ func TestCampaignPauseAndResume(t *testing.T) {
 func TestCampaignRefusesARemoteRunWithoutAuthorization(t *testing.T) {
 	// Caught before anything starts, not after the first packet.
 	dir := testenv.ReachableDir(t)
-	targetPath := filepath.Join(dir, "target")
+	targetPath := filepath.Join(dir, testenv.TargetName())
 	os.WriteFile(targetPath, []byte("#!/bin/sh\n"), 0o755)
 	path := filepath.Join(dir, "c.yaml")
-	os.WriteFile(path, []byte(`
+	os.WriteFile(path, []byte(testenv.ForThisPlatform(`
 name: remote
 target:
   path: ./target
@@ -410,7 +410,7 @@ safety:
   network: true
   scope:
     allow: ["10.0.0.0/8:80"]
-`), 0o644)
+`)), 0o644)
 
 	if _, err := campaign.Load(path); err == nil {
 		t.Fatal("a remote campaign with no authorization record was accepted by validation")
@@ -447,10 +447,10 @@ func TestDaemonRefusesDuplicateAndOverLimitCampaigns(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755)
 	mk := func(name string) *campaign.Resolved {
 		p := filepath.Join(cfgDir, name+".yaml")
-		os.WriteFile(p, []byte("name: "+name+"\ntarget:\n  path: ./target\nseeds:\n  inline: [\"s\"]\n"), 0o644)
+		os.WriteFile(p, []byte(testenv.ForThisPlatform("name: "+name+"\ntarget:\n  path: ./target\nseeds:\n  inline: [\"s\"]\n")), 0o644)
 		r, err := campaign.Load(p)
 		if err != nil {
 			t.Fatal(err)
@@ -484,11 +484,11 @@ func TestDaemonSharesOneStorePerDirectory(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755)
+	os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755)
 	var stores []*store.Store
 	for _, name := range []string{"a", "b"} {
 		p := filepath.Join(cfgDir, name+".yaml")
-		os.WriteFile(p, []byte("name: "+name+"\ntarget:\n  path: ./target\nseeds:\n  inline: [\"s\"]\n"), 0o644)
+		os.WriteFile(p, []byte(testenv.ForThisPlatform("name: "+name+"\ntarget:\n  path: ./target\nseeds:\n  inline: [\"s\"]\n")), 0o644)
 		r, err := campaign.Load(p)
 		if err != nil {
 			t.Fatal(err)
@@ -519,7 +519,7 @@ func TestFinishedCampaignsLoadWithoutTheirFile(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	target := filepath.Join(cfgDir, "target")
+	target := filepath.Join(cfgDir, testenv.TargetName())
 	if err := os.WriteFile(target, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -587,7 +587,7 @@ func TestCampaignGeneratesSeedsFromItsGrammar(t *testing.T) {
 	defer d.Close(context.Background())
 
 	cfgDir := testenv.ReachableDir(t)
-	if err := os.WriteFile(filepath.Join(cfgDir, "target"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, testenv.TargetName()), []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	grammar := filepath.Join(cfgDir, "g.xfg")
@@ -596,7 +596,8 @@ func TestCampaignGeneratesSeedsFromItsGrammar(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(cfgDir, "g.yaml")
-	doc := "name: grown\ntarget:\n  path: ./target\nformat:\n  grammar: ./g.xfg\nseeds:\n  generate: 12\n"
+	doc := testenv.ForThisPlatform(
+		"name: grown\ntarget:\n  path: ./target\nformat:\n  grammar: ./g.xfg\nseeds:\n  generate: 12\n")
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}

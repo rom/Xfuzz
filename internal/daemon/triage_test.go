@@ -23,7 +23,7 @@ echo "XFUZZ-MARKER: $line"
 func triageFor(t *testing.T, script string) *Triage {
 	t.Helper()
 	dir := testenv.ReachableDir(t)
-	target := filepath.Join(dir, "target")
+	target := filepath.Join(dir, testenv.TargetName())
 	if err := os.WriteFile(target, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

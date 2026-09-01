@@ -239,6 +239,17 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **Two daemons could serve one store on Windows, and the comment said they
+  could not.** The socket lock is what tells a starting daemon that another one
+  is already running — a connect probe cannot tell "a daemon is starting" from
+  "a daemon crashed and left its socket", and gives two starting at once no way
+  to notice each other. The non-Unix implementation opened the lock file with
+  `os.OpenFile` and described itself as "opening the file without sharing",
+  which is not what that does: Go opens shared, so every daemon took the lock
+  and every daemon believed it was the only one. It is `LockFileEx` now, the
+  same promise `flock` makes — held by one handle, dropped when the process
+  exits however it exits — and the property has a test that a second holder is
+  refused, which runs on every platform rather than the one it was assumed on.
 - **`xfuzz-cc` instrumented for a platform with nowhere to put the map.** The
   coverage map is a shared-memory object the target writes and the fuzzer reads,
   and on a platform with no such thing an instrumented target would still
