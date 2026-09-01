@@ -166,21 +166,44 @@ func TestAnalyzeRecoversASymbolLessPE(t *testing.T) {
 					"against this image would be blind in all of them", missing)
 			}
 
+			// Each declared function must come back as a function of its own,
+			// holding its own blocks and nobody else's.
+			//
+			// This is the shape a Windows image has and a Linux one hides. The
+			// entry point here calls straight through the ladder, so recovery
+			// that gave each entry point everything it reached would return one
+			// function holding the whole program — and on Linux it never would,
+			// because the C runtime reaches main through an indirect call and
+			// every function ends up its own root by accident of the platform.
+			owned := map[uint64][]uint64{}
+			for _, f := range a.Functions {
+				owned[f.Entry] = f.Blocks
+			}
+			for _, f := range declared {
+				blocks, ok := owned[f.start]
+				if !ok {
+					t.Errorf("the exception directory declares a function at %#x "+
+						"and no function was recovered there (%d were)",
+						f.start, len(a.Functions))
+					continue
+				}
+				for _, b := range blocks {
+					if b < f.start || b >= f.end {
+						t.Errorf("the block at %#x is attributed to the function at "+
+							"%#x..%#x, which does not contain it", b, f.start, f.end)
+					}
+				}
+			}
+
 			// The unreferenced function is the whole point: nothing calls it and
 			// nothing loads its address, so descent from the entry point cannot
 			// reach it, and it is only present because the exception directory
 			// named it. It branches twice, so it is more than one block.
 			orphan := peOrphan(t, declared, a, im.Entry)
-			blocks := 0
-			for _, b := range a.Blocks {
-				if b.Addr >= orphan.start && b.Addr < orphan.end {
-					blocks++
-				}
-			}
-			if blocks < 3 {
+			if n := len(owned[orphan.start]); n < 3 {
 				t.Errorf("the function at %#x..%#x recovered as %d block(s); it contains "+
 					"two branches, and nothing but the exception directory could have "+
-					"found it at all", orphan.start, orphan.end, blocks)
+					"found it at all", orphan.start, orphan.end, n)
 			}
 		})
 	}

@@ -239,6 +239,16 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **Recovered blocks belonged to whichever entry point reached them first.**
+  `Analysis.Functions` was a descent root and everything the walk from it
+  touched, so the first root walked owned every function it called. On Linux
+  that never showed — the C runtime reaches `main` through an indirect call, so
+  every function is its own root by accident of the platform — and on Windows,
+  whose runtime calls `main` directly, one function came back holding the entire
+  image and not one of the program's own functions could be found by name. A
+  block now belongs to the entry point it sits after, bounded by the next entry
+  point, the extent its symbol or unwind entry declares, or the end of the
+  section, whichever comes first.
 - **The length decoder folded an ignored prefix into the next instruction.** A
   REX prefix only applies when it immediately precedes the opcode; one followed
   by another prefix is ignored by the processor, and every disassembler ends the

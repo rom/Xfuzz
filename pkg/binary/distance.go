@@ -140,10 +140,6 @@ func BuildDistanceMap(a *Analysis, targets []uint64) (*DistanceMap, error) {
 	// walked once, so the whole map costs a single breadth-first pass rather
 	// than a search per block.
 	rev := make(map[uint64][]uint64, len(a.Blocks))
-	entries := make(map[uint64]bool, len(a.Functions))
-	for _, f := range a.Functions {
-		entries[f.Entry] = true
-	}
 	for i := range a.Blocks {
 		b := &a.Blocks[i]
 		for _, s := range b.Succ {

@@ -36,7 +36,16 @@ type Block struct {
 	Calls []uint64
 }
 
-// Function is a run of blocks reached from one entry point.
+// Function is one function's blocks.
+//
+// A block belongs to the entry point it sits after, not to whichever entry
+// point happened to reach it first. Descent from one address walks into
+// everything that address calls, so "the blocks reached from here" makes the
+// first entry point walked own most of the program — and which one that is
+// depends on the platform. On Linux the C runtime reaches main through an
+// indirect call, so every function is its own root and the difference never
+// shows; on Windows the runtime calls main directly, and one function comes
+// back holding the whole image.
 type Function struct {
 	Name  string
 	Entry uint64
@@ -188,25 +197,84 @@ func Analyze(im *Image) (*Analysis, error) {
 	}
 
 	w.finish()
+	w.attribute()
 	return a, nil
 }
 
-// root descends from one candidate entry point and records what it reached as a
-// function.
+// attribute assigns every recovered block to the function that owns it.
+//
+// A function runs from its own first instruction to the first of three things:
+// the next function's entry point, the end of the extent its symbol or unwind
+// entry declares, or the end of the section. Whichever comes first is the
+// boundary — a declared extent that reaches past the next entry point is
+// describing a fragment or a split function, and the blocks past that point
+// belong to the next one either way.
+//
+// This over-approximates in one direction and under-approximates in the other,
+// and both are the honest answer. A function whose compiler moved its cold path
+// elsewhere loses that path to whatever function precedes it; padding between
+// two functions is attributed to the earlier one. Neither can be settled without
+// information the image does not carry.
+func (w *walker) attribute() {
+	a := w.an
+
+	// One function per address. The same address arrives more than once — as a
+	// symbol and as an unwind entry, or as both an export and a COFF symbol —
+	// and the first extent declared for it is kept, since an entry that
+	// declares one is more specific than one that does not.
+	declared := make(map[uint64]uint64, len(w.entries))
+	starts := make([]uint64, 0, len(w.entries))
+	for _, e := range w.entries {
+		if _, ok := a.byAddr[e.Start]; !ok {
+			// Nothing decoded at that address, so whatever named it was wrong:
+			// an unwind entry describing a fragment, or a lea into data.
+			continue
+		}
+		if end, seen := declared[e.Start]; seen {
+			if end == 0 {
+				declared[e.Start] = e.End
+			}
+			continue
+		}
+		declared[e.Start] = e.End
+		starts = append(starts, e.Start)
+	}
+	sort.Slice(starts, func(i, j int) bool { return starts[i] < starts[j] })
+
+	for i, start := range starts {
+		limit := w.sectionEnd(start)
+		if i+1 < len(starts) && starts[i+1] < limit {
+			limit = starts[i+1]
+		}
+		if end := declared[start]; end != 0 && end < limit {
+			limit = end
+		}
+
+		fn := Function{Entry: start, End: declared[start]}
+		if s, ok := w.im.SymbolAt(start); ok && s.Addr == start {
+			fn.Name = s.Name
+		}
+		j := sort.Search(len(a.Blocks), func(j int) bool { return a.Blocks[j].Addr >= start })
+		for ; j < len(a.Blocks) && a.Blocks[j].Addr < limit; j++ {
+			fn.Blocks = append(fn.Blocks, a.Blocks[j].Addr)
+		}
+		a.Functions = append(a.Functions, fn)
+	}
+}
+
+// root descends from one candidate entry point and remembers it as one.
+//
+// An address already reached by an earlier descent still counts: it is a
+// function the image named, and the only thing the earlier walk settled is that
+// its blocks are already decoded.
 func (w *walker) root(r funcRange) {
-	if !w.executable(r.Start) || w.seen[r.Start] {
+	if !w.executable(r.Start) {
 		return
 	}
-	before := len(w.blocks)
-	w.descend(r.Start)
-	if len(w.blocks) == before {
-		return
+	if !w.seen[r.Start] {
+		w.descend(r.Start)
 	}
-	fn := Function{Entry: r.Start, End: r.End, Blocks: w.since(before)}
-	if s, ok := w.im.SymbolAt(r.Start); ok && s.Addr == r.Start {
-		fn.Name = s.Name
-	}
-	w.an.Functions = append(w.an.Functions, fn)
+	w.entries = append(w.entries, r)
 }
 
 // walker holds recursive-descent state.
@@ -221,7 +289,11 @@ type walker struct {
 	leaders map[uint64]bool
 
 	blocks []Block
-	order  []uint64
+
+	// entries are the addresses something in the image named as a function, in
+	// the order they were offered. Blocks are attributed to them after the walk,
+	// by address, in attribute.
+	entries []funcRange
 
 	// taken collects the addresses code was seen loading with a lea, which is
 	// how a function that nothing calls directly is named.
@@ -237,12 +309,16 @@ func (w *walker) executable(addr uint64) bool {
 	return false
 }
 
-func (w *walker) since(n int) []uint64 {
-	out := make([]uint64, 0, len(w.blocks)-n)
-	for _, b := range w.blocks[n:] {
-		out = append(out, b.Addr)
+// sectionEnd returns the end of the executable section an address is in. The
+// last function of a section ends there and not at the start of the next
+// section's code, which belongs to something else entirely.
+func (w *walker) sectionEnd(addr uint64) uint64 {
+	for _, s := range w.im.sections {
+		if s.Executable && addr >= s.Addr && addr < s.Addr+uint64(len(s.Data)) {
+			return s.Addr + uint64(len(s.Data))
+		}
 	}
-	return out
+	return 0
 }
 
 // descend walks one block and queues its successors.
@@ -263,7 +339,6 @@ func (w *walker) descend(start uint64) {
 
 		b, next := w.block(addr)
 		w.blocks = append(w.blocks, b)
-		w.order = append(w.order, addr)
 		work = append(work, next...)
 	}
 }

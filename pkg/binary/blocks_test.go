@@ -381,6 +381,23 @@ func TestAnalyzeFollowsAnAddressTakenFunction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Whether the lea is what finds main is a property of the platform's startup
+	// code, not of this package. A C runtime that reaches main through an
+	// indirect call — which is what _start does on Linux and macOS — leaves that
+	// instruction as the only static evidence main exists at all. Windows' runtime
+	// calls main directly, so descent reaches it and there is nothing here to
+	// cover; measured rather than assumed, because it is the calls in this very
+	// image that decide it.
+	for _, b := range a.Blocks {
+		for _, c := range b.Calls {
+			if c == mainAddr {
+				t.Skipf("this platform's startup code calls main at %#x directly, so "+
+					"descent reaches it without the address-taken reference this test "+
+					"exists for", mainAddr)
+			}
+		}
+	}
+
 	if _, ok := a.Block(mainAddr); !ok {
 		t.Errorf("main is at %#x and no block starts there; with no unwind entry for it, "+
 			"the lea in the startup code is the only thing that names it, and following "+

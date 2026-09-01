@@ -60,6 +60,17 @@
 > clang can compile and any COFF linker can link without a Windows SDK, so the
 > platform's normal shape is exercised on every host rather than only on the one
 > where it ships.
+>
+> The same fixture exposed a second fault that is not a Windows fault at all.
+> Blocks were attributed to whichever entry point the walk reached them from
+> first, so descent from one address owned everything that address called. On
+> Linux that is invisible, because the C runtime reaches `main` through an
+> indirect call and every function therefore becomes its own root by accident of
+> the platform; on Windows the runtime calls `main` directly and one function
+> came back holding the whole image. Ownership is now decided by address — a
+> function runs to the next entry point, the end of its declared extent, or the
+> end of the section, whichever comes first — which is what the field always
+> claimed to mean.
 
 ## Context
 
