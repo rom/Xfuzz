@@ -42,6 +42,15 @@ func target(t *testing.T, dir string) string {
 	return p
 }
 
+// forThisPlatform renames ./target in a campaign fixture to whatever this
+// platform will actually run.
+func forThisPlatform(body string) string {
+	if targetName == "target" {
+		return body
+	}
+	return strings.ReplaceAll(body, "./target", "./"+targetName)
+}
+
 // targetName is what an executable stub has to be called here.
 var targetName = func() string {
 	if runtime.GOOS == "windows" {
@@ -52,6 +61,12 @@ var targetName = func() string {
 
 func write(t *testing.T, dir, name, body string) string {
 	t.Helper()
+	// The fixtures name ./target, which is what a campaign file written by hand
+	// on a Unix machine says. Where an executable has to be called something
+	// else — Windows decides by extension — the name in the file follows the
+	// name on disk, and only here, so that the fixtures stay readable as the
+	// files a person would write.
+	body = forThisPlatform(body)
 	p := filepath.Join(dir, name)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
