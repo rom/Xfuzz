@@ -68,6 +68,8 @@ package main
 
 import (
 	"debug/elf"
+	"debug/pe"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -127,26 +129,7 @@ func main() {
 	f.Close()
 	os.Exit(code)
 }
-
-// textAddrs returns plausible block addresses: the function symbols of the
-// guest, which is what a real trace would contain the beginnings of.
-func textAddrs(path string) []uint64 {
-	fh, err := elf.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer fh.Close()
-	var out []uint64
-	syms, _ := fh.Symbols()
-	for _, s := range syms {
-		if elf.ST_TYPE(s.Info) == elf.STT_FUNC && s.Value != 0 {
-			out = append(out, s.Value)
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-`
+` + stubTextAddrsSrc
 
 // The stub instrumentation tool: runs the target and writes a DRcov file, the
 // way a Stalker agent does.
@@ -155,6 +138,7 @@ package main
 
 import (
 	"debug/elf"
+	"debug/pe"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -259,8 +243,28 @@ func writeDRcov(path, module string, offsets []uint64) {
 		Module uint16
 	}{0x900, 16, 1})
 }
+` + stubTextAddrsSrc
+
+// stubTextAddrsSrc is the half of both stubs that decides which addresses a
+// trace would contain: where the guest's functions begin, as offsets into the
+// module, which is what a real tool reports and what the backends rebase.
+//
+// An ELF names them in its symbol table. A PE names them nowhere — the
+// Microsoft toolchain writes names to a separate PDB, so an ordinary Windows
+// build has no symbol table at all — and its exception directory is read
+// instead, which the x64 ABI requires an entry in for every non-leaf function.
+// Without the second half a stub on Windows reports an empty trace, and the
+// backend under test is handed nothing to rebase.
+const stubTextAddrsSrc = `
 
 func textAddrs(path string) []uint64 {
+	if out := elfFuncs(path); len(out) > 0 {
+		return out
+	}
+	return peFuncs(path)
+}
+
+func elfFuncs(path string) []uint64 {
 	fh, err := elf.Open(path)
 	if err != nil {
 		return nil
@@ -271,6 +275,37 @@ func textAddrs(path string) []uint64 {
 	for _, s := range syms {
 		if elf.ST_TYPE(s.Info) == elf.STT_FUNC && s.Value != 0 {
 			out = append(out, s.Value)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func peFuncs(path string) []uint64 {
+	fh, err := pe.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer fh.Close()
+	var pdata []byte
+	for _, sec := range fh.Sections {
+		if sec.Name != ".pdata" {
+			continue
+		}
+		b, err := sec.Data()
+		if err != nil {
+			return nil
+		}
+		if sec.VirtualSize > 0 && uint32(len(b)) > sec.VirtualSize {
+			b = b[:sec.VirtualSize]
+		}
+		pdata = b
+	}
+	var out []uint64
+	for i := 0; i+12 <= len(pdata); i += 12 {
+		rva := binary.LittleEndian.Uint32(pdata[i:])
+		if rva != 0 {
+			out = append(out, uint64(rva))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
@@ -307,7 +342,10 @@ func buildUnstripped(t *testing.T, dir, src string) string {
 	if err := os.WriteFile(in, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(dir, "target")
+	// With the platform's extension, because Windows decides what may be
+	// executed by it: a file named "target" cannot be started at all, and the
+	// stub tool that tries reports only that it could not run the guest.
+	out := filepath.Join(dir, testenv.ExeName("target"))
 	if b, err := exec.Command(cc, "-O0", "-o", out, in).CombinedOutput(); err != nil {
 		t.Skipf("compiling the fixture failed (%v): %s", err, b)
 	}

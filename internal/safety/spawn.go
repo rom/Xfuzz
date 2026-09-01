@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rom/Xfuzz/internal/platform"
@@ -301,6 +302,10 @@ type handle struct {
 	exited  chan struct{}
 	result  executor.ProcResult
 	waitErr error
+
+	// killed records that the fuzzer, rather than the process itself, ended it.
+	// Read by reap and written by Kill, which run on different goroutines.
+	killed atomic.Bool
 }
 
 func (h *handle) Pid() int          { return h.cmd.Process.Pid }
@@ -312,7 +317,26 @@ func (h *handle) reap() {
 	h.waitErr = h.cmd.Wait()
 	h.result.Duration = time.Since(h.start)
 	fillStatus(&h.result, h.cmd, h.waitErr)
+	h.result.Signal = signalFor(h.result.Signal, h.killed.Load())
 	close(h.exited)
+}
+
+// signalFor fills in the signal the platform could not report.
+//
+// A kernel that says how a process died has already said it, so this changes
+// nothing on Unix. Where it matters is Windows: TerminateProcess leaves an exit
+// code and nothing else, so a child the fuzzer stopped is indistinguishable
+// from one that returned the same number of its own accord — and everything
+// above this layer reads a shutdown like that as a child that failed.
+//
+// Written as a function of its inputs rather than inline, and free of build
+// tags, so the rule is exercised on every host instead of only on the one where
+// it fires.
+func signalFor(reported int, killed bool) int {
+	if reported != 0 || !killed {
+		return reported
+	}
+	return platform.SignalKilled
 }
 
 func (h *handle) Wait() (executor.ProcResult, error) {
@@ -354,6 +378,9 @@ func (h *handle) Kill() error {
 	default:
 	}
 
+	// Before the kill, so that the reaping goroutine — which cannot finish
+	// until the process it is waiting on is dead — is certain to see it.
+	h.killed.Store(true)
 	err := platform.KillGroup(h.cmd.Process.Pid)
 
 	timer := time.NewTimer(ReapTimeout)

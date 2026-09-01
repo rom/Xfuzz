@@ -52,6 +52,18 @@ const (
 	sigInt  = 2
 )
 
+// SignalKilled is what a process the fuzzer terminated reports having died of.
+//
+// A Unix kernel says it without being asked: KillGroup sends SIGKILL and the
+// wait status carries it. Windows leaves no trace at all — TerminateProcess
+// sets an exit code, and nothing in the status distinguishes the target the
+// fuzzer stopped from one that returned the same number of its own accord. So
+// the killer states it, in the same terms, for the same reason the exception
+// codes above are translated: everything above this layer classifies by signal,
+// and a deliberate shutdown that reads as "exited 1" reads as a child that
+// failed.
+const SignalKilled = 9
+
 // ExceptionSignal maps a Windows exit code to the signal the same fault would
 // have raised on Unix, or zero if the code is an ordinary exit.
 //

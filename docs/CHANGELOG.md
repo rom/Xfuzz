@@ -239,6 +239,15 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   table, and for a DLL the whole of its interface. `Analysis.UnwindEntries`
   counted every root including the symbols, so on an unstripped image it
   reported the unwind tables had supplied entries they had not.
+- **A child the fuzzer killed reported nothing on Windows.** A Unix kernel puts
+  the signal in the wait status without being asked; `TerminateProcess` leaves
+  an exit code and nothing else, so a worker or a fork server that was
+  deliberately stopped was indistinguishable from one that returned the same
+  number of its own accord — and everything above the platform layer reads that
+  as a child that failed. The killer states it now, in the same terms the
+  exception codes are already translated into, and only where the platform
+  reported nothing: a target that crashed while being killed keeps the signal it
+  crashed with.
 - **Recovered blocks belonged to whichever entry point reached them first.**
   `Analysis.Functions` was a descent root and everything the walk from it
   touched, so the first root walked owned every function it called. On Linux

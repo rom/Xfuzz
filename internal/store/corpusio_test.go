@@ -85,7 +85,7 @@ func TestExportCorpusFromCampaign(t *testing.T) {
 
 	fav := filepath.Join(t.TempDir(), "fav")
 	rep, err = s.ExportCorpus(ctx, c.ID, fav,
-		corpusio.ExportOptions{Format: corpusio.FormatAFL, FavouredOnly: true})
+		corpusio.ExportOptions{Format: richestFormat(t), FavouredOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestCorpusRoundTripThroughStore(t *testing.T) {
 	}
 
 	dst := filepath.Join(t.TempDir(), "out")
-	if _, err := s.ExportCorpus(ctx, c.ID, dst, corpusio.ExportOptions{Format: corpusio.FormatAFL}); err != nil {
+	if _, err := s.ExportCorpus(ctx, c.ID, dst, corpusio.ExportOptions{Format: richestFormat(t)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,4 +134,23 @@ func TestCorpusRoundTripThroughStore(t *testing.T) {
 			t.Fatalf("payload %q did not survive the round trip", p)
 		}
 	}
+}
+
+// richestFormat is the corpus layout these tests export in: AFL's where the
+// host can write its filenames, and libFuzzer's where it cannot.
+//
+// AFL names an entry `id:000000,orig:...`, and a Windows filename may not
+// contain a colon, so an AFL export is refused outright there rather than
+// half-written. The layout is not what is being tested — what is, is that the
+// store exports what it can import back, and that a favoured-only export
+// selects — so these ask for the richest layout the host actually supports
+// instead of one it has no way to produce.
+func richestFormat(t *testing.T) corpusio.Format {
+	t.Helper()
+	if corpusio.AFLNamesSupported() {
+		return corpusio.FormatAFL
+	}
+	t.Logf("this platform's filenames cannot contain a colon, so the AFL layout " +
+		"cannot be written here; exporting as libfuzzer instead")
+	return corpusio.FormatLibFuzzer
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rom/Xfuzz/internal/platform"
 	"github.com/rom/Xfuzz/pkg/executor"
 )
 
@@ -113,6 +114,33 @@ func TestHandleReportsTheSameResultToEveryCaller(t *testing.T) {
 	}
 	if first.Signal == 0 {
 		t.Errorf("a killed process reported no signal: %+v", first)
+	}
+}
+
+// TestSignalForFillsInWhatThePlatformCannotReport covers the Windows half of
+// how a killed process is reported, from a host that is not Windows.
+//
+// The rule is not "report SIGKILL when killed": a kernel that already said how
+// the process died is the better authority, and overwriting it would turn a
+// target that segfaulted while being killed into one that was merely stopped.
+func TestSignalForFillsInWhatThePlatformCannotReport(t *testing.T) {
+	cases := []struct {
+		name     string
+		reported int
+		killed   bool
+		want     int
+	}{
+		{"the platform reported the kill", 9, true, 9},
+		{"the platform reported a crash during the kill", 11, true, 11},
+		{"the platform reported nothing and we killed it", 0, true, platform.SignalKilled},
+		{"the platform reported nothing and it exited on its own", 0, false, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := signalFor(c.reported, c.killed); got != c.want {
+				t.Errorf("signalFor(%d, %v) = %d, want %d", c.reported, c.killed, got, c.want)
+			}
+		})
 	}
 }
 
