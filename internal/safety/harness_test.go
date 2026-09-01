@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -58,6 +59,16 @@ var (
 // the sandbox holds, and a coverage map would only slow them down.
 func escapeTarget(t testing.TB) string {
 	t.Helper()
+	// The escape target is a POSIX program by construction: it mounts, it forks
+	// without bound, it reaches for privileged syscalls. Those are the
+	// mechanisms it is pointed at, so on a platform that has none of them there
+	// is no escape to attempt and nothing for the sandbox to hold. Said here
+	// rather than left to the compiler, because a missing <sys/mount.h> reads
+	// as a broken test rather than as a target that does not apply.
+	if runtime.GOOS == "windows" {
+		t.Skip("the escape target is a POSIX program; containment here is the job " +
+			"object, which internal/platform tests directly")
+	}
 	cc, err := exec.LookPath("cc")
 	if err != nil {
 		if cc, err = exec.LookPath("clang"); err != nil {

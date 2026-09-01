@@ -66,9 +66,14 @@ func TestSeatbeltProfileEscapesAPathThatWouldEndItsOwnString(t *testing.T) {
 
 	// A backslash must be escaped too, or a path ending in one escapes the
 	// closing quote instead of itself.
-	q := SeatbeltProfile([]string{`/tmp/a\`}, false)
-	if !strings.Contains(q, `"/tmp/a\\"`) {
-		t.Fatalf("a trailing backslash was not escaped:\n%s", q)
+	//
+	// Checked on the quoting directly rather than through SeatbeltProfile,
+	// because a path cannot carry a trailing backslash on every host: where one
+	// is a separator there is no way to spell such a name, and the path would be
+	// normalised before the quoting ever saw it. The rule under test is about
+	// the string.
+	if got, want := seatbeltString(`/tmp/a\`), `"/tmp/a\\"`; got != want {
+		t.Errorf("a trailing backslash was quoted as %s, want %s", got, want)
 	}
 }
 
@@ -110,7 +115,10 @@ func TestSeatbeltProfileAllowsThePathTheKernelWillSee(t *testing.T) {
 	}
 	p := SeatbeltProfile([]string{link}, false)
 	for _, want := range []string{link, resolvedLink} {
-		if !strings.Contains(p, `(subpath "`+want+`")`) {
+		// Against the quoted spelling, which is what the profile holds: a path
+		// carrying a backslash is escaped on its way in, and comparing the raw
+		// one would be looking for a string the profile never contains.
+		if !strings.Contains(p, "(subpath "+seatbeltString(want)+")") {
 			t.Errorf("%s is not writable under the profile:\n%s", want, p)
 		}
 	}
@@ -150,7 +158,7 @@ func TestSeatbeltProfileRefusesARelativePath(t *testing.T) {
 	if err != nil {
 		t.Skip("no working directory")
 	}
-	if !strings.Contains(p, filepath.Join(cwd, "scratch")) {
+	if !strings.Contains(p, seatbeltString(filepath.Join(cwd, "scratch"))) {
 		t.Errorf("the relative path was dropped rather than resolved:\n%s", p)
 	}
 }

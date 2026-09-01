@@ -72,9 +72,17 @@ jobs:
       # that package sits close to the default and has gone over it, and a
       # package killed at the limit reports a goroutine dump rather than a
       # result — which reads as a hang in the fuzzer rather than a slow machine.
+      #
+      # Forty-five minutes rather than thirty, which is what the security job
+      # below already allows for the same package for the same reason. Measured
+      # here at 30m: internal/engine was killed mid-run after forty minutes,
+      # inside a twenty-thousand-execution cmplog campaign, still doing work —
+      # and the security job, running the same package under the same race
+      # detector, finished it. One number for one package, in the two jobs that
+      # both run it.
       - name: test (race)
         if: runner.os != 'Windows'
-        run: go test -race -timeout 30m ./...
+        run: go test -race -timeout 45m ./...
       - name: test
         if: runner.os == 'Windows'
         run: go test -timeout 30m ./...
