@@ -420,6 +420,21 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   but no HTTP, so a caller that looked at the value before the error got a
   campaign with nothing to send rather than one that refused to start. Found by
   the self-fuzzing job; the input it found is now a seed.
+- **Nothing checked the console half of the CLI/console parity claim.**
+  ASR-0005 forbids either interface holding a capability the other lacks, and
+  its acceptance criterion asks for a parity test "and vice versa";
+  `cmd/xfuzz/parity_test.go` proved it for the CLI in both directions and there
+  was no equivalent for the console, so the console could — and did — drift.
+  `internal/console/parity_test.go` now reads what `web/src` actually calls,
+  rather than a list it declares, and checks three things: every route is
+  reachable from the console, every path the console writes is served by a
+  route, and every request goes through the one client the first two can see.
+  It found eight routes out of reach. Two are decisions (`metrics.get` is
+  already carried by `campaign.get`; `admin.openapi` describes the API to
+  generated clients and the console is hand-written). Six are gaps, each now
+  named with its reason in the test rather than waiting to be found by somebody
+  looking for the button: `campaign.forget`, `corpus.import`, `corpus.export`,
+  `finding.minimize`, `admin.capabilities` and `admin.schema`.
 - **Two CI jobs capped the whole suite at thirty minutes, and `internal/engine`
   needs more than that on a hosted runner.** The limit had already been raised
   to forty-five in the matrix job and the security job, where the problem was
