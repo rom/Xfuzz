@@ -237,6 +237,12 @@ func (s *Server) campaignValidate(w http.ResponseWriter, r *http.Request) {
 		resp.Warnings = append(resp.Warnings,
 			"no termination condition: this campaign runs until interrupted")
 	}
+	// A cap this host will not enforce is not an error either — the file is
+	// portable and the cap is right on the host it was written for — but it
+	// is said here, where the file is being checked, rather than left for the
+	// isolation report after the campaign has started. This is the daemon's
+	// platform, which is the one that runs the target.
+	resp.Warnings = append(resp.Warnings, platform.UnenforceableLimits(safety.LimitsFor(cfg))...)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -841,9 +847,13 @@ func (s *Server) adminSafety(w http.ResponseWriter, r *http.Request) {
 		"isolation": c.Sandbox().Level().String(),
 		// The whole explanation, not just the level: a campaign refused for
 		// insufficient isolation has to be told what is missing, and the remedy
-		// is usually one line of host configuration.
+		// is usually one line of host configuration. Once as a paragraph for a
+		// terminal and once as a list for a page, from the same source.
 		"explanation": c.Sandbox().Explain(),
+		"reasons":     c.Sandbox().Reasons(),
 		"scope":       c.Scope().Summary(),
+		"allow":       c.Scope().Allowed(),
+		"loopback":    c.Scope().AllowLoopback,
 		"connections": map[string]uint64{"allowed": allowed, "denied": denied},
 	})
 }
@@ -974,7 +984,9 @@ func (s *Server) adminCapabilities(w http.ResponseWriter, r *http.Request) {
 		{Name: "platform-confinement", Available: caps.Confined,
 			Detail: confinementDetail(caps.Confined)},
 		{Name: "rlimits", Available: caps.Rlimits,
-			Detail: "memory, process and file-size ceilings"},
+			// Which ceilings, per platform: a job object and a set of rlimits
+			// are both "rlimits" to the level ladder and cap different things.
+			Detail: platform.LimitsDetail()},
 		{Name: cgroupCapability(caps.Cgroups), Available: caps.Cgroups != platform.CgroupNone,
 			Detail: cgroupDetail(caps.Cgroups)},
 		{Name: "process-groups", Available: platform.ProcessGroupsSupported(),

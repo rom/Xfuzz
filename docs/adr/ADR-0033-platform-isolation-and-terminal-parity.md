@@ -139,9 +139,11 @@ filter provide, arrived at differently. A level that could never rise above
 uninformative one.
 
 **Windows: a job object, wearing the `Cgroup` interface the tree already has.**
-It caps memory and process count and kills everything in the job when the last
-handle closes, so a fuzzer that dies takes its targets with it instead of
-leaving a machine full of orphans. It does **not** separate the target from the
+It caps memory, process count and per-process CPU time and kills everything in
+the job when the last handle closes, so a fuzzer that dies takes its targets
+with it instead of leaving a machine full of orphans. It has no file-size cap,
+and a campaign that sets one is told so at validation and in the isolation
+report rather than having the cap dropped. It does **not** separate the target from the
 filesystem — that needs a restricted or low-integrity token, which is a larger
 change with a larger blast radius — so Windows stays at `minimal` and the doctor
 says exactly which half is present. It is attached after the process exists, the

@@ -309,13 +309,7 @@ func (b *built) buildSafety(ctx context.Context, cfg *campaign.Resolved) error {
 		Writable: writable,
 		Creates:  creates,
 		Workdir:  cfg.Target.Dir,
-		Limits: platform.Limits{
-			AddressSpaceBytes: uint64(cfg.Safety.MemoryLimit),
-			Processes:         uint64(cfg.Safety.ProcessLimit),
-			FileSizeBytes:     uint64(cfg.Safety.FileSizeLimit),
-			CPUSeconds:        uint64(cfg.Safety.CPULimit.Std().Seconds()),
-			DisableCore:       true,
-		},
+		Limits:   safety.LimitsFor(cfg),
 	}
 	b.closers = append(b.closers, closer{"sandbox", b.sandbox.Close})
 

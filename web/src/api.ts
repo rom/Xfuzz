@@ -187,11 +187,18 @@ export interface SeriesPoint {
   execs_per_second: number;
 }
 
+// What the safety route sends: the level, why it is not higher (once as a
+// paragraph for a terminal, once as a list for this page), and the network
+// scope as a flag and a list — there is no deny list, because everything not
+// allowed is refused.
 export interface Safety {
   isolation: string;
-  reasons?: string[];
-  scope?: { allow: string[]; deny: string[] };
-  sandbox?: Record<string, unknown>;
+  explanation: string;
+  reasons: string[];
+  scope: string;
+  allow: string[];
+  loopback: boolean;
+  connections?: { allowed: number; denied: number };
 }
 
 export interface AuditEntry {

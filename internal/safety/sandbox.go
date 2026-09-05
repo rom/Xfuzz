@@ -262,6 +262,22 @@ func (s *Sandbox) Explain() string {
 	level, caps := s.Probe()
 	var b strings.Builder
 	fmt.Fprintf(&b, "isolation %s (%s)", level, caps)
+	for _, n := range s.Reasons() {
+		b.WriteString("\n  - " + n)
+	}
+	return b.String()
+}
+
+// Reasons lists why the isolation is not higher, and which of the campaign's
+// own limits this host will not enforce — one item each, for a client that
+// wants a list rather than the paragraph Explain renders from it.
+//
+// The limits are here because this is the report that claims to say what is
+// enforced. A cap the file set and the platform dropped would otherwise be
+// invisible: the level would read the same, and the only sign would be a
+// target doing the thing the cap was meant to prevent.
+func (s *Sandbox) Reasons() []string {
+	_, caps := s.Probe()
 	notes := append([]string(nil), caps.Notes...)
 	if s.Unconfined {
 		notes = append(notes,
@@ -309,10 +325,8 @@ func (s *Sandbox) Explain() string {
 				"separate identity (uid %d): on the host it remains the same user as the "+
 				"fuzzer, with the same access to the corpus", uid))
 	}
-	for _, n := range notes {
-		b.WriteString("\n  - " + n)
-	}
-	return b.String()
+	notes = append(notes, platform.UnenforceableLimits(s.Limits)...)
+	return notes
 }
 
 // Check refuses a campaign whose required level the host cannot reach.

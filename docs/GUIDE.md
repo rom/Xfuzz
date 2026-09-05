@@ -810,7 +810,7 @@ The campaign refuses to start if the host cannot provide the level asked for.
 | --- | --- | --- | --- |
 | Linux | namespaces, a seccomp denylist, cgroups, the `xfuzz-sandbox` helper | `strong` | needs cgroup v2 and a read-only root for `strong`; `moderate` is common |
 | macOS | a Seatbelt profile denying writes outside the working directory and denying the network, plus rlimits | `moderate` | no separate identity unless Xfuzz runs as root |
-| Windows | a job object capping memory and process count, killing every target when the fuzzer lets go | `minimal` | no filesystem or network confinement: that needs a restricted token, which Xfuzz does not yet create |
+| Windows | a job object capping memory, process count and CPU time, killing every target when the fuzzer lets go | `minimal` | no filesystem or network confinement: that needs a restricted token, which Xfuzz does not yet create. No file-size cap either: `xfuzz validate` warns when a file sets one, and the isolation report lists it |
 
 The macOS and Windows mechanisms are cross-built and unit-tested but have not
 been run on their own operating systems — see MVP_PLAN § 7.6. Treat the levels

@@ -159,6 +159,10 @@ tr.clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparen
   white-space: nowrap;
 }
 .badge.running, .badge.ok { color: var(--ok); border-color: currentColor; }
+
+/* The hidden attribute wins over any display rule above, so a view behind the
+   token form stays behind it whatever its own layout says. */
+[hidden] { display: none !important; }
 .badge.failed, .badge.bad { color: var(--bad); border-color: currentColor; }
 .badge.warn { color: var(--warn); border-color: currentColor; }
 .badge.on { background: var(--accent); color: #fff; border-color: transparent; }

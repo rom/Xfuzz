@@ -44,8 +44,13 @@ function main(): void {
   if (!app) return;
 
   const nav = el("nav");
+  // The gate is where the token form goes, and it is not main: a refused view
+  // keeps drawing into main after it fails — its error panel, and on a view
+  // that makes two requests, its whole layout after the second — so a form
+  // drawn there was drawn over. Views own main and nothing else.
+  const gate = el("div");
   const main$ = el("main");
-  replace(app, el("div", { class: "shell" }, nav, main$));
+  replace(app, el("div", { class: "shell" }, nav, el("div", null, gate, main$)));
 
   const render = () => {
     const route = current();
@@ -54,30 +59,30 @@ function main(): void {
     // exactly what the daemon's bounded queue is there to notice.
     live.stop();
     asking = false;
+    replace(gate);
+    main$.hidden = false;
     drawNav(nav, route.view, route.args[0]);
     void draw(main$, route.view, route.args);
   };
 
-  onUnauthorized(() => askForToken(main$));
+  onUnauthorized(() => askForToken(gate, main$));
   onChange(render);
   render();
   void footer(nav);
 }
 
-// askForToken replaces the view with the one question the daemon has.
+// askForToken puts the one question the daemon has in front of the view.
 //
 // Once per render: a view that was refused made several requests, and each
-// would otherwise put up the same form over the last. And after the view has
-// finished failing: the client calls this before it throws, the view's own
-// catch then draws its error over whatever is in root, and a form drawn now
-// would be gone by the time anyone saw it. A timeout runs after every
-// microtask that rejection sets off, so the form is drawn last.
+// would otherwise put up the same form over the last. The view goes on
+// failing into main behind it, hidden, and is redrawn on the next render.
 let asking = false;
 
-function askForToken(root: HTMLElement): void {
+function askForToken(gate: HTMLElement, main$: HTMLElement): void {
   if (asking) return;
   asking = true;
-  setTimeout(() => drawTokenForm(root), 0);
+  main$.hidden = true;
+  drawTokenForm(gate);
 }
 
 function drawTokenForm(root: HTMLElement): void {

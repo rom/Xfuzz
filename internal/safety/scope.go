@@ -333,10 +333,23 @@ func (s *Scope) Stats() (allowed, denied uint64) {
 
 // Summary renders the allowlist for an error message.
 func (s *Scope) Summary() string {
-	parts := make([]string, 0, len(s.Rules)+1)
+	parts := s.Allowed()
 	if s.AllowLoopback {
 		parts = append(parts, "loopback")
 	}
+	if len(parts) == 0 {
+		return "nothing"
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
+}
+
+// Allowed lists the destinations the rules permit, one per rule and each as
+// it would be written in a campaign file, for a client that wants the list
+// rather than the sentence. Loopback is a flag, not a rule, and is reported
+// separately.
+func (s *Scope) Allowed() []string {
+	out := make([]string, 0, len(s.Rules))
 	for _, r := range s.Rules {
 		p := r.Prefix.String()
 		if len(r.Ports) > 0 {
@@ -346,13 +359,10 @@ func (s *Scope) Summary() string {
 			}
 			p += ":" + strings.Join(ports, ",")
 		}
-		parts = append(parts, p)
+		out = append(out, p)
 	}
-	if len(parts) == 0 {
-		return "nothing"
-	}
-	sort.Strings(parts)
-	return strings.Join(parts, ", ")
+	sort.Strings(out)
+	return out
 }
 
 func (s *Scope) record(ctx context.Context, allowed bool, addr netip.AddrPort, rule string) {

@@ -420,6 +420,31 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   but no HTTP, so a caller that looked at the value before the error got a
   campaign with nothing to send rather than one that refused to start. Found by
   the self-fuzzing job; the input it found is now a seed.
+- **Two of a campaign's limits were accepted on Windows and silently not
+  enforced.** `safety.cpu_limit` and `safety.file_size_limit` went into the
+  platform's limit struct, the job object set only memory and process count,
+  and `ApplyLimits` returned nil with a comment saying the limits had been
+  applied elsewhere — in a tool whose isolation report exists to say what is
+  enforced. The job object now carries the CPU cap (`JOB_OBJECT_LIMIT_PROCESS_TIME`,
+  per process, user time — the quantity `RLIMIT_CPU` caps on Unix), saturating
+  rather than wrapping on an absurd budget, and is asked afterwards what it
+  holds. The file-size cap has no Windows mechanism at all, so it is *said*:
+  `xfuzz validate` warns, naming the field, when the daemon's host will not
+  enforce a cap the file sets; the isolation report lists it beside the other
+  reasons the level is what it is; and the doctor's `rlimits` row names which
+  ceilings this platform's mechanism provides instead of the same three words
+  on every OS. macOS gets the same treatment for `safety.process_limit`, which
+  it never set — Go's syscall package has no `RLIMIT_NPROC` there — and had
+  never said so.
+- **The console's safety view showed fiction.** It read a `reasons` list and a
+  `{allow, deny}` scope the route never sent, so the "why isolation is not
+  higher" list said *nothing is missing on this host* whatever the host, and
+  the network scope said *the target cannot reach the network* whatever the
+  rules. The route now sends both shapes from one source — the explanation as
+  a paragraph for a terminal and as a list for a page, the scope as a sentence
+  and as a flag plus a list — and the view reads them; the API test checks the
+  list against the paragraph item by item. Connection counts, which the route
+  always sent, are now shown.
 - **The console could not be reached from a browser at all.** The daemon
   required the bearer token on every request, `/` included, so on a TCP
   listener the console's own files answered 401 before the page could load;

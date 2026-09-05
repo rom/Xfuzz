@@ -5,6 +5,7 @@ package platform
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"unsafe"
 
@@ -15,17 +16,19 @@ import (
 //
 // There are no namespaces, no seccomp and no cgroups, and there is a job
 // object, which does two of the three things a cgroup does and does them
-// better in one respect. It caps memory and process count from the moment a
-// process is assigned to it, and it kills everything in the job when the last
-// handle closes — so a fuzzer that dies takes its targets with it rather than
-// leaving a machine full of orphans, which is the failure that makes an
-// unattended Windows campaign unusable.
+// better in one respect. It caps memory, process count and CPU time from the
+// moment a process is assigned to it, and it kills everything in the job when
+// the last handle closes — so a fuzzer that dies takes its targets with it
+// rather than leaving a machine full of orphans, which is the failure that
+// makes an unattended Windows campaign unusable.
 //
 // What it does not give is filesystem or network confinement. That needs a
 // restricted or low-integrity token, which is a larger piece of work with a
 // larger blast radius: a target that cannot read its own DLLs does not start,
 // and the campaign reports a broken target. So the job object lands here, the
-// token does not, and the level this reaches says which of the two it is.
+// token does not, and the level this reaches says which of the two it is. Nor
+// does it give a file-size cap — nothing on Windows does, short of a quota on
+// the volume — and UnenforceableLimits says so when a campaign asks for one.
 
 // Cgroup is a Windows job object wearing the interface the rest of Xfuzz
 // already has for a resource group.
@@ -63,6 +66,14 @@ func NewCgroup(name string, l Limits) (*Cgroup, error) {
 	if l.Processes > 0 {
 		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_ACTIVE_PROCESS
 		info.BasicLimitInformation.ActiveProcessLimit = uint32(l.Processes)
+	}
+	if l.CPUSeconds > 0 {
+		// Per process, user time, in 100-nanosecond units: the same quantity
+		// RLIMIT_CPU caps on Unix, and the backstop for a target that spins
+		// without making a syscall the wall-clock timeout would notice. A
+		// process that exceeds it is terminated by the kernel.
+		info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_PROCESS_TIME
+		info.BasicLimitInformation.PerProcessUserTimeLimit = hundredsOfNanoseconds(l.CPUSeconds)
 	}
 	if _, err := windows.SetInformationJobObject(h,
 		windows.JobObjectExtendedLimitInformation,
@@ -138,11 +149,25 @@ func JobObjectsAvailable() bool {
 	return true
 }
 
+// hundredsOfNanoseconds converts a CPU budget to the job object's unit,
+// saturating rather than wrapping: a cap that overflows into a small number
+// would terminate every target on its first instruction.
+func hundredsOfNanoseconds(seconds uint64) int64 {
+	const perSecond = 10_000_000
+	if seconds > math.MaxInt64/perSecond {
+		return math.MaxInt64
+	}
+	return int64(seconds) * perSecond
+}
+
 // ApplyLimits does nothing in the target process.
 //
 // Windows has no rlimits: the caps are the job object's, and the job is applied
 // by the fuzzer to the target rather than by the target to itself. Returning
-// nil rather than an error is correct — the limits were applied, just not here.
+// nil rather than an error is correct for memory, process count and CPU time —
+// those were applied, just not here. The file-size cap has no Windows
+// equivalent at all, and is reported by UnenforceableLimits rather than
+// pretended to here.
 func ApplyLimits(l Limits) error { return nil }
 
 // DropPrivileges reports that this is not how Windows works.
@@ -174,8 +199,8 @@ func DetectSandbox() SandboxCapabilities {
 	}
 	c.Notes = append(c.Notes,
 		"namespaces, seccomp and cgroups are Linux mechanisms; on Windows the equivalent "+
-			"is a job object, which caps memory and process count and kills the whole "+
-			"tree when the fuzzer lets go",
+			"is a job object, which caps memory, process count and CPU time and kills "+
+			"the whole tree when the fuzzer lets go; it has no file-size cap",
 		"a job object does not confine the filesystem or the network: that needs a "+
 			"restricted or low-integrity token, which Xfuzz does not yet create, so a "+
 			"target can write anywhere the fuzzer's own account can")

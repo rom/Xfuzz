@@ -304,7 +304,10 @@ func TestSafetyReportsTheLevelAndWhyItIsNotHigher(t *testing.T) {
 	var got struct {
 		Isolation   string            `json:"isolation"`
 		Explanation string            `json:"explanation"`
+		Reasons     []string          `json:"reasons"`
 		Scope       string            `json:"scope"`
+		Allow       []string          `json:"allow"`
+		Loopback    *bool             `json:"loopback"`
 		Connections map[string]uint64 `json:"connections"`
 	}
 	resp := h.json("GET", "/v1/campaigns/safe/safety", nil, &got)
@@ -321,6 +324,51 @@ func TestSafetyReportsTheLevelAndWhyItIsNotHigher(t *testing.T) {
 	}
 	if got.Scope == "" {
 		t.Error("no scope reported")
+	}
+	// The list and the paragraph are the same facts in two shapes, for a page
+	// and a terminal. The console read a list the route never sent, and showed
+	// "nothing is missing on this host" whatever the host — so the list is
+	// checked against the paragraph, item by item.
+	if got.Reasons == nil {
+		t.Error("no reasons list; the console renders one")
+	}
+	for _, reason := range got.Reasons {
+		if !strings.Contains(got.Explanation, reason) {
+			t.Errorf("a reason is not in the explanation: %q", reason)
+		}
+	}
+	if got.Allow == nil {
+		t.Error("no allow list; the console renders one")
+	}
+	if got.Loopback == nil {
+		t.Error("loopback is not reported; a scope that omits it reads as one that forbids it")
+	}
+}
+
+func TestValidateWarnsAboutACapThisHostWillNotEnforce(t *testing.T) {
+	// A file-size cap is a Unix rlimit. Windows has a job object, which caps
+	// memory, process count and CPU time and nothing else, and before this
+	// the cap was accepted from the file and dropped — in a tool whose
+	// isolation report exists to say what is enforced. The warning names the
+	// field, so the person reading it knows which line of their file it is.
+	h := newHarness(t)
+	doc := h.document("capped") + "safety:\n  file_size_limit: 1MB\n"
+
+	var got ValidateResponse
+	if resp := h.json("POST", "/v1/campaigns/validate", CampaignRequest{Document: doc}, &got); resp.StatusCode != 200 {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var mentioned bool
+	for _, w := range got.Warnings {
+		if strings.Contains(w, "file_size_limit") {
+			mentioned = true
+		}
+	}
+	if runtime.GOOS == "windows" && !mentioned {
+		t.Errorf("a file-size cap on Windows drew no warning: %q", got.Warnings)
+	}
+	if runtime.GOOS != "windows" && mentioned {
+		t.Errorf("a file-size cap is enforced here and was warned about anyway: %q", got.Warnings)
 	}
 }
 
