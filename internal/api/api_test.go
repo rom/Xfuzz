@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -421,6 +422,85 @@ func TestTokenIsRequiredWhenConfigured(t *testing.T) {
 
 	if resp := h.json("GET", "/v1/info", nil, nil); resp.StatusCode != 200 {
 		t.Fatalf("the correct token returned %d", resp.StatusCode)
+	}
+}
+
+func TestTheConsoleIsServedWithoutATokenAndTheAPIIsNot(t *testing.T) {
+	// A browser arrives with no token, and the console is how it asks for
+	// one: a login page that needs a login is not one. The bundle is the same
+	// public code in every build, so nothing is given away; every route under
+	// /v1 still needs the token. Before this, `/` itself answered 401 on a TCP
+	// listener and the console could not be reached from a browser at all.
+	h := newHarness(t)
+	h.server.Token = "s3cret"
+
+	for _, path := range []string{"/", "/index.html", "/campaigns/nightly"} {
+		req, _ := http.NewRequest("GET", h.http.URL+path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			t.Errorf("GET %s without a token returned 401; the console has to load before it can ask for one", path)
+		}
+	}
+	for _, path := range []string{"/v1/info", "/v1/campaigns", "/v1/events"} {
+		req, _ := http.NewRequest("GET", h.http.URL+path, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("GET %s without a token returned %d, want 401", path, resp.StatusCode)
+		}
+	}
+}
+
+func TestACookieCarriesTheToken(t *testing.T) {
+	// EventSource takes a URL and nothing else, so the console cannot send
+	// the header the CLI sends; the token travels as a cookie instead,
+	// percent-encoded because a cookie value may not hold everything a token
+	// may. The cookie is the token: it opens a mutating route as readily as
+	// a read, and a wrong one opens nothing.
+	h := newHarness(t)
+	h.server.Token = "s3c ret/%" // three characters a cookie value may not carry raw
+
+	status := func(method, path, cookie string, body string) int {
+		t.Helper()
+		var rdr io.Reader
+		if body != "" {
+			rdr = strings.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, h.http.URL+path, rdr)
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: TokenCookie, Value: cookie})
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	// What the console writes: encodeURIComponent, which PathEscape matches.
+	good := url.PathEscape(h.server.Token)
+
+	if code := status("GET", "/v1/info", good, ""); code != http.StatusOK {
+		t.Errorf("the token as a cookie returned %d", code)
+	}
+	if code := status("GET", "/v1/info", url.PathEscape("wrong"), ""); code != http.StatusUnauthorized {
+		t.Errorf("a wrong token as a cookie returned %d", code)
+	}
+	if code := status("GET", "/v1/info", h.server.Token, ""); code == http.StatusOK {
+		t.Errorf("the raw token, not percent-encoded, was accepted; the encoding is the contract")
+	}
+	if code := status("POST", "/v1/campaigns/validate", good, `{"document":"","name":"x"}`); code == http.StatusUnauthorized {
+		t.Errorf("a mutating route refused the cookie; it is the token, not a lesser one")
 	}
 }
 

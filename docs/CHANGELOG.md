@@ -420,6 +420,29 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   but no HTTP, so a caller that looked at the value before the error got a
   campaign with nothing to send rather than one that refused to start. Found by
   the self-fuzzing job; the input it found is now a seed.
+- **The console could not be reached from a browser at all.** The daemon
+  required the bearer token on every request, `/` included, so on a TCP
+  listener the console's own files answered 401 before the page could load;
+  and on a Unix socket — the default — no browser can connect in the first
+  place. The guide said `xfuzz info` printed the URL, and it printed the
+  daemon's JSON. Now: the console's files are served to anyone (a login page
+  that needs a login is not one, and the bundle is the same public code in
+  every build); every route under `/v1` still needs the token; a browser that
+  is refused is asked for it once and keeps it in a cookie for the session,
+  `SameSite=Strict`, percent-encoded — a cookie because the event stream is an
+  `EventSource`, which can carry no header, and a token in its URL would sit
+  in every access log; the daemon accepts the cookie as it accepts the header,
+  and prints the console's URL at startup on a TCP listener. `xfuzz` is
+  unchanged.
+- The console's footer read `xfuzzd [object Object]`. `/v1/info` reports the
+  version as a record, the same one `xfuzz version` prints, and the console had
+  typed it as a string. Found by driving the login flow above in a browser.
+- **The guide said the campaign-file editor regenerated samples as you type.**
+  Nothing did: the grammar workbench sampled on a button, and the editor never
+  sampled. The workbench now re-samples after a pause in typing, with each
+  answer checked against the text that asked for it so a slow reply to an old
+  grammar cannot land on a fast one to the new; the guide says which view does
+  what.
 - **Nothing checked the console half of the CLI/console parity claim.**
   ASR-0005 forbids either interface holding a capability the other lacks, and
   its acceptance criterion asks for a parity test "and vice versa";

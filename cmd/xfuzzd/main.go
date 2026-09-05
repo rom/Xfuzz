@@ -64,6 +64,13 @@ func main() {
 	}
 	fmt.Fprintf(os.Stderr, "%s %s listening on %s (data %s)\n",
 		name, version.Get().Version, where, d.DataDir())
+	// Said here rather than left to be worked out: the console is the one
+	// client that cannot reach a Unix socket, and the token is the one thing
+	// it will ask for.
+	if listener.Addr != "" && api.ConsoleBuilt() {
+		fmt.Fprintf(os.Stderr, "%s console at %s (it asks for the token once per browser session)\n",
+			name, consoleURL(listener.Addr))
+	}
 
 	err = api.Serve(ctx, srv, listener)
 

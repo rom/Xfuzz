@@ -2,10 +2,11 @@
 
 import "./style.css";
 
-import { service } from "./api";
+import { ApiError, onUnauthorized, service, setToken } from "./api";
 import { el, replace } from "./dom";
 import { Live } from "./events";
 import { current, href, onChange } from "./router";
+import { panel } from "./views/common";
 import { campaignsView } from "./views/campaigns";
 import { campaignView } from "./views/campaign";
 import { configView } from "./views/config";
@@ -52,13 +53,67 @@ function main(): void {
     // view's subscription would be a subscriber nobody is reading, which is
     // exactly what the daemon's bounded queue is there to notice.
     live.stop();
+    asking = false;
     drawNav(nav, route.view, route.args[0]);
     void draw(main$, route.view, route.args);
   };
 
+  onUnauthorized(() => askForToken(main$));
   onChange(render);
   render();
   void footer(nav);
+}
+
+// askForToken replaces the view with the one question the daemon has.
+//
+// Once per render: a view that was refused made several requests, and each
+// would otherwise put up the same form over the last. And after the view has
+// finished failing: the client calls this before it throws, the view's own
+// catch then draws its error over whatever is in root, and a form drawn now
+// would be gone by the time anyone saw it. A timeout runs after every
+// microtask that rejection sets off, so the form is drawn last.
+let asking = false;
+
+function askForToken(root: HTMLElement): void {
+  if (asking) return;
+  asking = true;
+  setTimeout(() => drawTokenForm(root), 0);
+}
+
+function drawTokenForm(root: HTMLElement): void {
+  const input = el("input", { type: "password", placeholder: "the daemon's --token" });
+  const use = () => {
+    if (!input.value) return;
+    setToken(input.value);
+    // Reload rather than redraw: the nav's own request failed too, and a
+    // fresh start with the cookie in place is the state a browser that had
+    // it all along would be in.
+    location.reload();
+  };
+
+  replace(
+    root,
+    el("header", { class: "view" }, el("h2", null, "This daemon asks for a token")),
+    panel(
+      "",
+      el(
+        "div",
+        { class: "muted" },
+        "It is the value xfuzzd was started with. It is kept in a cookie for this browser session and sent with every request, the event stream included.",
+      ),
+      el(
+        "form",
+        {
+          onsubmit: (e) => {
+            e.preventDefault();
+            use();
+          },
+        },
+        el("div", { class: "row" }, input, el("button", { class: "primary", type: "submit" }, "Use token")),
+      ),
+    ),
+  );
+  input.focus();
 }
 
 async function draw(root: HTMLElement, view: string, args: string[]): Promise<void> {
@@ -126,11 +181,14 @@ async function footer(nav: HTMLElement): Promise<void> {
       el(
         "div",
         { class: "group", title: info.daemon.data_dir },
-        `xfuzzd ${info.daemon.version}`,
+        `xfuzzd ${info.daemon.version.version}`,
       ),
     );
-  } catch {
-    nav.appendChild(el("div", { class: "group err" }, "daemon unreachable"));
+  } catch (e) {
+    // Refused and unreachable are different problems with different fixes,
+    // and the footer is the one place that is drawn whatever the view.
+    const refused = e instanceof ApiError && e.status === 401;
+    nav.appendChild(el("div", { class: "group err" }, refused ? "token required" : "daemon unreachable"));
   }
 }
 

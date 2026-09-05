@@ -195,16 +195,30 @@ prints the seed; put it in the file to replay a whole campaign.
 ## The web console
 
 If your build has it (`make build-console`), the daemon serves a browser
-interface on the same socket, with the same authorization and no privileged path
-of its own. It does everything the CLI does — the two are held at parity by a
-test in each direction, so a route the console cannot reach fails the build —
-and some things it does better: coverage over time, the protocol state graph,
-and editing a campaign file with its samples regenerating as you type. The
-host check `xfuzz doctor` performs is under **Doctor**.
+interface on the same listener as the API, as a client of it with no privileged
+path of its own. It does everything the CLI does — the two are held at parity
+by a test in each direction, so a route the console cannot reach fails the
+build — and some things it does better: coverage over time, the protocol state
+graph, a campaign-file editor whose edits keep comments and key order and whose
+field box completes from the schema, and a grammar workbench that re-samples
+what a grammar produces as you type. The host check `xfuzz doctor` performs is
+under **Doctor**.
+
+A browser cannot open a Unix socket, so the console needs the daemon on a TCP
+listener, and a TCP listener needs a token:
 
 ```console
-$ xfuzz info      # prints the URL
+$ xfuzzd --addr 127.0.0.1:7777 --token TOKEN
+xfuzzd 0.9.0 listening on 127.0.0.1:7777 (data /home/you/.config/xfuzz)
+xfuzzd console at http://127.0.0.1:7777/ (it asks for the token once per browser session)
 ```
+
+Open the URL. The console asks for the token once and keeps it in a cookie for
+that browser session; `xfuzz` keeps sending it as a header (`--token`, or
+`$XFUZZ_TOKEN`). The
+token is any string you choose, and it is the only thing between the network
+and a daemon that runs whatever binary a campaign file names — bind loopback
+unless you mean otherwise.
 
 ## Fuzzing a binary you cannot rebuild
 

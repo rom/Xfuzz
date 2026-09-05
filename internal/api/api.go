@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strconv"
@@ -134,10 +135,6 @@ func (s *Server) Routes() []Route {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Xfuzz-Api", APIVersion)
 
-	if err := s.authorize(r); err != nil {
-		writeError(w, http.StatusUnauthorized, err)
-		return
-	}
 	// A path that does not survive cleaning is redirected rather than acted
 	// on. Without this, "/v1/campaigns/../../etc/passwd" cleans to "/etc/passwd"
 	// and is answered by the console: a client that asked the API a question
@@ -154,8 +151,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The console's own files are served to anyone. A browser arrives with no
+	// token, and the console is how it asks for one: a login page that needs
+	// a login is not one. The bundle is the same public code in every build,
+	// so nothing is given away, and everything under /v1 — which is where
+	// anything worth protecting is — still needs the token below.
 	if s.console != nil && !console.IsAPIPath(r.URL.Path) {
 		s.console.ServeHTTP(w, r)
+		return
+	}
+	if err := s.authorize(r); err != nil {
+		writeError(w, http.StatusUnauthorized, err)
 		return
 	}
 	s.mux.ServeHTTP(w, r)
@@ -166,17 +172,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // than misinterpreting it.
 const APIVersion = "1"
 
-// authorize checks the bearer token when one is configured.
+// TokenCookie is where the console keeps the token.
+//
+// The CLI sends it as a bearer header and always will. A browser cannot: the
+// event stream is an EventSource, which takes a URL and nothing else, and a
+// token in that URL is a token in every access log between the browser and
+// the daemon. A cookie rides on every request the browser makes to this
+// origin, the stream included, and SameSite=Strict — set by the console —
+// keeps a page on another origin from riding on it. The value is
+// percent-encoded, because a cookie may not carry everything an operator may
+// put in a token.
+const TokenCookie = "xfuzz_token"
+
+// authorize checks the token when one is configured, from the header the CLI
+// sends or the cookie the console sets.
 func (s *Server) authorize(r *http.Request) error {
 	if s.Token == "" {
 		return nil
 	}
 	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) || !constantTimeEqual(h[len(prefix):], s.Token) {
-		return errors.New("a valid bearer token is required")
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, prefix) &&
+		constantTimeEqual(h[len(prefix):], s.Token) {
+		return nil
 	}
-	return nil
+	if c, err := r.Cookie(TokenCookie); err == nil {
+		if v, err := url.PathUnescape(c.Value); err == nil && constantTimeEqual(v, s.Token) {
+			return nil
+		}
+	}
+	return errors.New("a valid bearer token is required")
 }
 
 // route registers one method.

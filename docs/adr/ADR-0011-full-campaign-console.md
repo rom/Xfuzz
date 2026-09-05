@@ -43,7 +43,13 @@ Implementation:
   SSE reconnects with no client code at all. Corrected here rather than left to
   contradict it. What would justify revisiting is the console needing to *send*
   on the same channel, which it does not — every action it takes is a POST.
-- Pure API client (ADR-0003), with no privileged path of its own.
+- Pure API client (ADR-0003), with no privileged path of its own. On a TCP
+  listener the token reaches the daemon from the browser as a cookie the
+  console sets once per session, `SameSite=Strict` — `EventSource` can carry
+  no header, and a token in the stream's URL is a token in every access log —
+  and the console's own files are served without it: a login page that needs
+  a login is not one, and the bundle is the same public code in every build.
+  A browser cannot open a Unix socket, so the console exists only on TCP.
 - Because campaigns are file-defined (ADR-0016), the config editor **round-trips
   the campaign file**, preserving comments and key order, and every console
   "launch" is equivalent to committing that file and running the CLI.

@@ -13,6 +13,32 @@ export class ApiError extends Error {
   }
 }
 
+// The token, when the daemon wants one.
+//
+// A browser arrives with nothing, and a daemon on a TCP listener says so with
+// a 401 — at which point the console asks the person for the token the daemon
+// was started with, and keeps it for the session. In a cookie rather than a
+// header, because the event stream is an EventSource, which takes a URL and
+// nothing else; and rather than in that URL, because a token in a URL is a
+// token in every access log on the way. SameSite=Strict, so a page on another
+// origin cannot make this browser spend it.
+export const TOKEN_COOKIE = "xfuzz_token";
+
+let unauthorized: (() => void) | null = null;
+
+/** onUnauthorized names what happens when the daemon refuses a request. */
+export function onUnauthorized(fn: () => void): void {
+  unauthorized = fn;
+}
+
+/** setToken keeps a token for this browser session, on every request from now on. */
+export function setToken(token: string): void {
+  // Percent-encoded: a cookie value may not carry a space, a quote, a
+  // semicolon or a backslash, and a token may. The daemon decodes it.
+  const secure = location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = `${TOKEN_COOKIE}=${encodeURIComponent(token)}; path=/; SameSite=Strict${secure}`;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const init: RequestInit = { method, headers: {} };
   if (body !== undefined) {
@@ -22,6 +48,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const res = await fetch(path, init);
   const text = await res.text();
 
+  if (res.status === 401) unauthorized?.();
   if (!res.ok) {
     // The daemon answers errors as {"error": "..."}, and the message is
     // written for a person. Showing the body when it is not JSON matters more
@@ -175,8 +202,16 @@ export interface AuditEntry {
   detail: string;
 }
 
+// The version is a record, not a string: the daemon reports its build the
+// same way `xfuzz version` does, and the footer had been printing the record.
 export interface Info {
-  daemon: { version: string; pid: number; campaigns: number; data_dir: string; uptime_ms: number };
+  daemon: {
+    version: { version: string; commit: string; date: string; go: string; platform: string; cgo: boolean };
+    pid: number;
+    campaigns: number;
+    data_dir: string;
+    uptime_ms: number;
+  };
 }
 
 export interface Capability {
