@@ -53,14 +53,32 @@ export async function campaignsView(root: HTMLElement): Promise<void> {
 // A stop button on a finished campaign is a button that exists to return an
 // error, and a console that offers it is one whose buttons cannot be trusted.
 function actions(c: CampaignStatus): HTMLElement {
+  const redraw = () => {
+    go("campaigns");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+  };
   const run = async (what: string) => {
     try {
       await service.action(c.name, what);
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     }
-    go("campaigns");
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    redraw();
+  };
+  // Forget is the one action that removes a row, so it asks first — and says
+  // what it does not do, because "forget" reads as "delete" to somebody who
+  // has not read the daemon's docs: the store is kept, and the form above
+  // opens it again by name.
+  const forget = async () => {
+    if (!confirm(`Forget ${c.name}? Its store is kept, and it can be opened again from it.`)) {
+      return;
+    }
+    try {
+      await service.forget(c.name);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : String(e));
+    }
+    redraw();
   };
 
   const buttons: HTMLElement[] = [];
@@ -75,10 +93,13 @@ function actions(c: CampaignStatus): HTMLElement {
       break;
     case "created":
       buttons.push(el("button", { class: "primary", onclick: () => run("start") }, "Start"));
+      buttons.push(el("button", { onclick: forget }, "Forget"));
       break;
     default:
       // Finished, failed: its findings and corpus are still worth reading, and
-      // that is what the name links to.
+      // that is what the name links to. The daemon refuses to forget a campaign
+      // that is running or paused, which is why the button is only here.
+      buttons.push(el("button", { onclick: forget }, "Forget"));
       break;
   }
   return el("div", { class: "row" }, ...buttons);

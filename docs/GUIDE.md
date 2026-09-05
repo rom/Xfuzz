@@ -197,8 +197,10 @@ prints the seed; put it in the file to replay a whole campaign.
 If your build has it (`make build-console`), the daemon serves a browser
 interface on the same socket, with the same authorization and no privileged path
 of its own. It does everything the CLI does — the two are held at parity by a
-test — and some things it does better: coverage over time, the protocol state
-graph, and editing a campaign file with its samples regenerating as you type.
+test in each direction, so a route the console cannot reach fails the build —
+and some things it does better: coverage over time, the protocol state graph,
+and editing a campaign file with its samples regenerating as you type. The
+host check `xfuzz doctor` performs is under **Doctor**.
 
 ```console
 $ xfuzz info      # prints the URL

@@ -431,10 +431,17 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   route, and every request goes through the one client the first two can see.
   It found eight routes out of reach. Two are decisions (`metrics.get` is
   already carried by `campaign.get`; `admin.openapi` describes the API to
-  generated clients and the console is hand-written). Six are gaps, each now
-  named with its reason in the test rather than waiting to be found by somebody
-  looking for the button: `campaign.forget`, `corpus.import`, `corpus.export`,
-  `finding.minimize`, `admin.capabilities` and `admin.schema`.
+  generated clients and the console is hand-written). Six were gaps, and are
+  closed: the console now has **Forget** on a campaign that is not running, a
+  **Minimise** button and a **download** link on a finding's reproducer — the
+  ADR-0011 scope named the download and the hex dump had stood in for it —
+  **import and export** of a corpus in AFL, libFuzzer or raw layout from a
+  directory on the daemon's host, a **Doctor** view that is `xfuzz doctor`'s
+  report from the same route, and the campaign-file **schema** behind the
+  editor's field box, which completes from it and lists every field with its
+  meaning. The corpus reports carried their format as a number, because the
+  type had a `String` and no `MarshalText`; it has one now, so `xfuzz corpus`'s
+  JSON says `afl` where it said `1`.
 - **Two CI jobs capped the whole suite at thirty minutes, and `internal/engine`
   needs more than that on a hosted runner.** The limit had already been raised
   to forty-five in the matrix job and the security job, where the problem was

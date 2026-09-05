@@ -46,6 +46,14 @@ func (f Format) String() string {
 	return fmt.Sprintf("Format(%d)", int(f))
 }
 
+// MarshalText writes the name, so that a report carries "afl" rather than 1.
+// The import and export reports are answered over the API as they are, and a
+// number there is a value the reader has to look up in this file; the name is
+// also what ParseFormat accepts, so a report round-trips into a request.
+func (f Format) MarshalText() ([]byte, error) {
+	return []byte(f.String()), nil
+}
+
 // ParseFormat resolves a format name.
 func ParseFormat(s string) (Format, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {

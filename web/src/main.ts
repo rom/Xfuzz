@@ -10,6 +10,7 @@ import { campaignsView } from "./views/campaigns";
 import { campaignView } from "./views/campaign";
 import { configView } from "./views/config";
 import { corpusView, entryView } from "./views/corpus";
+import { doctorView } from "./views/doctor";
 import { findingView, findingsView } from "./views/findings";
 import { coverageView } from "./views/coverage";
 import { grammarView } from "./views/grammar";
@@ -33,6 +34,9 @@ const TOOL_VIEWS: [string, string][] = [
   ["config", "Campaign file"],
   ["grammar", "Grammar"],
 ];
+
+// About the daemon's host rather than any campaign or file.
+const HOST_VIEWS: [string, string][] = [["doctor", "Doctor"]];
 
 function main(): void {
   const app = document.getElementById("app");
@@ -82,6 +86,8 @@ async function draw(root: HTMLElement, view: string, args: string[]): Promise<vo
       return configView(root);
     case "grammar":
       return grammarView(root);
+    case "doctor":
+      return doctorView(root);
     default:
       return campaignsView(root);
   }
@@ -107,6 +113,8 @@ function drawNav(nav: HTMLElement, view: string, name: string | undefined): void
       : null,
     el("div", { class: "group" }, "author"),
     ...TOOL_VIEWS.map(([t, label]) => link(t, label)),
+    el("div", { class: "group" }, "host"),
+    ...HOST_VIEWS.map(([t, label]) => link(t, label)),
   );
 }
 

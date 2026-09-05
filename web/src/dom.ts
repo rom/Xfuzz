@@ -1,6 +1,6 @@
 // A very small rendering helper, in place of a framework.
 //
-// The console is nine views of tables, numbers and forms. A framework would be
+// The console is ten views of tables, numbers and forms. A framework would be
 // a large runtime dependency and a permanent upgrade obligation inside a
 // systems project, which is the cost ADR-0011 names for having a console at
 // all; this is about eighty lines and does what those views need.
@@ -12,6 +12,8 @@ interface Attrs {
   id?: string;
   title?: string;
   href?: string;
+  download?: string;
+  list?: string;
   type?: string;
   value?: string;
   placeholder?: string;

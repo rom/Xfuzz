@@ -3,6 +3,7 @@ package corpusio
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -358,5 +359,25 @@ func TestParseFormat(t *testing.T) {
 	}
 	if _, err := ParseFormat("honggfuzz"); err == nil {
 		t.Fatal("an unknown format was accepted")
+	}
+}
+
+func TestAReportCarriesItsFormatByName(t *testing.T) {
+	// The import and export reports are answered over the API as they are, so
+	// their JSON is what `xfuzz corpus` prints and what the console reads. A
+	// format written as its number is a value the reader has to look up in
+	// this package; written as its name it is also what ParseFormat accepts.
+	for f, want := range formatNames {
+		b, err := json.Marshal(ImportReport{Format: f})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `"Format":"`+want+`"`) {
+			t.Errorf("format %d marshals as %s, want %q", int(f), b, want)
+		}
+		back, err := ParseFormat(want)
+		if err != nil || back != f {
+			t.Errorf("ParseFormat(%q) = %v, %v; want %v", want, back, err, f)
+		}
 	}
 }

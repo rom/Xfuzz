@@ -68,7 +68,7 @@ export function hex(raw: Uint8Array, limit = 512): string {
 }
 
 /** decodeBase64 turns an API payload into bytes. */
-export function decodeBase64(b64: string): Uint8Array {
+export function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);

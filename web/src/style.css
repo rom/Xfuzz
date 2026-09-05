@@ -158,7 +158,7 @@ tr.clickable:hover { background: color-mix(in srgb, var(--accent) 8%, transparen
   color: var(--muted);
   white-space: nowrap;
 }
-.badge.running { color: var(--ok); border-color: currentColor; }
+.badge.running, .badge.ok { color: var(--ok); border-color: currentColor; }
 .badge.failed, .badge.bad { color: var(--bad); border-color: currentColor; }
 .badge.warn { color: var(--warn); border-color: currentColor; }
 .badge.on { background: var(--accent); color: #fff; border-color: transparent; }

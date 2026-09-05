@@ -92,8 +92,9 @@ export async function findingView(root: HTMLElement, name: string, id: number): 
     return;
   }
 
-  const raw = f.reproducer ? decodeBase64(f.reproducer) : new Uint8Array();
   const judged = el("div");
+  const details = el("div");
+  const draw = (finding: Finding) => replace(details, ...detailPanels(finding));
 
   replace(
     root,
@@ -106,6 +107,24 @@ export async function findingView(root: HTMLElement, name: string, id: number): 
       el("span", { class: "sub" }, el("a", { href: href("findings", name) }, "all findings")),
     ),
     judged,
+    details,
+  );
+  draw(f);
+
+  // Minimisation changes what the panels below show — the sizes, the state,
+  // the reproducer itself — so they are redrawn from a fresh read, while the
+  // judgement form above keeps its own report of what just happened.
+  const refresh = async () => {
+    const fresh = await service.finding(name, id).catch(() => null);
+    if (fresh) draw(fresh);
+  };
+  replace(judged, judgementForm(name, f, refresh));
+}
+
+// detailPanels is everything the machine knows about a finding.
+function detailPanels(f: Finding): (HTMLElement | null)[] {
+  const raw = f.reproducer ? decodeBase64(f.reproducer) : new Uint8Array();
+  return [
     f.detail
       ? panel("what the target said", el("pre", { class: "wrap" }, f.detail))
       : null,
@@ -129,11 +148,19 @@ export async function findingView(root: HTMLElement, name: string, id: number): 
     ),
     panel(
       `reproducer (${bytes(raw.length)})`,
+      // The bytes as a file, because the hex is for reading and a bug report
+      // wants the input itself — and because the hex stops at 512 bytes.
+      raw.length
+        ? el("div", { class: "row" }, el("a", { href: blobURL(raw), download: `finding-${f.id}.bin` }, "download"))
+        : null,
       el("pre", null, raw.length ? hex(raw) : "no reproducer stored"),
     ),
-  );
+  ];
+}
 
-  replace(judged, judgementForm(name, f));
+/** blobURL makes bytes addressable by a link, so the browser can save them. */
+function blobURL(raw: Uint8Array<ArrayBuffer>): string {
+  return URL.createObjectURL(new Blob([raw], { type: "application/octet-stream" }));
 }
 
 // judgementForm records what a person decided.
@@ -141,7 +168,7 @@ export async function findingView(root: HTMLElement, name: string, id: number): 
 // Separate from the triage state above it, and shown as such: the machine says
 // whether it reproduces, and this says what somebody concluded. Re-running
 // triage rewrites the first and never the second.
-function judgementForm(name: string, f: Finding): HTMLElement {
+function judgementForm(name: string, f: Finding, refresh: () => Promise<void>): HTMLElement {
   const select = el("select", null,
     ...DISPOSITIONS.map((d) =>
       el("option", { value: d, selected: (f.disposition ?? "") === d }, d || "pending"),
@@ -149,13 +176,15 @@ function judgementForm(name: string, f: Finding): HTMLElement {
   );
   const notes = el("input", { type: "text", placeholder: "why", value: f.notes ?? "" });
   const status = el("span", { class: "muted" });
+  const failed = (e: unknown) =>
+    replace(status, el("span", { class: "err" }, e instanceof Error ? e.message : String(e)));
 
   const save = async () => {
     try {
       const updated = await service.triage(name, f.id, select.value, notes.value);
       replace(status, `saved — ${updated.disposition || "pending"}`);
     } catch (e) {
-      replace(status, el("span", { class: "err" }, e instanceof Error ? e.message : String(e)));
+      failed(e);
     }
   };
   const replay = async () => {
@@ -164,7 +193,23 @@ function judgementForm(name: string, f: Finding): HTMLElement {
       const r = await service.replay(name, f.id);
       replace(status, `${r.reproduced} of ${r.trials} reproduced — ${r.state}`);
     } catch (e) {
-      replace(status, el("span", { class: "err" }, e instanceof Error ? e.message : String(e)));
+      failed(e);
+    }
+  };
+  // Minimise starts from the input as the engine found it, not from the last
+  // result, so asking again is asking for a better job; the daemon spends the
+  // campaign's own triage.minimize_budget on it.
+  const minimize = async () => {
+    replace(status, "minimising…");
+    try {
+      const r = await service.minimize(name, f.id);
+      replace(
+        status,
+        `${bytes(r.original_size)} to ${bytes(r.minimized_size)} (${percent(r.reduction)} smaller) in ${count(r.runs)} runs — ${r.triage_state}`,
+      );
+      await refresh();
+    } catch (e) {
+      failed(e);
     }
   };
 
@@ -177,6 +222,7 @@ function judgementForm(name: string, f: Finding): HTMLElement {
       notes,
       el("button", { class: "primary", onclick: save }, "Save"),
       el("button", { onclick: replay }, "Replay"),
+      el("button", { onclick: minimize }, "Minimise"),
       status,
     ),
   );

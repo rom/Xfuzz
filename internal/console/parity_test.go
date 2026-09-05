@@ -189,30 +189,19 @@ func reaches(c call, r api.Route) bool {
 }
 
 func TestEveryAPIRouteIsReachableFromTheConsole(t *testing.T) {
-	// Routes the console cannot reach. Two are decisions; the rest are gaps —
-	// capabilities the CLI has and the console does not, which is the thing
-	// ASR-0005 forbids. They are written down here rather than left to be
-	// discovered by somebody looking for the button.
+	// Routes the console does not call, each by decision. When this test was
+	// first run it also found six gaps — forget, corpus import and export,
+	// minimise, the doctor's capabilities and the campaign-file schema — which
+	// were closed in the change after; a route lands here only with the reason
+	// it is not a gap, and a gap is closed rather than listed.
 	//
 	// The list cannot rot into a rubber stamp: a route named here that becomes
 	// reachable fails the test, and so does a name that is not a route.
 	unreached := map[string]string{
-		"metrics.get": "decision: campaign.get already carries the metrics block, and a " +
-			"second request for the same numbers is one more thing to keep in step",
-		"admin.openapi": "decision: the OpenAPI document describes this API to generated " +
-			"clients, and the console is not one — it is written by hand against these routes",
-
-		"campaign.forget": "gap: a campaign can be created from the browser and only " +
-			"forgotten from a terminal (xfuzz forget)",
-		"corpus.import": "gap: AFL and libFuzzer corpus interchange is CLI-only (xfuzz corpus)",
-		"corpus.export": "gap: as corpus.import",
-		"finding.minimize": "gap: the findings view displays minimized_size and has no way to " +
-			"ask for one; xfuzz minimize does",
-		"admin.capabilities": "gap: there is no doctor view, so the console never says what " +
-			"this host cannot do",
-		"admin.schema": "gap: the campaign-file schema is served and unread. The config editor " +
-			"is deliberately not a generated form (web/src/views/config.ts), which is a reason " +
-			"not to build a form — not a reason to validate without the schema",
+		"metrics.get": "campaign.get already carries the metrics block, and a second " +
+			"request for the same numbers is one more thing to keep in step",
+		"admin.openapi": "the OpenAPI document describes this API to generated clients, " +
+			"and the console is not one — it is written by hand against these routes",
 	}
 
 	routes := apiRoutes(t)

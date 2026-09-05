@@ -179,6 +179,62 @@ export interface Info {
   daemon: { version: string; pid: number; campaigns: number; data_dir: string; uptime_ms: number };
 }
 
+export interface Capability {
+  name: string;
+  available: boolean;
+  detail?: string;
+}
+
+/** Capabilities is what `xfuzz doctor` prints: the host the daemon runs on. */
+export interface Capabilities {
+  platform: string;
+  version: { version: string; commit: string; date: string; go: string; platform: string; cgo: boolean };
+  isolation: string;
+  explanation: string;
+  capabilities: Capability[];
+  notes?: string[];
+}
+
+// The corpus reports are the daemon's own structs, field names and all: the
+// CLI prints them as they come, and the console reads the same document.
+export interface ImportReport {
+  Format: string;
+  Dir: string;
+  Imported: number;
+  Duplicate: number;
+  Skipped: number;
+  Reasons?: Record<string, number>;
+  Bytes: number;
+}
+
+export interface ExportReport {
+  Format: string;
+  Dir: string;
+  Written: number;
+  Bytes: number;
+  Skipped: number;
+}
+
+export interface MinimizeReport {
+  original_size: number;
+  minimized_size: number;
+  reduction: number;
+  runs: number;
+  digest: string;
+  triage_state: string;
+}
+
+/** SchemaNode is the part of a JSON Schema the console reads: names and words. */
+export interface SchemaNode {
+  type?: string;
+  description?: string;
+  properties?: Record<string, SchemaNode>;
+  items?: SchemaNode;
+  required?: string[];
+}
+
+export const CORPUS_FORMATS = ["auto", "afl", "libfuzzer", "raw"];
+
 export const service = {
   campaigns: () => api.get<{ campaigns: CampaignStatus[] }>("/v1/campaigns"),
   campaign: (name: string) => api.get<CampaignStatus>(`/v1/campaigns/${enc(name)}`),
@@ -204,8 +260,22 @@ export const service = {
     api.post<{ trials: number; reproduced: number; rate: number; state: string }>(
       `/v1/campaigns/${enc(name)}/findings/${id}/replay`,
     ),
+  minimize: (name: string, id: number) =>
+    api.post<MinimizeReport>(`/v1/campaigns/${enc(name)}/findings/${id}/minimize`),
   corpus: (name: string, limit = 200) =>
     api.get<{ entries: CorpusEntry[] }>(`/v1/campaigns/${enc(name)}/corpus?limit=${limit}`),
+  // dir is a directory on the daemon's host, not the browser's: the daemon is
+  // the process that holds the store, and a corpus is a directory of files
+  // beside it rather than something a browser can hand over.
+  importCorpus: (name: string, dir: string, format: string) =>
+    api.post<ImportReport>(`/v1/campaigns/${enc(name)}/corpus/import`, { dir, format }),
+  exportCorpus: (name: string, dir: string, format: string, favouredOnly: boolean, overwrite: boolean) =>
+    api.post<ExportReport>(`/v1/campaigns/${enc(name)}/corpus/export`, {
+      dir,
+      format,
+      favoured_only: favouredOnly,
+      overwrite,
+    }),
   corpusEntry: (name: string, digest: string) =>
     api.get<CorpusEntry & { payload: string; tree?: string }>(
       `/v1/campaigns/${enc(name)}/corpus/${digest}`,
@@ -214,6 +284,11 @@ export const service = {
   safety: (name: string) => api.get<Safety>(`/v1/campaigns/${enc(name)}/safety`),
   audit: () => api.get<{ entries: AuditEntry[]; verified: boolean }>("/v1/audit"),
   info: () => api.get<Info>("/v1/info"),
+  capabilities: () => api.get<Capabilities>("/v1/capabilities"),
+  schema: () => api.get<SchemaNode>("/v1/schema"),
+  // Forget releases the daemon's supervision of a campaign and nothing else:
+  // the store stays, and load() opens it again.
+  forget: (name: string) => api.del<{ forgotten: string }>(`/v1/campaigns/${enc(name)}`),
   load: (name: string, store: string) =>
     api.post<CampaignStatus>("/v1/campaigns/load", { name, store }),
   edit: (document: string, set: Record<string, unknown>, unset: string[], name?: string) =>

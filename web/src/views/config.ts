@@ -8,8 +8,8 @@
 // Which is also why this is not a generated form over the schema. A form would
 // hide the format the campaign is written in, and the format is the interface.
 
-import { service } from "../api";
-import { el, replace } from "../dom";
+import { service, type SchemaNode } from "../api";
+import { el, replace, table } from "../dom";
 import { badge, error, panel } from "./common";
 
 const STARTER = `# A campaign. Every field is optional except the target.
@@ -37,8 +37,48 @@ export function configView(root: HTMLElement): void {
   const status = el("div", { class: "row" });
   const explained = el("div");
 
-  const setField = el("input", { type: "text", placeholder: "workers.count" });
+  // The schema is not a form here (see above), but it is what says which
+  // fields exist, so it is what the field box completes from and what the
+  // reference below is drawn from — the same document `xfuzz schema` prints.
+  const known = el("datalist", { id: "campaign-fields" });
+  const reference = el("div");
+  const setField = el("input", { type: "text", placeholder: "workers.count", list: "campaign-fields" });
   const setValue = el("input", { type: "text", placeholder: "4" });
+
+  let fields: Field[] = [];
+  const showFields = () => {
+    if (reference.childElementCount) {
+      replace(reference);
+      return;
+    }
+    replace(
+      reference,
+      panel(
+        "fields — click one to set it",
+        table(
+          ["Field", "Type", "Meaning"],
+          fields,
+          (f) => [el("span", { class: "mono" }, f.path), el("span", { class: "muted" }, f.type), f.description],
+          (f) => {
+            setField.value = f.path;
+            setValue.focus();
+          },
+        ),
+      ),
+    );
+  };
+  // The editor works without the schema: a daemon that cannot serve it still
+  // validates, explains and launches, so its absence costs the completions
+  // and nothing else.
+  void service
+    .schema()
+    .then((schema) => {
+      fields = fieldsOf(schema);
+      replace(known, ...fields.map((f) => el("option", { value: f.path })));
+    })
+    .catch(() => {
+      fields = [];
+    });
 
   const say = (...children: Parameters<typeof replace> extends [unknown, ...infer R] ? R : never) =>
     replace(status, ...children);
@@ -107,13 +147,33 @@ export function configView(root: HTMLElement): void {
         { class: "row" },
         el("span", { class: "muted" }, "set field"),
         setField,
+        known,
         setValue,
         el("button", { onclick: applyEdit }, "Apply"),
+        el("button", { onclick: showFields }, "Fields"),
       ),
       status,
     ),
+    reference,
     explained,
   );
+}
+
+interface Field {
+  path: string;
+  type: string;
+  description: string;
+}
+
+/** fieldsOf walks a schema into the dotted paths the edit form takes. */
+function fieldsOf(node: SchemaNode, prefix = ""): Field[] {
+  const out: Field[] = [];
+  for (const [key, child] of Object.entries(node.properties ?? {})) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    out.push({ path, type: child.type ?? "object", description: child.description ?? "" });
+    if (child.properties) out.push(...fieldsOf(child, path));
+  }
+  return out;
 }
 
 /** coerce reads a typed value out of a text box, so 4 stays a number. */
