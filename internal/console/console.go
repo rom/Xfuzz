@@ -35,6 +35,15 @@ func Handler() http.Handler {
 	if err != nil {
 		return notBuilt(err)
 	}
+	return handlerFor(assets)
+}
+
+// handlerFor serves a set of console files.
+//
+// Separate from Handler so the serving rules — the API refusal, the deep-link
+// fallback, the cache headers — can be tested against any file set in every
+// build, rather than only in one that carries the real bundle.
+func handlerFor(assets fs.FS) http.Handler {
 	files := http.FileServer(http.FS(assets))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

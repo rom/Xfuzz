@@ -420,6 +420,31 @@ solver left 5000 executions taking 7ms against a 6ms baseline.
   but no HTTP, so a caller that looked at the value before the error got a
   campaign with nothing to send rather than one that refused to start. Found by
   the self-fuzzing job; the input it found is now a seed.
+- **Four state refusals were answered as server failures.** Starting a
+  campaign that was already running, resuming one that was not paused,
+  replaying or minimising a finding that does not exist, and minimising an
+  input that does not fail all returned 500 — the daemon's state refusal and
+  the store's not-found were plain errors the API could not name, so they fell
+  through to the status for "the daemon broke". Each is a sentinel now
+  (`daemon.ErrAlreadyRunning`, `daemon.ErrNotPaused`, `triage.ErrDoesNotFail`,
+  and the store's existing `ErrNotFound`), and the API answers 409 for a state
+  that does not allow the action and 404 for a finding it does not hold, which
+  is what `xfuzz` and the console already read `pause` and `stop` as saying.
+  Found by the new tests below.
+- **The CLI, the HTTP client and the daemon's routes are tested end to end.**
+  `cmd/xfuzz` had been covered only by its parity tests (3%): a harness now
+  runs every command — init through triage, the corpus, the grammar workbench,
+  capture, the doctor — against a real daemon on a loopback listener with the
+  token the CLI sends, and reads what each prints. `internal/client` (22%) is
+  tested against a fake daemon for the token, the body, the error shapes, the
+  event stream and its framing, the socket transport, and what auto-start does
+  when there is nothing to start. The console's serving rules — the deep-link
+  fallback, the cache headers, the API refusal — are tested against a stand-in
+  bundle in every build, not only the one that carries the real one. On Linux,
+  the seccomp program is read back as a program, shared memory, process groups
+  and a real pseudo-terminal are exercised, and the safety layer's peer and
+  terminal spawns run real processes. The starter file `xfuzz init` writes is
+  validated by the daemon, with a target and its seeds directory in place.
 - **Two of a campaign's limits were accepted on Windows and silently not
   enforced.** `safety.cpu_limit` and `safety.file_size_limit` went into the
   platform's limit struct, the job object set only memory and process count,

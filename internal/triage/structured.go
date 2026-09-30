@@ -60,7 +60,7 @@ func MinimizeStructured(ctx context.Context, r Runner, root *ir.Node, opts Minim
 		}
 		rep.Runs++
 		if !base.Crashed() {
-			return nil, nil, rep, fmt.Errorf("triage: the input to minimise does not fail")
+			return nil, nil, rep, ErrDoesNotFail
 		}
 		want := Classify(base)
 		preserve = func(o Outcome) bool { return o.Crashed() && Classify(o).Equal(want) }

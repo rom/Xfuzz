@@ -26,6 +26,8 @@ import (
 
 	"github.com/rom/Xfuzz/internal/console"
 	"github.com/rom/Xfuzz/internal/daemon"
+	"github.com/rom/Xfuzz/internal/store"
+	"github.com/rom/Xfuzz/internal/triage"
 )
 
 // Service groups routes by responsibility, matching ARCHITECTURE section 9.
@@ -250,11 +252,19 @@ func statusFor(err error) int {
 	switch {
 	case errors.Is(err, daemon.ErrNoCampaign):
 		return http.StatusNotFound
-	case errors.Is(err, daemon.ErrNotRunning):
+	case errors.Is(err, store.ErrNotFound):
+		// A finding, or the reproducer it names, that the store does not hold.
+		return http.StatusNotFound
+	case errors.Is(err, daemon.ErrNotRunning), errors.Is(err, daemon.ErrAlreadyRunning),
+		errors.Is(err, daemon.ErrNotPaused):
 		return http.StatusConflict
 	case errors.Is(err, daemon.ErrNoTriage):
 		// The campaign turned triage off, so the capability is absent rather
 		// than the request being wrong.
+		return http.StatusConflict
+	case errors.Is(err, triage.ErrDoesNotFail):
+		// The finding's own state: an input that does not fail cannot be
+		// minimised, and that is a fact about the finding, not the daemon.
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

@@ -42,6 +42,16 @@ const (
 // ErrNotRunning is returned for an operation that needs a running campaign.
 var ErrNotRunning = errors.New("daemon: the campaign is not running")
 
+// ErrAlreadyRunning and ErrNotPaused are the other two state refusals. They
+// are sentinels for the same reason ErrNotRunning is: the API answers a state
+// that does not allow an action with 409, and it can only recognise a state
+// refusal it can name — before these were named, starting a campaign twice
+// was reported as a server failure.
+var (
+	ErrAlreadyRunning = errors.New("daemon: the campaign is already running")
+	ErrNotPaused      = errors.New("daemon: the campaign is not paused")
+)
+
 // Campaign is one supervised fuzzing run.
 type Campaign struct {
 	// Config is the resolved campaign file. It is what ran, and it is recorded
@@ -318,7 +328,7 @@ func (c *Campaign) Start(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state == StateRunning {
 		c.mu.Unlock()
-		return errors.New("daemon: the campaign is already running")
+		return ErrAlreadyRunning
 	}
 	c.state = StateRunning
 	c.started = time.Now()
@@ -569,7 +579,7 @@ func (c *Campaign) Resume(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state != StatePaused {
 		c.mu.Unlock()
-		return errors.New("daemon: the campaign is not paused")
+		return ErrNotPaused
 	}
 	c.state = StateRunning
 	c.mu.Unlock()

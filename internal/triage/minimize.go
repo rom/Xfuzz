@@ -2,6 +2,7 @@ package triage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -27,6 +28,12 @@ type MinimizeOptions struct {
 
 // DefaultMaxRuns is the execution budget for one minimisation.
 const DefaultMaxRuns = 4000
+
+// ErrDoesNotFail is returned when the input a minimiser was given does not
+// fail to begin with. There is nothing to preserve, and a smaller input for no
+// bug is worse than none. It is a sentinel so the API can answer it as a state
+// of the finding rather than as a failure of the daemon.
+var ErrDoesNotFail = errors.New("triage: the input to minimise does not fail")
 
 // MinimizeReport says what minimisation achieved.
 type MinimizeReport struct {
@@ -90,7 +97,7 @@ func Minimize(ctx context.Context, r Runner, input []byte, opts MinimizeOptions)
 		}
 		rep.Runs++
 		if !base.Crashed() {
-			return nil, rep, fmt.Errorf("triage: the input to minimise does not fail")
+			return nil, rep, ErrDoesNotFail
 		}
 		want := Classify(base)
 		preserve = func(o Outcome) bool { return o.Crashed() && Classify(o).Equal(want) }
@@ -234,7 +241,7 @@ func MinimizeSequence(ctx context.Context, run func(context.Context, [][]byte) (
 		}
 		rep.Runs++
 		if !base.Crashed() {
-			return nil, rep, fmt.Errorf("triage: the session to minimise does not fail")
+			return nil, rep, fmt.Errorf("%w (the session)", ErrDoesNotFail)
 		}
 		want := Classify(base)
 		preserve = func(o Outcome) bool { return o.Crashed() && Classify(o).Equal(want) }
