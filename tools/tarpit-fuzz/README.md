@@ -21,7 +21,7 @@ pin the port if you bound the listener somewhere other than its IANA default.
 - **Dumb**: random bytes, seeded flips, truncations, oversized length
   prefixes, well-known boundary integers — the operators that find a parser
   that panics on anything.
-- **Smart**: 61 protocol-aware generators that build a frame the parser will
+- **Smart**: 322 protocol-aware generators that build a frame the parser will
   recognise past its first check, then push a structural field past its
   bound. DNS with a label that overruns 63 bytes. Modbus with a MBAP length
   that claims more than the payload holds. MQTT with a varint that never
@@ -147,9 +147,8 @@ An exit code of 1 means at least one finding was filed.
 
 ## Smart-generator coverage
 
-61 handlers currently have a protocol-aware generator (the "smart yes"
-column in `tarpit-fuzz --list`). The rest fall back to dumb fuzzing against
-their seed. Adding a new generator is three steps:
+Every handler has a protocol-aware generator.
+Adding a new or replacement generator is three steps:
 
 1. Write it in `protocols/smart/`: `func X(rng *rand.Rand) []byte`.
 2. Reference it in `protocols/registry.go`: set `Smart: smart.X` on the row.
