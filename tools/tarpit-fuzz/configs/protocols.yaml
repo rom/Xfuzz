@@ -1,0 +1,408 @@
+# tarpit-fuzz protocol configuration.
+#
+# Every one of the honeypot's 322 handlers is listed below, grouped by
+# transport. Each row has:
+#   - name:      the handler name (as tarpit-honeypot list-handlers prints)
+#   - transport: tcp or udp (both when the handler serves each)
+#   - enabled:   true to fuzz, false to skip
+#   - port:      optional override; the registry's default is used when absent
+#
+# Toggles are the point: set enabled: false on protocols you do not deploy, on
+# anything the host cannot reach, or on the ones a soak run has already
+# cleared and you want to re-run only the rest. The CLI flags --enable and
+# --disable take the same qualified name ("udp:dns"), and win against this
+# file.
+#
+# The handler list tracks tarpit-honeypot's internal/config/load.go; a drift
+# between the two is a regression this repo's CI flags.
+
+target: 127.0.0.1
+liveness: http://127.0.0.1:8088/healthz
+iterations: 256
+rounds: 1
+concurrency: 8
+timeout: 800ms
+kinds: [dumb, smart]
+
+protocols:
+  # --- Shell and remote-login ---
+  - { name: ssh,               transport: tcp, enabled: true }
+  - { name: ssh_interactive,   transport: tcp, enabled: true }
+  - { name: telnet,            transport: tcp, enabled: true }
+  - { name: rlogin,            transport: tcp, enabled: true }
+  - { name: rsh,               transport: tcp, enabled: true }
+  - { name: rexec,             transport: tcp, enabled: true }
+  - { name: pcanywhere,        transport: tcp, enabled: true }
+  - { name: radmin,            transport: tcp, enabled: true }
+  - { name: dameware,          transport: tcp, enabled: true }
+  - { name: pcoip,             transport: tcp, enabled: true }
+  - { name: spice,             transport: tcp, enabled: true }
+  - { name: lantronix,         transport: tcp, enabled: true }
+  - { name: tn3270,            transport: tcp, enabled: true }
+  - { name: ard,               transport: tcp, enabled: true }
+
+  # --- Web / HTTP family ---
+  - { name: http,              transport: tcp, enabled: true }
+  - { name: https,             transport: tcp, enabled: true }
+  - { name: websocket,         transport: tcp, enabled: true }
+  - { name: grpc,              transport: tcp, enabled: true }
+  - { name: ssrf_canary,       transport: tcp, enabled: true }
+  - { name: rtsp,              transport: tcp, enabled: true }
+  - { name: sip_tcp,           transport: tcp, enabled: true }
+  - { name: xmpp,              transport: tcp, enabled: true }
+  - { name: irc,               transport: tcp, enabled: true }
+  - { name: nntp,              transport: tcp, enabled: true }
+  - { name: finger,            transport: tcp, enabled: true }
+  - { name: gopher,            transport: tcp, enabled: true }
+  - { name: stomp,             transport: tcp, enabled: true }
+  - { name: mbus,              transport: tcp, enabled: true }
+
+  # --- Mail ---
+  - { name: smtp_recv,         transport: tcp, enabled: true }
+  - { name: pop3,              transport: tcp, enabled: true }
+  - { name: imap,              transport: tcp, enabled: true }
+  - { name: smtps,             transport: tcp, enabled: true }
+  - { name: pop3s,             transport: tcp, enabled: true }
+  - { name: imaps,             transport: tcp, enabled: true }
+
+  # --- File transfer and printing ---
+  - { name: ftp,               transport: tcp, enabled: true }
+  - { name: ftps,              transport: tcp, enabled: true }
+  - { name: ftp_files,         transport: tcp, enabled: true }
+  - { name: rsync,             transport: tcp, enabled: true }
+  - { name: lpd,               transport: tcp, enabled: true }
+  - { name: pjl,               transport: tcp, enabled: true }
+  - { name: ipp,               transport: tcp, enabled: true }
+  - { name: afp,               transport: tcp, enabled: true }
+  - { name: nbd,               transport: tcp, enabled: true }
+  - { name: git,               transport: tcp, enabled: true }
+  - { name: svn,               transport: tcp, enabled: true }
+
+  # --- Windows / Active Directory ---
+  - { name: smb,               transport: tcp, enabled: true }
+  - { name: rdp,               transport: tcp, enabled: true }
+  - { name: winrm,             transport: tcp, enabled: true }
+  - { name: dcerpc,            transport: tcp, enabled: true }
+  - { name: ldap,              transport: tcp, enabled: true }
+  - { name: ldaps,             transport: tcp, enabled: true }
+  - { name: kerberos,          transport: tcp, enabled: true }
+
+  # --- Databases ---
+  - { name: mysql,             transport: tcp, enabled: true }
+  - { name: postgres,          transport: tcp, enabled: true }
+  - { name: mssql,             transport: tcp, enabled: true }
+  - { name: oracle_tns,        transport: tcp, enabled: true }
+  - { name: redis,             transport: tcp, enabled: true }
+  - { name: memcached,         transport: tcp, enabled: true }
+  - { name: mongodb,           transport: tcp, enabled: true }
+  - { name: elasticsearch,     transport: tcp, enabled: true }
+  - { name: neo4j,             transport: tcp, enabled: true }
+  - { name: rethinkdb,         transport: tcp, enabled: true }
+  - { name: couchdb,           transport: tcp, enabled: true }
+  - { name: influxdb,          transport: tcp, enabled: true }
+  - { name: cassandra,         transport: tcp, enabled: true }
+  - { name: clickhouse,        transport: tcp, enabled: true }
+  - { name: clickhouses,       transport: tcp, enabled: true }
+
+  # --- DNS (TCP) ---
+  - { name: dns,               transport: tcp, enabled: true }
+
+  # --- OT / ICS / SCADA (TCP) ---
+  - { name: modbus,            transport: tcp, enabled: true }
+  - { name: modbus_security,   transport: tcp, enabled: true }
+  - { name: modbuss,           transport: tcp, enabled: true }
+  - { name: s7,                transport: tcp, enabled: true }
+  - { name: s7comm_plus,       transport: tcp, enabled: true }
+  - { name: iec104,            transport: tcp, enabled: true }
+  - { name: iccp_secure,       transport: tcp, enabled: true }
+  - { name: dnp3,              transport: tcp, enabled: true }
+  - { name: ge_srtp,           transport: tcp, enabled: true }
+  - { name: codesys,           transport: tcp, enabled: true }
+  - { name: c37118,            transport: tcp, enabled: true }
+  - { name: osdp,              transport: tcp, enabled: true }
+  - { name: focas,             transport: tcp, enabled: true }
+  - { name: proconos,          transport: tcp, enabled: true }
+  - { name: osisoft_pi,        transport: tcp, enabled: true }
+  - { name: proficy_historian, transport: tcp, enabled: true }
+  - { name: canary_historian,  transport: tcp, enabled: true }
+  - { name: aspen_ip21,        transport: tcp, enabled: true }
+  - { name: atg,               transport: tcp, enabled: true }
+  - { name: fox,               transport: tcp, enabled: true }
+  - { name: hartip,            transport: tcp, enabled: true }
+  - { name: pcworx,            transport: tcp, enabled: true }
+  - { name: mms,               transport: tcp, enabled: true }
+  - { name: opcua,             transport: tcp, enabled: true }
+  - { name: ethernetip,        transport: tcp, enabled: true }
+  - { name: melsec,            transport: tcp, enabled: true }
+  - { name: fins_tcp,          transport: tcp, enabled: true }
+  - { name: secs_gem,          transport: tcp, enabled: true }
+  - { name: pcom,              transport: tcp, enabled: true }
+  - { name: roc_plus,          transport: tcp, enabled: true }
+  - { name: crimson,           transport: tcp, enabled: true }
+  - { name: danfoss_aksm,      transport: tcp, enabled: true }
+  - { name: danfoss_aksms,     transport: tcp, enabled: true }
+
+  # --- Messaging / queuing ---
+  - { name: mqtt,              transport: tcp, enabled: true }
+  - { name: mqtts,             transport: tcp, enabled: true }
+  - { name: amqp,              transport: tcp, enabled: true }
+  - { name: ibmmq,             transport: tcp, enabled: true }
+  - { name: mq,                transport: tcp, enabled: true }
+  - { name: websphere_mq,      transport: tcp, enabled: true }
+  - { name: nats,              transport: tcp, enabled: true }
+  - { name: kafka,             transport: tcp, enabled: true }
+  - { name: zookeeper,         transport: tcp, enabled: true }
+  - { name: beanstalkd,        transport: tcp, enabled: true }
+
+  # --- Logging / telemetry (TCP) ---
+  - { name: syslog_tcp,        transport: tcp, enabled: true }
+
+  # --- Java / enterprise ---
+  - { name: jdwp,              transport: tcp, enabled: true }
+  - { name: rmi,               transport: tcp, enabled: true }
+  - { name: jupyter,           transport: tcp, enabled: true }
+  - { name: jupyters,          transport: tcp, enabled: true }
+  - { name: selenium,          transport: tcp, enabled: true }
+
+  # --- Cloud-native / DevOps ---
+  - { name: kubernetes_api,    transport: tcp, enabled: true }
+  - { name: kubelet,           transport: tcp, enabled: true }
+  - { name: kubelets,          transport: tcp, enabled: true }
+  - { name: etcd,              transport: tcp, enabled: true }
+  - { name: vault,             transport: tcp, enabled: true }
+  - { name: consul,            transport: tcp, enabled: true }
+  - { name: consuls,           transport: tcp, enabled: true }
+  - { name: nomad,             transport: tcp, enabled: true }
+  - { name: minio,             transport: tcp, enabled: true }
+  - { name: minios,            transport: tcp, enabled: true }
+  - { name: cloud_metadata,    transport: tcp, enabled: true }
+  - { name: docker_registry,   transport: tcp, enabled: true }
+  - { name: dockerapi,         transport: tcp, enabled: true }
+
+  # --- AI / LLM / MCP ---
+  - { name: ollama,            transport: tcp, enabled: true }
+  - { name: ollamas,           transport: tcp, enabled: true }
+  - { name: llm_openai,        transport: tcp, enabled: true }
+  - { name: llm_openais,       transport: tcp, enabled: true }
+  - { name: mcp,               transport: tcp, enabled: true }
+  - { name: mcps,              transport: tcp, enabled: true }
+  - { name: agent,             transport: tcp, enabled: true }
+
+  # --- Classic small services ---
+  - { name: echo,              transport: tcp, enabled: true }
+  - { name: discard,           transport: tcp, enabled: true }
+  - { name: daytime,           transport: tcp, enabled: true }
+  - { name: qotd,              transport: tcp, enabled: true }
+  - { name: chargen,           transport: tcp, enabled: true }
+  - { name: time,              transport: tcp, enabled: true }
+  - { name: ident,             transport: tcp, enabled: true }
+
+  # --- Metering and scientific ---
+  - { name: dlms,              transport: tcp, enabled: true }
+  - { name: ads,               transport: tcp, enabled: true }
+  - { name: nts,               transport: tcp, enabled: true }
+
+  # --- Remote-access / VDI ---
+  - { name: vnc,               transport: tcp, enabled: true }
+  - { name: teamviewer,        transport: tcp, enabled: true }
+  - { name: anydesk,           transport: tcp, enabled: true }
+  - { name: openvpn,           transport: tcp, enabled: true }
+  - { name: citrix_ica,        transport: tcp, enabled: true }
+  - { name: citrix_gateway,    transport: tcp, enabled: true }
+  - { name: vmware_authd,      transport: tcp, enabled: true }
+  - { name: x11,               transport: tcp, enabled: true }
+  - { name: horizon,           transport: tcp, enabled: true }
+  - { name: nx,                transport: tcp, enabled: true }
+  - { name: redfish,           transport: tcp, enabled: true }
+
+  # --- Device management ---
+  - { name: tr069,             transport: tcp, enabled: true }
+  - { name: upnp,              transport: tcp, enabled: true }
+  - { name: tr369,             transport: tcp, enabled: true }
+  - { name: intel_amt,         transport: tcp, enabled: true }
+  - { name: ilo,               transport: tcp, enabled: true }
+  - { name: idrac,             transport: tcp, enabled: true }
+  - { name: esxi,              transport: tcp, enabled: true }
+  - { name: fortinet,          transport: tcp, enabled: true }
+  - { name: pulse,             transport: tcp, enabled: true }
+  - { name: moxa_mgmt,         transport: tcp, enabled: true }
+
+  # --- Voice / H.323 / SIP ---
+  - { name: sccp,              transport: tcp, enabled: true }
+  - { name: h323,              transport: tcp, enabled: true }
+  - { name: asterisk_ami,      transport: tcp, enabled: true }
+
+  # --- Fake C2 ---
+  - { name: c2_emulator,       transport: tcp, enabled: true }
+
+  # --- Classic Unix / RPC ---
+  - { name: rpcbind,           transport: tcp, enabled: true }
+  - { name: nfs,               transport: tcp, enabled: true }
+  - { name: pptp,              transport: tcp, enabled: true }
+  - { name: adb,               transport: tcp, enabled: true }
+  - { name: ajp13,             transport: tcp, enabled: true }
+  - { name: epmd,              transport: tcp, enabled: true }
+  - { name: tacacs,            transport: tcp, enabled: true }
+
+  # --- BACnet Secure Connect ---
+  - { name: bacnet_sc,         transport: tcp, enabled: true }
+  - { name: bacnet_scs,        transport: tcp, enabled: true }
+
+  # --- Healthcare ---
+  - { name: hl7,               transport: tcp, enabled: true }
+  - { name: hl7s,              transport: tcp, enabled: true }
+  - { name: dicom,             transport: tcp, enabled: true }
+  - { name: dicoms,            transport: tcp, enabled: true }
+  - { name: astm,              transport: tcp, enabled: true }
+  - { name: poct1,             transport: tcp, enabled: true }
+  - { name: fhir,              transport: tcp, enabled: true }
+  - { name: fhirs,             transport: tcp, enabled: true }
+
+  # --- Building automation ---
+  - { name: niagara_platform,  transport: tcp, enabled: true }
+  - { name: obix,              transport: tcp, enabled: true }
+  - { name: enocean,           transport: tcp, enabled: true }
+  - { name: dixell,            transport: tcp, enabled: true }
+  - { name: carel,             transport: tcp, enabled: true }
+  - { name: trane,             transport: tcp, enabled: true }
+  - { name: resideo,           transport: tcp, enabled: true }
+  - { name: ocpp,              transport: tcp, enabled: true }
+
+  # --- BGP / proxy ---
+  - { name: bgp,               transport: tcp, enabled: true }
+  - { name: socks,             transport: tcp, enabled: true }
+
+  # --- Fall-throughs ---
+  - { name: raw,               transport: tcp, enabled: true }
+  - { name: auto,              transport: tcp, enabled: true }
+  - { name: scripted,          transport: tcp, enabled: false } # off by default — needs a scripted spec
+  - { name: lua,               transport: tcp, enabled: false } # off by default — needs a script path
+  - { name: tls_intercept,     transport: tcp, enabled: true }
+
+  # --- UDP: naming / discovery ---
+  - { name: dns,               transport: udp, enabled: true }
+  - { name: mdns,              transport: udp, enabled: true }
+  - { name: llmnr,             transport: udp, enabled: true }
+  - { name: nbns,              transport: udp, enabled: true }
+  - { name: ssdp,              transport: udp, enabled: true }
+  - { name: cldap,             transport: udp, enabled: true }
+  - { name: netbios_dgram,     transport: udp, enabled: true }
+
+  # --- UDP: monitoring / time ---
+  - { name: snmp,              transport: udp, enabled: true }
+  - { name: snmptrap,          transport: udp, enabled: true }
+  - { name: ntp,               transport: udp, enabled: true }
+  - { name: chronyd,           transport: udp, enabled: true }
+  - { name: syslog_udp,        transport: udp, enabled: true }
+  - { name: tftp,              transport: udp, enabled: true }
+  - { name: radius,            transport: udp, enabled: true }
+  - { name: radius_acct,       transport: udp, enabled: true }
+  - { name: ipmi,              transport: udp, enabled: true }
+  - { name: bacnet,            transport: udp, enabled: true }
+  - { name: dhcp,              transport: udp, enabled: true }
+  - { name: dhcpv6,            transport: udp, enabled: true }
+  - { name: coap,              transport: udp, enabled: true }
+  - { name: sip,               transport: udp, enabled: true }
+  - { name: mgcp,              transport: udp, enabled: true }
+  - { name: ethercat,          transport: udp, enabled: true }
+
+  # --- UDP: industrial ---
+  - { name: fins,              transport: udp, enabled: true }
+  - { name: knx,               transport: udp, enabled: true }
+  - { name: isakmp,            transport: udp, enabled: true }
+  - { name: stun,              transport: udp, enabled: true }
+  - { name: mssql_browser,     transport: udp, enabled: true }
+  - { name: profinet,          transport: udp, enabled: true }
+  - { name: wdbrpc,            transport: udp, enabled: true }
+  - { name: iax2,              transport: udp, enabled: true }
+  - { name: ads_discovery,     transport: udp, enabled: true }
+  - { name: dtls,              transport: udp, enabled: true }
+  - { name: quic,              transport: udp, enabled: true }
+  - { name: netflow,           transport: udp, enabled: true }
+  - { name: sflow,             transport: udp, enabled: true }
+  - { name: statsd,            transport: udp, enabled: true }
+  - { name: tristation,        transport: udp, enabled: true }
+  - { name: ge_egd,            transport: udp, enabled: true }
+  - { name: bsap,              transport: udp, enabled: true }
+  - { name: lontalk,           transport: udp, enabled: true }
+  - { name: siprotec_en100,    transport: udp, enabled: true }
+  - { name: wsdiscovery,       transport: udp, enabled: true }
+  - { name: memcached_udp,     transport: udp, enabled: true }
+  - { name: natpmp,            transport: udp, enabled: true }
+  - { name: ubiquiti,          transport: udp, enabled: true }
+  - { name: wireguard,         transport: udp, enabled: true }
+  - { name: openvpn_udp,       transport: udp, enabled: true }
+  - { name: l2tp,              transport: udp, enabled: true }
+  - { name: rip,               transport: udp, enabled: true }
+  - { name: steam,             transport: udp, enabled: true }
+  - { name: sentinel_hasp,     transport: udp, enabled: true }
+  - { name: mqtt_sn,           transport: udp, enabled: true }
+  - { name: tplink_kasa,       transport: udp, enabled: true }
+  - { name: tuya,              transport: udp, enabled: true }
+  - { name: miio,              transport: udp, enabled: true }
+  - { name: lwm2m,             transport: udp, enabled: true }
+  - { name: modbus_udp,        transport: udp, enabled: true }
+  - { name: enip_udp,          transport: udp, enabled: true }
+  - { name: opcua_pubsub,      transport: udp, enabled: true }
+  - { name: dds_rtps,          transport: udp, enabled: true }
+  - { name: hartip_udp,        transport: udp, enabled: true }
+  - { name: crestron,          transport: udp, enabled: true }
+  - { name: pjlink,            transport: udp, enabled: true }
+  - { name: cbus,              transport: udp, enabled: true }
+  - { name: dnp3_udp,          transport: udp, enabled: true }
+  - { name: saia_sbus,         transport: udp, enabled: true }
+  - { name: slp,               transport: udp, enabled: true }
+  - { name: xdmcp,             transport: udp, enabled: true }
+  - { name: db_lsp,            transport: udp, enabled: true }
+  - { name: kerberos_udp,      transport: udp, enabled: true }
+  - { name: lantronix_disc,    transport: udp, enabled: true }
+  - { name: pcanywhere_stat,   transport: udp, enabled: true }
+  - { name: gamespy,           transport: udp, enabled: true }
+  - { name: db2_disc,          transport: udp, enabled: true }
+  - { name: bt_dht,            transport: udp, enabled: true }
+  - { name: rdp_udp,           transport: udp, enabled: true }
+  - { name: matter,            transport: udp, enabled: true }
+  - { name: wiz,               transport: udp, enabled: true }
+  - { name: yeelight,          transport: udp, enabled: true }
+  - { name: dahua_disc,        transport: udp, enabled: true }
+  - { name: hikvision_sadp,    transport: udp, enabled: true }
+  - { name: powerlink,         transport: udp, enabled: true }
+  - { name: slmp,              transport: udp, enabled: true }
+  - { name: cip_io,            transport: udp, enabled: true }
+  - { name: ff_hse,            transport: udp, enabled: true }
+  - { name: ads_udp,           transport: udp, enabled: true }
+  - { name: pcom_udp,          transport: udp, enabled: true }
+  - { name: synchrophasor,     transport: udp, enabled: true }
+  - { name: loxone,            transport: udp, enabled: true }
+  - { name: amx_netlinx,       transport: udp, enabled: true }
+  - { name: vantage,           transport: udp, enabled: true }
+  - { name: gtp_c,             transport: udp, enabled: true }
+  - { name: gtp_u,             transport: udp, enabled: true }
+  - { name: vxlan,             transport: udp, enabled: true }
+  - { name: geneve,            transport: udp, enabled: true }
+  - { name: wccp,              transport: udp, enabled: true }
+  - { name: ripng,             transport: udp, enabled: true }
+  - { name: babel,             transport: udp, enabled: true }
+  - { name: bfd,               transport: udp, enabled: true }
+  - { name: ldp,               transport: udp, enabled: true }
+  - { name: teredo,            transport: udp, enabled: true }
+  - { name: ike_natt,          transport: udp, enabled: true }
+  - { name: mndp,              transport: udp, enabled: true }
+  - { name: aruba_papi,        transport: udp, enabled: true }
+  - { name: artnet,            transport: udp, enabled: true }
+  - { name: sacn,              transport: udp, enabled: true }
+  - { name: collectd,          transport: udp, enabled: true }
+  - { name: plex_gdm,          transport: udp, enabled: true }
+  - { name: c1222,             transport: udp, enabled: true }
+
+  # --- UDP: classic small services ---
+  - { name: echo,              transport: udp, enabled: true }
+  - { name: discard,           transport: udp, enabled: true }
+  - { name: daytime,           transport: udp, enabled: true }
+  - { name: qotd,              transport: udp, enabled: true }
+  - { name: chargen,           transport: udp, enabled: true }
+  - { name: time,              transport: udp, enabled: true }
+
+  # --- UDP: fall-throughs ---
+  - { name: raw,               transport: udp, enabled: true }
+  - { name: auto,              transport: udp, enabled: true }

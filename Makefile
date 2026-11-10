@@ -196,3 +196,7 @@ clean:
 help: ## List targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: tarpit-fuzz
+tarpit-fuzz: ## Build the external tarpit-honeypot fuzzer
+	$(GO) build -o bin/tarpit-fuzz ./tools/tarpit-fuzz/cmd
