@@ -21,10 +21,12 @@ package engine
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"math/rand"
 	"net"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -106,6 +108,15 @@ type Config struct {
 
 	// Kinds selects which fuzzers to run. Empty means both.
 	Kinds []Kind
+
+	// ProgressFile, when set, is a path the engine overwrites with a JSON
+	// snapshot every ProgressInterval. A soak that outlives its session —
+	// killed by a container restart, say — leaves this file behind as the
+	// only mid-run record of how far it got.
+	ProgressFile string
+
+	// ProgressInterval is how often to rewrite ProgressFile. Zero means 60s.
+	ProgressInterval time.Duration
 
 	// Enabled restricts the run to these protocol names. Empty means every
 	// registered protocol.
@@ -264,6 +275,11 @@ func (e *Engine) Run(ctx context.Context) Summary {
 	start := time.Now()
 	enabled := e.filtered()
 
+	// Launch the progress snapshotter, if the caller asked for one.
+	if e.cfg.ProgressFile != "" {
+		go e.snapshotter(ctx, start, len(enabled))
+	}
+
 	sem := make(chan struct{}, e.cfg.Concurrency)
 	var wg sync.WaitGroup
 	for round := 0; round < e.cfg.Rounds; round++ {
@@ -283,6 +299,11 @@ func (e *Engine) Run(ctx context.Context) Summary {
 	}
 	wg.Wait()
 
+	// Final snapshot: makes the file match the reported Summary.
+	if e.cfg.ProgressFile != "" {
+		e.writeSnapshot(start, len(enabled))
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return Summary{
@@ -297,6 +318,57 @@ func (e *Engine) Run(ctx context.Context) Summary {
 		Findings:    append([]Finding(nil), e.findings...),
 		Elapsed:     time.Since(start),
 	}
+}
+
+// snapshotter periodically overwrites ProgressFile with the Summary-shaped
+// JSON of what has run so far. The file is rewritten with a temp-rename
+// swap so a reader never sees a half-written line.
+func (e *Engine) snapshotter(ctx context.Context, start time.Time, ran int) {
+	iv := e.cfg.ProgressInterval
+	if iv <= 0 {
+		iv = 60 * time.Second
+	}
+	t := time.NewTicker(iv)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			e.writeSnapshot(start, ran)
+		}
+	}
+}
+
+// writeSnapshot overwrites the progress file.
+func (e *Engine) writeSnapshot(start time.Time, ran int) {
+	e.mu.Lock()
+	payload := map[string]any{
+		"protocols":    len(e.catalogue),
+		"ran":          ran,
+		"sent":         atomic.LoadUint64(&e.stats.sent),
+		"skipped":      atomic.LoadUint64(&e.stats.skipped),
+		"responses":    atomic.LoadUint64(&e.stats.responses),
+		"crashes":      atomic.LoadUint64(&e.stats.crashes),
+		"hangs":        atomic.LoadUint64(&e.stats.hangs),
+		"findings":     len(e.findings),
+		"skipped_list": append([]string(nil), e.skippedNames...),
+		"elapsed_s":    int(time.Since(start).Seconds()),
+		"at":           time.Now().UTC().Format(time.RFC3339),
+	}
+	e.mu.Unlock()
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	// Write to a temp file in the same directory, then rename. No fsync: a
+	// progress snapshot that is a little stale after a crash is the right
+	// trade-off against stalling the engine on every tick.
+	tmp := e.cfg.ProgressFile + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, e.cfg.ProgressFile)
 }
 
 // filtered applies Enabled and Disabled to the catalogue.

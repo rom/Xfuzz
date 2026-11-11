@@ -38,19 +38,21 @@ import (
 
 // cliFlags are everything the command line accepts.
 type cliFlags struct {
-	configPath  string
-	target      string
-	liveness    string
-	kind        string
-	iterations  int
-	rounds      int
-	concurrency int
-	timeout     time.Duration
-	seed        int64
-	enable      string
-	disable     string
-	list        bool
-	verbose     bool
+	configPath       string
+	target           string
+	liveness         string
+	kind             string
+	iterations       int
+	rounds           int
+	concurrency      int
+	timeout          time.Duration
+	seed             int64
+	enable           string
+	disable          string
+	list             bool
+	verbose          bool
+	progressFile     string
+	progressInterval time.Duration
 }
 
 func main() {
@@ -68,6 +70,8 @@ func main() {
 	flag.StringVar(&fl.disable, "disable", "", "comma-separated handler list to subtract from --enable")
 	flag.BoolVar(&fl.list, "list", false, "print the catalogue and exit")
 	flag.BoolVar(&fl.verbose, "verbose", false, "log each finding as it happens")
+	flag.StringVar(&fl.progressFile, "progress-file", "", "path to a JSON progress snapshot the engine rewrites periodically")
+	flag.DurationVar(&fl.progressInterval, "progress-interval", 0, "snapshot interval (0 = engine default: 60s)")
 	flag.Parse()
 
 	if fl.list {
@@ -105,15 +109,17 @@ func main() {
 
 // yamlConfig is the on-disk form of a run's settings.
 type yamlConfig struct {
-	Target      string              `yaml:"target"`
-	Liveness    string              `yaml:"liveness,omitempty"`
-	Iterations  int                 `yaml:"iterations,omitempty"`
-	Rounds      int                 `yaml:"rounds,omitempty"`
-	Concurrency int                 `yaml:"concurrency,omitempty"`
-	Timeout     string              `yaml:"timeout,omitempty"`
-	Seed        int64               `yaml:"seed,omitempty"`
-	Kinds       []string            `yaml:"kinds,omitempty"`
-	Protocols   []protocolOverrides `yaml:"protocols,omitempty"`
+	Target           string              `yaml:"target"`
+	Liveness         string              `yaml:"liveness,omitempty"`
+	Iterations       int                 `yaml:"iterations,omitempty"`
+	Rounds           int                 `yaml:"rounds,omitempty"`
+	Concurrency      int                 `yaml:"concurrency,omitempty"`
+	Timeout          string              `yaml:"timeout,omitempty"`
+	Seed             int64               `yaml:"seed,omitempty"`
+	Kinds            []string            `yaml:"kinds,omitempty"`
+	ProgressFile     string              `yaml:"progress_file,omitempty"`
+	ProgressInterval string              `yaml:"progress_interval,omitempty"`
+	Protocols        []protocolOverrides `yaml:"protocols,omitempty"`
 }
 
 // protocolOverrides is one entry in the per-protocol list.
@@ -137,12 +143,22 @@ func buildConfig(fl cliFlags) (engine.Config, map[string]int, error) {
 		}
 	}
 	cfg := engine.Config{
-		Target:      firstNonEmpty(fl.target, yc.Target, "127.0.0.1"),
-		LivenessURL: firstNonEmpty(fl.liveness, yc.Liveness),
-		Iterations:  firstPositive(fl.iterations, yc.Iterations, 256),
-		Rounds:      firstPositive(fl.rounds, yc.Rounds, 1),
-		Concurrency: firstPositive(fl.concurrency, yc.Concurrency, 8),
-		Seed:        firstNonZero(fl.seed, yc.Seed),
+		Target:       firstNonEmpty(fl.target, yc.Target, "127.0.0.1"),
+		LivenessURL:  firstNonEmpty(fl.liveness, yc.Liveness),
+		Iterations:   firstPositive(fl.iterations, yc.Iterations, 256),
+		Rounds:       firstPositive(fl.rounds, yc.Rounds, 1),
+		Concurrency:  firstPositive(fl.concurrency, yc.Concurrency, 8),
+		Seed:         firstNonZero(fl.seed, yc.Seed),
+		ProgressFile: firstNonEmpty(fl.progressFile, yc.ProgressFile),
+	}
+	if fl.progressInterval > 0 {
+		cfg.ProgressInterval = fl.progressInterval
+	} else if yc.ProgressInterval != "" {
+		d, err := time.ParseDuration(yc.ProgressInterval)
+		if err != nil {
+			return cfg, nil, fmt.Errorf("progress_interval: %w", err)
+		}
+		cfg.ProgressInterval = d
 	}
 	if fl.timeout > 0 {
 		cfg.Timeout = fl.timeout
